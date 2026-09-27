@@ -1,1 +1,0 @@
-ACTION=="add", SUBSYSTEM=="platform", KERNEL=="*.sgpiom", DRIVER=="gpio_aspeed_sgpio", TAG+="systemd", ENV{SYSTEMD_WANTS}+="sgpio-state-init.service"

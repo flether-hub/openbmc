@@ -1,7 +1,0 @@
-[Unit]
-Description= Ampere Manual Fan Control Service
-
-[Service]
-ExecStart=echo "Disabling Ampere Fan Control"
-Type=oneshot
-RemainAfterExit=yes

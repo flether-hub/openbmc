@@ -1,1 +1,0 @@
-PACKAGECONFIG:append:ibm-enterprise = " ibm-hypervisor-cert"

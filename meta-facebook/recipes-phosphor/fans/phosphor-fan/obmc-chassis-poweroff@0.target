@@ -1,3 +1,0 @@
-[Unit]
-Description=Chassis%i (Power Off)
-After=multi-user.target

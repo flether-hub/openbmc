@@ -1,7 +1,0 @@
-[Unit]
-Description=Ampere Computing LLC HighTemp Deassertion event
-StartLimitIntervalSec=0
-
-[Service]
-Restart=no
-ExecStart=/usr/sbin/ampere_hightemp.sh %i deasserted

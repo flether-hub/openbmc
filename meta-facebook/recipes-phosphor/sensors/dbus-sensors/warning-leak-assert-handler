@@ -1,9 +1,0 @@
-#!/bin/bash
-
-if [ $# -ne 1 ]; then
-    echo "Incorrect number of arguments. Expected 1, got $#."
-    exit 1
-fi
-
-echo "No action implemented for '$1'." >&2
-exit 0

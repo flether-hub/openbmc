@@ -1,7 +1,0 @@
-[Unit]
-Description=Enable slot %i FIO LED
-
-[Service]
-Type=oneshot
-ExecStart=control-fio-led %i true
-

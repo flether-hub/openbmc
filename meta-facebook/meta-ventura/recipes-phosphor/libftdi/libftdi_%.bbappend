@@ -1,1 +1,0 @@
-PACKAGECONFIG = "ftdi-eeprom"

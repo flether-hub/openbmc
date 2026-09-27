@@ -1,2 +1,0 @@
-SOURCE=/usr/share/edid/edid.bin
-TARGET=/sys/bus/i2c/devices/11-1050/slave-eeprom

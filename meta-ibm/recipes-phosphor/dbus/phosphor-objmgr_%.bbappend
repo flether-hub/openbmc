@@ -1,2 +1,0 @@
-PACKAGECONFIG = "unit-failure-monitor"
-

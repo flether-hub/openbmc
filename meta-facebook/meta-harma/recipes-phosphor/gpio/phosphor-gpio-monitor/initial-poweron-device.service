@@ -1,8 +1,0 @@
-[Unit]
-Description=Initial Power On Device
-
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/phosphor-gpio-monitor/initial-poweron-device
-
-SyslogIdentifier=initial-poweron-device

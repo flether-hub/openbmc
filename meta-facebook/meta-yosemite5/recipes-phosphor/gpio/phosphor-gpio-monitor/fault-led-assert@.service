@@ -1,7 +1,0 @@
-[Unit]
-Description=%i Power Fault LED Assert
-
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/phosphor-gpio-monitor/fault-led "%i" "assert"
-SyslogIdentifier=%i-power-fault-led-assert

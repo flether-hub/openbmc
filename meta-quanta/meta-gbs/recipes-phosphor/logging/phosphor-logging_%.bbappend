@@ -1,1 +1,0 @@
-ERR_INFO_CAP:gbs = "256"

@@ -1,2 +1,0 @@
-# Enable debug mode with double verbosity
-DAEMON_ARGS="-dd"

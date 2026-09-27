@@ -1,7 +1,0 @@
-[Unit]
-Description=SGPIO State Initialization
-
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/plat-svc/sgpio-state-init
-RemainAfterExit=yes

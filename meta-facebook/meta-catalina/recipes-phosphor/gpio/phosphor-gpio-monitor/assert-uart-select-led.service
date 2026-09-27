@@ -1,8 +1,0 @@
-[Unit]
-Description=Assert Uart Select
-
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/phosphor-gpio-monitor/set-uart-select-led 1
-
-SyslogIdentifier=assert-uart-select

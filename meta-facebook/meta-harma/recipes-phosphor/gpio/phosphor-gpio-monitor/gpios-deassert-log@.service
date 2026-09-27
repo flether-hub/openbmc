@@ -1,7 +1,0 @@
-[Unit]
-Description=%i GPIO Deassert
-
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/phosphor-gpio-monitor/gpios-event-logger "deassert" "%i"
-SyslogIdentifier=%i-gpio-deassert

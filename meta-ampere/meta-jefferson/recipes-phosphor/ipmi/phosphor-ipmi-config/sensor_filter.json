@@ -1,5 +1,0 @@
-{
-    "ServiceFilter": [
-        "xyz.openbmc_project.NVMeSensor"
-    ]
-}

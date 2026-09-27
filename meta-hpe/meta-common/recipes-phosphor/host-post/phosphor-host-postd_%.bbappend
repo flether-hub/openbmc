@@ -1,2 +1,0 @@
-SNOOP_DEVICE = "postcode"
-

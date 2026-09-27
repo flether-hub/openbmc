@@ -1,8 +1,0 @@
-[Unit]
-Description=Cpu Shutdown OK
-
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/phosphor-gpio-monitor/cpu-shdn-ok
-
-SyslogIdentifier=cpu-shdn-ok

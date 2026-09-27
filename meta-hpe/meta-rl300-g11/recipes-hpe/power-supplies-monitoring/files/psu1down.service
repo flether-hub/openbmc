@@ -1,8 +1,0 @@
-[Unit]
-Description=HPE RL300 PSU1 Manager
-
-[Service]
-ExecStart=/usr/bin/psus-manager.sh 1 down
-
-[Install]
-# WantedBy=multi-user.target

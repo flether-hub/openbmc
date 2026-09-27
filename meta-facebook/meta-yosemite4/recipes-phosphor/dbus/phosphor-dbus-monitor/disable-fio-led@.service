@@ -1,7 +1,0 @@
-[Unit]
-Description=Disable slot %i FIO LED
-
-[Service]
-Type=oneshot
-ExecStart=control-fio-led %i false
-

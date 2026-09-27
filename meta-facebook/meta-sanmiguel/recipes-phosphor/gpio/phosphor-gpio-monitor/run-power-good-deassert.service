@@ -1,8 +1,0 @@
-[Unit]
-Description=Deassert Power Good Status
-
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/phosphor-gpio-monitor/run-power-good deassert
-
-SyslogIdentifier=run-power-good-deassert

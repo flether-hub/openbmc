@@ -1,5 +1,0 @@
-PACKAGECONFIG = " \
-    hwmontempsensor \
-    fansensor \
-    adcsensor \
-    "
