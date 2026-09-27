@@ -1,0 +1,14 @@
+[Unit]
+Description=Raise CEB-GNRD GPIO after eSPI is ready
+After=local-fs.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/ceb-gnrd-espi-ready-gpio
+ExecStart=/usr/sbin/ceb-gnrd-espi-ready-gpio
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

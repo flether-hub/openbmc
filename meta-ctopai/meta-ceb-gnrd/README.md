@@ -44,6 +44,10 @@ Platform features
   the AST2600 eSPI slave connects to the Intel Xeon host's eSPI master.
 * Corrected from the original invalid `CONFIG_ASPEED_LPC_ESPI` symbol
   (verified against meta-ibm/meta-system1 reference for linux-aspeed 6.18).
+* `ceb-gnrd-espi-ready-gpio.service` waits for an eSPI platform device or
+  driver in sysfs, then holds a placeholder GPIO high with `gpioset`.
+  Defaults are `gpiochip0` line `0`; update
+  `/etc/default/ceb-gnrd-espi-ready-gpio` when the board GPIO is confirmed.
 
 ### PECI
 

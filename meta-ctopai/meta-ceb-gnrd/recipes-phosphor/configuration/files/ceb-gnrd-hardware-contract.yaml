@@ -86,6 +86,12 @@ interfaces:
     ssh_scp: dropbear and standard OpenBMC SCP support
     network: phosphor-network, static and DHCP configuration
     watchdog: phosphor-watchdog plus AST2600 hardware watchdog
+    espi_ready_gpio:
+      trigger: AST eSPI platform device or driver appears in sysfs
+      gpiochip: gpiochip0
+      line: 0
+      active_level: 1
+      status: placeholder-until-schematic-is-available
     status: common-services-plus-pending-provider
 
   inventory:

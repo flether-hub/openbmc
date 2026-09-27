@@ -90,6 +90,16 @@ machine() {
                     fi
                 fi
 
+                # obmc-bsp-common.inc belongs in the machine configuration.
+                # Older ceb-gnrd templates also put it in local.conf, which
+                # causes duplicate-inclusion warnings in existing builds.
+                if [ "${target}" = "ceb-gnrd" ] && [ -f conf/local.conf ]; then
+                    if grep -q '^require conf/machine/include/obmc-bsp-common.inc$' conf/local.conf; then
+                        sed -i '/^require conf\/machine\/include\/obmc-bsp-common.inc$/d' conf/local.conf
+                        echo "Removed duplicate obmc-bsp-common include from ${build_dir}/conf/local.conf"
+                    fi
+                fi
+
                 if [ "$(cat conf/templateconf.cfg)" = "${tmpl}/templates/default" ]; then
                     sed "s/^\(MACHINE\s*[?:]*\s*=\s*\).*$/\1\"${target}\"/" \
                         -i conf/local.conf
