@@ -12,6 +12,92 @@ board:
   placeholder_policy: expose no synthetic readings
 
 interfaces:
+  buses:
+    i2c:
+      - { bus: 1, signal: BMC_SLOT1_I2C1, device: PCIE_X8, address: not-applicable }
+      - { bus: 2, signal: BMC_SLOT3_I2C2, device: PCIE_X16, address: not-applicable }
+      - { bus: 3, signal: BMC_SLOT4_I2C3, device: PCIE_X8, address: not-applicable }
+      - { bus: 4, signal: BMC_SLOT5_I2C4, device: PCIE_X8, address: not-applicable }
+      - { bus: 5, signal: BMC_SLOT6_I2C5, device: PCIE_X16, address: not-applicable }
+      - { bus: 6, signal: BMC_SLOT7_I2C6, device: PCIE_X8, address: not-applicable }
+      - { bus: 7, signal: BMC_SENSOR_I2C7, device: NST175H-QSPR, address: [0x48, 0x49, 0x4a, 0x4b] }
+      - { bus: 8, signal: BMC_CPRS_I2C8, device: CPRS, address: 0x4a, max_speed_hz: 100000 }
+      - { bus: 9, signal: BMC_CPLD_I2C9, device: M2_CPLD, address: not-applicable }
+      - { bus: 10, signal: BMC_RTC_I2C10, device: NCT3015Y, address: pending }
+      - { bus: 11, signal: BMC_FRU_I2C11, device: FM24C08D, address: pending }
+      - { bus: 12, signal: BMC_TCA9546_I2C12, device: TCA9546A, address: pending }
+      - { bus: 13, signal: BMC_MCIO_I2C13, device: MCIO_X8, address: not-applicable }
+      - { bus: 14, signal: BMC_MCIO_I2C14, device: reserved, address: pending }
+      - { bus: 15, signal: BMC_PROM_SMBUS, device: CPU_SMBUS_HOST, address: pending }
+      - { bus: 16, signal: MIPI60_I2C, device: MIPI60_CONNECTOR, address: pending }
+    i3c:
+      - { bus: 1, signal: I3C_BMC_SPD_SCL1_SDA1, device: DIMM0-3_SPD_TEMPERATURE, status: pending-device-tree-map }
+      - { bus: 2, signal: I3C_BMC_SPD_SCL2_SDA2, device: DIMM4-7_SPD_TEMPERATURE, status: pending-device-tree-map }
+      - { bus: 3, signal: BMC_I3C_SCL3_SDA3, device: CPU_I3C_MNG, status: pending-device-tree-map }
+    pmbus:
+      - { bus_signal: JW6375_PMBCLK0_PMBDATA0, svid_addresses: [0x00, 0x02], pmbus_address_low_nibble: 0x1 }
+      - { bus_signal: JW6375_PMBCLK0_PMBDATA0, svid_addresses: [0x01, 0x03], pmbus_address_low_nibble: 0x3 }
+      - { bus_signal: JW6375_PMBCLK1_PMBDATA1, svid_addresses: [0x02, 0x00], pmbus_address_low_nibble: 0x1 }
+      - { bus_signal: JW6375_PMBCLK1_PMBDATA1, svid_addresses: [0x00, 0x01], pmbus_address_low_nibble: 0x3 }
+
+  adc:
+    source: AST2600 ADC0 channels 0-15
+    scaling: board-divider-values-required-before-publishing-volts
+    channels:
+      - { channel: 0, name: P12V_SYS, net: P12V_SYS_ADC0, nominal: 12.0 }
+      - { channel: 1, name: P5V0_SYS, net: P5V0_SYS_ADC1, nominal: 5.0 }
+      - { channel: 2, name: P3V3_SYS, net: P3V3_SYS_ADC2, nominal: 3.3 }
+      - { channel: 3, name: PVCCIN_CPU, net: PVCCIN_CPU_ADC3, nominal: pending }
+      - { channel: 4, name: PVNN_NAC_CPU, net: PVNN_NAC_CPU_ADC4, nominal: pending }
+      - { channel: 5, name: PVCCD0_HV_CPU, net: PVCCD0_HV_CPU_ADC5, nominal: pending }
+      - { channel: 6, name: PVCCINF_CPU, net: PVCCINF_CPU_ADC6, nominal: pending }
+      - { channel: 7, name: PVNN_MAIN_CPU, net: PVNN_MAIN_CPU_ADC7, nominal: pending }
+      - { channel: 8, name: PVCCFA_EHV_CPU, net: PVCCFA_EHV_CPU_ADC8, nominal: pending }
+      - { channel: 9, name: PVCCD1_HV_CPU, net: PVCCD1_HV_CPU_ADC9, nominal: pending }
+      - { channel: 10, name: PVCCINF_EHV_FIVRA_CPU, net: PVCCINF_EHV_FIVRA_CPU_ADC10, nominal: pending }
+      - { channel: 11, name: P3V3_STBY, net: P3V3_STBY_ADC11, nominal: 3.3 }
+      - { channel: 12, name: P1V8_STBY, net: P1V8_STBY_ADC12, nominal: 1.8 }
+      - { channel: 13, name: P1V2_STBY, net: P1V2_STBY_ADC13, nominal: 1.2 }
+      - { channel: 14, name: P1V0_STBY, net: P1V0_STBY_ADC14, nominal: 1.0 }
+      - { channel: 15, name: D3V0_BAT0, net: D3V0_BAT0_ADC15, nominal: 3.0 }
+
+  fans:
+    source: AST2600 G6 PWM/TACH
+    channels:
+      - { index: 0, tach: SYS_FAN0_TACH, pwm: BMC_FAN0_PWM, tach_pin: AA25, pwm_pin: AD26 }
+      - { index: 1, tach: SYS_FAN1_TACH, pwm: BMC_FAN1_PWM, tach_pin: AB25, pwm_pin: AD22 }
+      - { index: 2, tach: SYS_FAN2_TACH, pwm: BMC_FAN2_PWM, tach_pin: Y24, pwm_pin: AD23 }
+      - { index: 3, tach: SYS_FAN3_TACH, pwm: BMC_FAN3_PWM, tach_pin: AB26, pwm_pin: AD24 }
+      - { index: 4, tach: SYS_FAN4_TACH, pwm: BMC_FAN4_PWM, tach_pin: Y26, pwm_pin: AD25 }
+      - { index: 5, tach: SYS_FAN5_TACH, pwm: BMC_FAN5_PWM, tach_pin: AC26, pwm_pin: AC22 }
+    policy: adaptive-from-CPU-temperature-with-web-manual-override
+    unit: RPM
+    status: pending-device-tree-map
+
+  gpio:
+    active_low_inputs:
+      - THERMAL_ALERT_N
+      - FPGA_THERMAL_ALERT_N
+      - VR_BOARD_PIN_ALERT_N
+      - CPU_THERMTRIP_CPLD_N
+      - SMB_PECI_BMC_ALRT_N
+      - CPU_PVCCIN_PWR_FAULT_N
+      - FPGA_PVCC_FPGA_PWR_FAULT_N
+      - CHASSIS_INTRUSION_BMC_N
+      - SYS_RST_BTN_RC_N
+    controls:
+      - { name: BMC_FRU_WP, gpio: GPIOA0, direction: output, active_high: true }
+      - { name: BMC_HEARTBEAT_LED, gpio: GPIOB1, direction: output, active_high: false }
+      - { name: PWR_BTN_BMC_OUT_N, gpio: GPIOM4, direction: output, active_high: false }
+      - { name: BMC_ASSERT_RSTBTN_LOCK_N, gpio: GPIOM5, direction: output, active_high: false }
+      - { name: RST_BTN_BMC_OUT_N, gpio: GPIOY2, direction: output, active_high: false }
+      - { name: BMC_XDP_PREQ_N, gpio: GPIOAA4, direction: output, active_high: false }
+    straps:
+      - { name: PCB_VER0, gpio: pending, value: 1, status: exact_gpio_mapping_pending }
+      - { name: PCB_VER1, gpio: pending, value: 0, status: exact_gpio_mapping_pending }
+      - { name: CFG_VER0, gpio: pending, value: 1, status: exact_gpio_mapping_pending }
+      - { name: CFG_VER1, gpio: pending, value: 0, status: exact_gpio_mapping_pending }
+
   temperatures:
     - name: EnvTemp1
       source: dbus-sensors ExitAirTempSensor or hwmon
@@ -59,13 +145,6 @@ interfaces:
       source: PMBus address presence and status register
       status: pending-pmbus-map
 
-  fans:
-    source: dbus-sensors FanSensor and phosphor-fan
-    unit: RPM
-    control_policy: automatic from CPU critical temperature
-    manual_control: Web/API fan control after board PWM mapping exists
-    status: pending-tach-and-pwm-map
-
   events:
     sel_time: phosphor-time-manager synchronized with host/BIOS RTC
     sel_policy: rollover oldest entries when full
@@ -84,7 +163,12 @@ interfaces:
     virtual_media: provider-layer-specific virtual media component
     firmware_update: phosphor-software-manager for BMC/BIOS/CPLD providers
     ssh_scp: dropbear and standard OpenBMC SCP support
-    network: phosphor-network, static and DHCP configuration
+    network:
+      ports:
+        - { name: management, interface: eth0, connection: independent-RJ45, ipmi_channel: 1 }
+        - { name: host_ncsi, interface: eth1, connection: NC-SI-to-host, ipmi_channel: 2 }
+      address_modes: [static, dhcp]
+      status: pending-device-tree-ethernet-aliases
     watchdog: phosphor-watchdog plus AST2600 hardware watchdog
     espi_ready_gpio:
       trigger: AST eSPI platform device or driver appears in sysfs

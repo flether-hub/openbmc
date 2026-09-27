@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <openbmc@localhost>
+Date: Sun, 27 Sep 2026 00:00:00 +0800
+Subject: [PATCH] ceb-gnrd: limit web UI languages to English and Chinese
+
+The CEB-GNRD product exposes only English and Simplified Chinese. Keep the
+other upstream translation files available to the generic webui build, but do
+not publish them through this board's language picker or vue-i18n locale map.
+
+Upstream-Status: Inappropriate [CEB-GNRD product policy]
+---
+ src/i18n.js | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/src/i18n.js b/src/i18n.js
+index c988c37..04376aa 100644
+--- a/src/i18n.js
++++ b/src/i18n.js
+@@ -1,6 +1,8 @@
+ import { createI18n } from 'vue-i18n';
+ import { deepMerge } from './utilities/objectUtils';
+ 
++export const SUPPORTED_LOCALES = ['en-US', 'zh-CN'];
++
+ // Vite's import.meta.glob for dynamic imports
+ const baseLocaleModules = import.meta.glob('./locales/**/*.json', {
+   eager: true,
+@@ -53,6 +55,10 @@ export function createI18nInstance(
+     messages[loc] = deepMerge(base[loc] || {}, env[loc]);
+   });
+ 
++  Object.keys(messages).forEach((loc) => {
++    if (!SUPPORTED_LOCALES.includes(loc)) delete messages[loc];
++  });
++
+   const addAlias = (alias, target) => {
+     if (!messages[alias] && messages[target])
+       messages[alias] = messages[target];
+@@ -65,9 +71,7 @@ export function createI18nInstance(
+     if (!val) return undefined;
+     const s = String(val);
+     if (s === 'en') return 'en-US';
+-    if (s === 'ru') return 'ru-RU';
+-    if (s === 'ka') return 'ka-GE';
+-    return s;
++    return SUPPORTED_LOCALES.includes(s) ? s : 'en-US';
+   };
+ 
+   return createI18n({
+@@ -93,7 +97,8 @@ export function getAvailableLanguages(locales) {
+   return (locales || [])
+     .filter((loc) => loc.includes('-'))
++    .filter((loc) => SUPPORTED_LOCALES.includes(loc))
+     .map((loc) => {
+       const intlLocale = new Intl.Locale(loc);
+       const language = intlLocale.language;
+       const region = intlLocale.region;
+ 

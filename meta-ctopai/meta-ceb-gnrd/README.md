@@ -61,6 +61,35 @@ Platform features
 * Symbols aligned with both meta-asrock and meta-ibm/meta-system1 references
   for the linux-aspeed 6.18 kernel.
 
+### Board hardware map
+
+The workbook-derived map is installed as
+`/usr/share/ceb-gnrd/ceb-gnrd-hardware-contract.yaml`. It records the 16
+I2C buses, three I3C management buses, AST2600 ADC0 channels 0-15, six PWM /
+TACH fan channels, and the named power, reset, intrusion and alert GPIOs.
+The kernel fragment enables the AST2600 ADC, I3C master, PMBus and G6
+PWM/TACH drivers. Device-tree nodes, divider coefficients, PMBus addresses
+and GPIO line numbers remain marked pending where the workbook does not give
+an unambiguous Linux device-tree mapping.
+
+### BMC network ports
+
+The product exposes two BMC network paths:
+
+* `eth0`: dedicated management RJ45 port, with static and DHCP address modes.
+* `eth1`: host-side NC-SI path, also represented as IPMI LAN channel 2.
+
+The board contract and the existing IPMI channel table use this mapping. The
+production device tree must still bind the correct AST2600 MAC, PHY and NC-SI
+nodes; the current EVB device tree is only a buildable placeholder.
+
+### Web UI languages
+
+The CEB-GNRD Web UI language picker is restricted to English (`en-US`) and
+Simplified Chinese (`zh-CN`). Other upstream translation files remain
+available to the generic WebUI recipe but are filtered out for this machine,
+including stale saved language selections.
+
 ### VGA display output
 
 * The AST2600 VGA engine is enabled upstream (`CONFIG_DRM_ASPEED_GFX`,
