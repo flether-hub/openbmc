@@ -151,9 +151,9 @@
 };
 
 &i2c7 {
+    status = "okay";
     /delete-node/ temp@2e;
     /delete-node/ eeprom@50;
-    status = "okay";
 };
 
 /* CPRS/ATX power monitor bus; device address is intentionally left to the
