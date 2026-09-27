@@ -78,6 +78,18 @@ machine() {
                 TEMPLATECONF="${tmpl}/templates/default" source \
                         ./oe-init-build-env "${build_dir}"
 
+                # ceb-gnrd was moved from the EVB layer into meta-ctopai.
+                # Reuse existing build directories without leaving a stale
+                # absolute BBLAYERS entry behind.
+                if [ "${target}" = "ceb-gnrd" ] && [ -f conf/bblayers.conf ]; then
+                    if grep -q "meta-evb/meta-evb-aspeed/meta-ceb-gnrd" conf/bblayers.conf; then
+                        sed -i \
+                            's#meta-evb/meta-evb-aspeed/meta-ceb-gnrd#meta-ctopai/meta-ceb-gnrd#g' \
+                            conf/bblayers.conf
+                        echo "Migrated stale ceb-gnrd layer path in ${build_dir}/conf/bblayers.conf"
+                    fi
+                fi
+
                 if [ "$(cat conf/templateconf.cfg)" = "${tmpl}/templates/default" ]; then
                     sed "s/^\(MACHINE\s*[?:]*\s*=\s*\).*$/\1\"${target}\"/" \
                         -i conf/local.conf

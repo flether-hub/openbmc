@@ -13,5 +13,5 @@ To build for a specific board:
 
 Or set up manually:
 
-    TEMPLATECONF=meta-ceb-gnrd/conf/templates/default \
+    TEMPLATECONF=meta-ctopai/meta-ceb-gnrd/conf/templates/default \
         source oe-init-build-env build/<board-name>
