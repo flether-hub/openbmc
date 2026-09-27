@@ -1,0 +1,7 @@
+# FRU EEPROM of the ceb-gnrd motherboard.
+# TODO: verify the I2C bus of the motherboard FRU EEPROM on the actual
+# hardware (check /sys/bus/i2c/devices/ on the target, or the board device
+# tree) and adjust the path below if necessary.  0x50 is the usual FRU
+# EEPROM address.
+SYSFS_PATH=/sys/bus/i2c/devices/0-0050/eeprom
+FRUID=0

@@ -1,0 +1,97 @@
+# CEB-GNRD hardware integration contract.
+#
+# This file is intentionally metadata-only. No value below is used as a
+# sensor reading, threshold, GPIO number, I2C address or power-control input.
+# Replace the pending entries when the board schematic and PMBus map are
+# available, then add the corresponding Entity-Manager/dbus-sensors or kernel
+# configuration in the same layer.
+
+board:
+  name: CEB-GNRD
+  hardware_revision_source: board-specific IPMI mc info extension
+  placeholder_policy: expose no synthetic readings
+
+interfaces:
+  temperatures:
+    - name: EnvTemp1
+      source: dbus-sensors ExitAirTempSensor or hwmon
+      accuracy_celsius: 2
+      status: pending-hardware-map
+    - name: EnvTemp2
+      source: dbus-sensors ExitAirTempSensor or hwmon
+      accuracy_celsius: 2
+      status: pending-hardware-map
+    - name: CPU_Temp
+      source: PECI CPU temperature through dbus-sensors IntelCPUSensor
+      status: kernel-and-host-dependent
+    - name: DIMM_Temp
+      source: PECI DIMM temperature through dbus-sensors IntelCPUSensor
+      status: kernel-and-host-dependent
+    - name: PSU_Internal_Temp
+      source: PMBus PSU sensor
+      status: pending-pmbus-map
+
+  voltages:
+    - name: CPU_Core_Voltage
+      source: hwmon or PMBus regulator channel
+      status: pending-hardware-map
+    - name: DIMM_Voltage
+      source: hwmon or PMBus regulator channel
+      status: pending-hardware-map
+    - name: PCIe_12V
+      source: hwmon or PMBus regulator channel
+      status: pending-hardware-map
+    - name: PSU_Input_Voltage
+      source: PMBus PSU sensor
+      status: pending-pmbus-map
+
+  power:
+    - name: PSU_Input_Power
+      source: PMBus PSU sensor
+      aggregation: sum of PSU0 and PSU1 when present
+      status: pending-pmbus-map
+    - name: PSU_Output_Power
+      source: PMBus PSU sensor
+      aggregation: sum of PSU0 and PSU1 when present
+      unit: W
+      status: pending-pmbus-map
+    - name: PSU_Presence
+      source: PMBus address presence and status register
+      status: pending-pmbus-map
+
+  fans:
+    source: dbus-sensors FanSensor and phosphor-fan
+    unit: RPM
+    control_policy: automatic from CPU critical temperature
+    manual_control: Web/API fan control after board PWM mapping exists
+    status: pending-tach-and-pwm-map
+
+  events:
+    sel_time: phosphor-time-manager synchronized with host/BIOS RTC
+    sel_policy: rollover oldest entries when full
+    bios_reset_reasons: power-on, power-button, BIOS/OS initiated
+    threshold_events: phosphor-sel-logger sensor threshold events
+    power_button: GPIO or host event source
+    psu_fault: PMBus status register
+    chassis_open: GPIO intrusion sensor
+    bios_post_fail: host-postd/post-code-manager
+    status: pending-event-source-map
+
+  management:
+    web: bmcweb user, sensor, event log, FRU, network, power, fan and update APIs
+    sol: obmc-console with SSH console access
+    kvm: obmc-ikvm and bmcweb KVM endpoint
+    virtual_media: provider-layer-specific virtual media component
+    firmware_update: phosphor-software-manager for BMC/BIOS/CPLD providers
+    ssh_scp: dropbear and standard OpenBMC SCP support
+    network: phosphor-network, static and DHCP configuration
+    watchdog: phosphor-watchdog plus AST2600 hardware watchdog
+    status: common-services-plus-pending-provider
+
+  inventory:
+    fru: phosphor-ipmi-fru and fru-device
+    board_info: EEPROM-backed board and product information
+    mutable_fields: serial number, product name, part number and version
+    uid: chassis identify command plus board UID button/LED GPIO
+    alert_led: critical temperature, voltage, fan-stop and POST-fail policy
+    status: pending-eeprom-and-gpio-map

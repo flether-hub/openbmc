@@ -1,0 +1,12 @@
+# Extra FRU properties for ceb-gnrd.
+# Additional D-Bus properties exposed from FRU data beyond the standard
+# inventory interfaces.
+#
+# TODO: Add any board-specific extra properties here. For example,
+# BMC MAC addresses stored in FRU custom fields:
+#
+# /system/chassis/motherboard/bmc/ethernet0:
+#     xyz.openbmc_project.Inventory.Item.NetworkInterface:
+#         MACAddress:
+#             IPMIFruProperty: Custom Field 2
+#             IPMIFruSection: Board

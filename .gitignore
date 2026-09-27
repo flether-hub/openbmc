@@ -10,6 +10,8 @@ build-*/
 tmp/
 sstate-cache/
 downloads/
+poky/
+*.conf.prep
 
 # BitBake
 bitbake.lock
@@ -17,14 +19,43 @@ bitbake-cookerdaemon.log
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
 
-# Logs
-*.log
+# AI Coding Tools & Assistants (DeepSeek Harness, Codex, Claude, Cursor, Copilot, Aider, etc.)
+.dsh/
+.codex/
+.claude/
+.cursor/
+.cursorrules
+.aiders*
+.aider*
 
-# Editor
+# Editors & IDEs
 .idea/
-
-# Temporary files
+*.swp
 *.swo
 *~
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS generated files
+.DS_Store
+.DS_Store?
+ehthumbs.db
+Icon?
+Thumbs.db
+
+# Logs & Temporary files
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej

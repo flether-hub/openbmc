@@ -1,0 +1,11 @@
+[Unit]
+Description=Flash Host BIOS image %I to Host
+After=mapper-wait@-xyz.openbmc_project-state-chassis0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/sbin/bios-update.sh /tmp/images/%i
+
+[Install]
+WantedBy=multi-user.target
