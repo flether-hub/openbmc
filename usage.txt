@@ -1,3 +1,429 @@
-cd ~/openbmc && source oe-init-build-env build/ceb-gnrd && ROOTFS=$(readlink -f tmp/deploy/images/ceb-gnrd/obmc-phosphor-image-ceb-gnrd-*.static.mtd | head -1) && qemu-system-arm -machine ast2600-evb -m 1G -nographic -drive file="$ROOTFS",if=mtd,format=raw -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8443-:443,hostfwd=tcp:127.0.0.1:2222-:22 -net nic,netdev=net0 -serial mon:stdio -serial null
+# CEB-GNRD OpenBMC 使用说明
 
+本文档说明如何从零开始构建 `ceb-gnrd`，如何在虚拟机中启动测试镜像，
+以及如何定位 BitBake 解压后的源代码和编译日志。
+
+> 本项目面向 Intel Xeon 6 单路主板，BMC 芯片为 ASPEED AST2600。
+> QEMU 只能验证 OpenBMC 用户空间、Web、SSH、网络和部分服务流程，不能替代
+> 真实 AST2600、eSPI、PECI、ADC、PMBus、PWM/TACH 和实体网口硬件测试。
+
+## 一、构建环境
+
+以下命令应在 Linux 主机或 Linux 虚拟机中执行，建议使用 Ubuntu 22.04/24.04。
+Windows PowerShell 不能直接运行 BitBake。
+
+先安装 OpenEmbedded/Yocto 常用依赖：
+
+```bash
+sudo apt update
+sudo apt install -y \
+    build-essential chrpath diffstat gawk git wget \
+    libegl1-mesa libsdl1.2-dev pylint3 python3 python3-git \
+    python3-jinja2 python3-pexpect python3-subunit socat \
+    texinfo unzip xterm zstd file locales
+```
+
+设置 UTF-8 环境，避免构建脚本处理中文路径或日志时出现异常：
+
+```bash
+sudo locale-gen en_US.UTF-8
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+```
+
+## 二、从零开始构建 ceb-gnrd
+
+### 1. 获取并初始化源码
+
+如果源码还没有准备好：
+
+```bash
+git clone https://github.com/flether-hub/openbmc.git openbmc
+cd openbmc
+git submodule update --init --recursive
+```
+
+如果已经进入本项目根目录：
+
+```bash
+cd ~/openbmc
+git status --short
+```
+
+确认板级层存在：
+
+```bash
+test -f meta-ctopai/meta-ceb-gnrd/conf/machine/ceb-gnrd.conf && \
+    echo "ceb-gnrd machine layer found"
+```
+
+### 2. 创建全新的构建目录
+
+第一次构建推荐使用仓库自带的 `setup` 脚本：
+
+```bash
+cd ~/openbmc
+. setup ceb-gnrd
+```
+
+执行成功后，当前目录通常会切换到：
+
+```text
+~/openbmc/build/ceb-gnrd
+```
+
+也可以显式指定构建目录：
+
+```bash
+cd ~/openbmc
+source oe-init-build-env build/ceb-gnrd
+export MACHINE=ceb-gnrd
+```
+
+使用显式方式时，需要确认 `build/ceb-gnrd/conf/bblayers.conf` 已经包含：
+
+```text
+meta-ctopai/meta-ceb-gnrd
+```
+
+不要把板级层写成旧路径：
+
+```text
+meta-evb/meta-evb-aspeed/meta-ceb-gnrd
+```
+
+如果之前创建过错误的构建目录，建议重新生成配置：
+
+```bash
+cd ~/openbmc
+rm -rf build/ceb-gnrd
+. setup ceb-gnrd
+```
+
+删除构建目录会删除该目录中的配置、下载索引和任务状态，请确认其中没有需要
+保留的本地修改。
+
+### 3. 构建 OpenBMC 镜像
+
+在 `setup` 完成后执行：
+
+```bash
+bitbake obmc-phosphor-image
+```
+
+只构建内核设备树和内核时，可以执行：
+
+```bash
+bitbake virtual/kernel
+```
+
+只验证本板新增的配置包：
+
+```bash
+bitbake entity-manager dbus-sensors ceb-gnrd-hardware-contract
+```
+
+构建完成后，主要产物位于：
+
+```text
+build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/
+```
+
+查看全部产物：
+
+```bash
+ls -lh tmp/deploy/images/ceb-gnrd/
+```
+
+常用文件包括：
+
+```text
+obmc-phosphor-image-ceb-gnrd-*.static.mtd   BMC SPI 原始镜像
+obmc-phosphor-image-ceb-gnrd-*.tar.gz       根文件系统压缩包
+fitImage*                                   Linux 内核镜像
+aspeed-ceb-gnrd.dtb                         板级设备树
+```
+
+不同 OpenBMC 分支的文件名可能带有时间戳或版本号，使用通配符查找即可：
+
+```bash
+find tmp/deploy/images/ceb-gnrd -maxdepth 1 -type f \
+    \( -name '*static.mtd' -o -name '*.dtb' -o -name 'fitImage*' \) -print
+```
+
+## 三、在虚拟机中测试
+
+### 1. QEMU 测试范围
+
+QEMU 的 `ast2600-evb` 机器模型不是 CEB-GNRD 的完整硬件模型，因此以下内容
+不能在 QEMU 中准确验证：
+
+* 真实的两个网口、RTL8211 PHY 和 NC-SI 通道；
+* eSPI ready GPIO、PECI CPU/DIMM 温度；
+* ADC 分压值、PMBus 电源遥测、PSU 在位检测；
+* 实体风扇 PWM/TACH、CPLD、FRU EEPROM 和 BIOS 联动。
+
+QEMU 主要用于验证镜像能否启动，以及 SSH、Web、systemd 服务和部分 D-Bus
+接口是否正常。
+
+### 2. 启动 QEMU
+
+进入构建目录后查找镜像：
+
+```bash
+cd ~/openbmc/build/ceb-gnrd
+ROOTFS=$(readlink -f tmp/deploy/images/ceb-gnrd/obmc-phosphor-image-ceb-gnrd-*.static.mtd | head -1)
+test -f "$ROOTFS" && echo "QEMU image: $ROOTFS"
+```
+
+启动 QEMU，保留串口输出：
+
+```bash
+qemu-system-arm \
+    -machine ast2600-evb \
+    -m 1G \
+    -nographic \
+    -drive file="$ROOTFS",if=mtd,format=raw \
+    -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8443-:443,hostfwd=tcp:127.0.0.1:2222-:22 \
+    -net nic,netdev=net0 \
+    -serial mon:stdio \
+    -serial null
+```
+
+QEMU 启动后，可从另一个终端访问：
+
+```bash
+ssh -p 2222 root@127.0.0.1
+curl -k https://127.0.0.1:8443/redfish/v1/
+```
+
+Web 页面地址：
+
+```text
+https://127.0.0.1:8443/
+```
+
+如果镜像没有设置默认密码，登录密码取决于当前 OpenBMC 分支的默认策略。
+不要把生产密码写入本文件；测试时应在目标机首次启动后立即修改密码。
+
+### 3. QEMU 中的基本检查
+
+```bash
+systemctl --failed
+systemctl status bmcweb
+systemctl status xyz.openbmc_project.EntityManager.service
+ip addr
+ls /sys/class/hwmon/
+find /sys/class/hwmon -maxdepth 2 -type f -name '*_input' -print
+```
+
+由于 QEMU 没有 CEB-GNRD 的实际 ADC、PMBus 和风扇硬件，相关传感器可能显示
+不可用，这是预期现象。真实板卡上应重点检查：
+
+```bash
+ipmitool sensor
+ipmitool sel list
+ipmitool mc info
+find /sys/bus/i2c/devices -maxdepth 1 -type l -print
+find /sys/class/hwmon -maxdepth 2 -type f -print
+```
+
+## 四、如何查找解压后的源代码
+
+BitBake 不会直接在源码仓库中编译。每个配方会在 `tmp/work` 下创建独立的
+工作目录，目录名通常包含目标架构、配方名和版本号。
+
+### 1. 查看配方的实际变量
+
+以 `linux-aspeed` 为例：
+
+```bash
+bitbake -e linux-aspeed | egrep '^(WORKDIR|S|B|T)='
+```
+
+常见变量含义：
+
+```text
+WORKDIR   配方的完整工作目录
+S         解压或 git checkout 后的源代码目录
+B         实际编译目录
+T         任务日志和临时脚本目录
+```
+
+查看 `dbus-sensors` 的源码目录：
+
+```bash
+bitbake -e dbus-sensors | sed -n 's/^S="\(.*\)"/\1/p'
+```
+
+### 2. 先执行 unpack，再查找源码
+
+如果配方还没有执行过解压任务：
+
+```bash
+bitbake -c unpack -f linux-aspeed
+bitbake -c unpack -f dbus-sensors
+```
+
+然后搜索工作目录：
+
+```bash
+find tmp/work -type d \( -name 'git' -o -name 'linux-*' -o -name 'dbus-sensors-*' \) -print
+```
+
+当前工程常见的 Linux 源码路径类似：
+
+```text
+tmp/work/armv7ahf-vfpv4d16-openbmc-linux-gnueabi/linux-aspeed/<版本>/git/
+```
+
+实际路径必须以 `bitbake -e` 输出为准，不要手工假定版本号。
+
+### 3. 打开配方开发 Shell
+
+开发 Shell 会自动设置交叉编译环境，并把当前目录切换到配方源码目录：
+
+```bash
+bitbake -c devshell linux-aspeed
+pwd
+```
+
+退出开发 Shell：
+
+```bash
+exit
+```
+
+查看当前任务的完整编译日志：
+
+```bash
+bitbake -e linux-aspeed | sed -n 's/^T="\(.*\)"/\1/p'
+find tmp/work -path '*/temp/log.do_compile*' -print
+```
+
+### 4. 查看配方临时脚本和补丁结果
+
+```bash
+find tmp/work -path '*/temp/run.*' -type f -print | tail
+find tmp/work -path '*/temp/log.*' -type f -print | tail
+```
+
+内核配方应用完补丁后的源代码，通常位于 `S` 指向的目录；本板 DTS 会被
+安装到：
+
+```text
+arch/arm/boot/dts/aspeed/aspeed-ceb-gnrd.dts
+```
+
+可以在构建目录执行：
+
+```bash
+bitbake -c patch -f virtual/kernel
+bitbake -e virtual/kernel | sed -n 's/^S="\(.*\)"/\1/p'
+```
+
+## 五、增量编译和清理
+
+修改单个配方后，优先执行对应配方的编译：
+
+```bash
+bitbake -c compile -f virtual/kernel
+bitbake -c compile -f entity-manager
+bitbake -c compile -f dbus-sensors
+```
+
+修改设备树后，建议重新编译内核并检查部署目录：
+
+```bash
+bitbake -c compile -f virtual/kernel
+bitbake -c deploy -f virtual/kernel
+ls -lh tmp/deploy/images/ceb-gnrd/*dtb
+```
+
+只想重新生成最终镜像：
+
+```bash
+bitbake -f obmc-phosphor-image
+bitbake obmc-phosphor-image
+```
+
+某个配方状态异常时，可先清理该配方的共享状态：
+
+```bash
+bitbake -c cleansstate entity-manager
+bitbake entity-manager
+```
+
+`cleansstate` 会删除该配方的工作结果并可能触发重新下载和编译，请不要对
+整个构建目录随意执行清理。
+
+## 六、常见问题
+
+### BBLAYERS 指向不存在的目录
+
+错误示例：
+
+```text
+The following layer directories do not exist:
+.../meta-evb/meta-evb-aspeed/meta-ceb-gnrd
+```
+
+正确的板级层是：
+
+```text
+meta-ctopai/meta-ceb-gnrd
+```
+
+最稳妥的修复方式是删除错误的构建目录后重新执行：
+
+```bash
+cd ~/openbmc
+rm -rf build/ceb-gnrd
+. setup ceb-gnrd
+```
+
+### 查看某个任务为什么失败
+
+```bash
+bitbake -e <配方名> | sed -n 's/^T="\(.*\)"/\1/p'
+find tmp/work -path '*/temp/log.*' -type f -printf '%T@ %p\n' \
+    | sort -n | tail -20
+```
+
+例如 `phosphor-ipmi-fru:do_compile` 失败时：
+
+```bash
+bitbake -c compile -f phosphor-ipmi-fru
+```
+
+然后查看该配方 `temp/log.do_compile.*` 的第一处编译错误。不要只看最后的
+`ninja: build stopped`，真正原因通常在它前面的几十行。
+
+### rootfs postinstall 失败
+
+先查看 rootfs 日志：
+
+```bash
+find tmp/work -path '*/obmc-phosphor-image/*/temp/log.do_rootfs.*' -print
+```
+
+如果是某个 postinstall 脚本依赖目标机硬件或运行时服务，应检查对应配方是否
+把脚本正确放到 `pkg_postinst_ontarget:${PN}`，而不是在构建阶段用 `exit 1`
+延迟执行。修复配方后重新构建：
+
+```bash
+bitbake -c cleansstate obmc-phosphor-image
+bitbake obmc-phosphor-image
+```
+
+## 七、原文件中的 QEMU 命令（保留）
+
+以下命令为原 `Usage.txt` 中的内容，保留供快速测试：
+
+```bash
+cd ~/openbmc && source oe-init-build-env build/ceb-gnrd && ROOTFS=$(readlink -f tmp/deploy/images/ceb-gnrd/obmc-phosphor-image-ceb-gnrd-*.static.mtd | head -1) && qemu-system-arm -machine ast2600-evb -m 1G -nographic -drive file="$ROOTFS",if=mtd,format=raw -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8443-:443,hostfwd=tcp:127.0.0.1:2222-:22 -net nic,netdev=net0 -serial mon:stdio -serial null
+```
+
+```text
 test
+```
