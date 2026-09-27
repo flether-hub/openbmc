@@ -24,6 +24,10 @@ RDEPENDS:${PN}-updater:append:ceb-gnrd = " \
     phosphor-ipmi-ipmb \
     "
 
+# Keep U-Boot environment variables, including board MAC addresses, managed
+# through the persistent u-boot-env partition during BMC update workflows.
+RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-u-boot-mgr "
+
 do_install:append:ceb-gnrd() {
     install -d ${D}${sbindir}
     install -m 0755 ${UNPACKDIR}/bios-update.sh ${D}${sbindir}/

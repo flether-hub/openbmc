@@ -7,3 +7,7 @@ PACKAGECONFIG:append:ceb-gnrd = " \
     log-watchdog \
     log-alarm \
     "
+
+# Required for IPMI Watchdog 2 expiration records, including BIOS FRB2 and
+# OS-load diagnostics.
+RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-watchdog "

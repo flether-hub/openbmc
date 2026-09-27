@@ -1,0 +1,225 @@
+{
+    "Exposes": [
+        {
+            "Index": 0,
+            "Name": "P12V_SYS",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 1,
+            "Name": "P5V0_SYS",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 2,
+            "Name": "P3V3_SYS",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 3,
+            "Name": "PVCCIN_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 4,
+            "Name": "PVNN_NAC_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 5,
+            "Name": "PVCCD0_HV_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 6,
+            "Name": "PVCCINF_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 7,
+            "Name": "PVNN_MAIN_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 8,
+            "Name": "PVCCFA_EHV_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 9,
+            "Name": "PVCCD1_HV_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 10,
+            "Name": "PVCCINF_EHV_FIVRA_CPU",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 11,
+            "Name": "P3V3_STBY",
+            "PowerState": "Always",
+            "ScaleFactor": 2.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 12,
+            "Name": "P1V8_STBY",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 13,
+            "Name": "P1V2_STBY",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 14,
+            "Name": "P1V0_STBY",
+            "PowerState": "Always",
+            "ScaleFactor": 11.0,
+            "Type": "ADC"
+        },
+        {
+            "Index": 15,
+            "Name": "D3V0_BAT0",
+            "PowerState": "Always",
+            "ScaleFactor": 2.0,
+            "Type": "ADC"
+        },
+        {
+            "Connector": {
+                "Name": "SYS_FAN0",
+                "Pwm": 0,
+                "PwmName": "PWM1",
+                "Tachs": [0]
+            },
+            "Index": 0,
+            "MaxReading": 30000,
+            "Name": "SYS_FAN0",
+            "PowerState": "On",
+            "Type": "AspeedFan"
+        },
+        {
+            "Connector": {
+                "Name": "SYS_FAN1",
+                "Pwm": 1,
+                "PwmName": "PWM2",
+                "Tachs": [1]
+            },
+            "Index": 1,
+            "MaxReading": 30000,
+            "Name": "SYS_FAN1",
+            "PowerState": "On",
+            "Type": "AspeedFan"
+        },
+        {
+            "Connector": {
+                "Name": "SYS_FAN2",
+                "Pwm": 2,
+                "PwmName": "PWM3",
+                "Tachs": [2]
+            },
+            "Index": 2,
+            "MaxReading": 30000,
+            "Name": "SYS_FAN2",
+            "PowerState": "On",
+            "Type": "AspeedFan"
+        },
+        {
+            "Connector": {
+                "Name": "SYS_FAN3",
+                "Pwm": 3,
+                "PwmName": "PWM4",
+                "Tachs": [3]
+            },
+            "Index": 3,
+            "MaxReading": 30000,
+            "Name": "SYS_FAN3",
+            "PowerState": "On",
+            "Type": "AspeedFan"
+        },
+        {
+            "Connector": {
+                "Name": "SYS_FAN4",
+                "Pwm": 4,
+                "PwmName": "PWM5",
+                "Tachs": [4]
+            },
+            "Index": 4,
+            "MaxReading": 30000,
+            "Name": "SYS_FAN4",
+            "PowerState": "On",
+            "Type": "AspeedFan"
+        },
+        {
+            "Connector": {
+                "Name": "SYS_FAN5",
+                "Pwm": 5,
+                "PwmName": "PWM6",
+                "Tachs": [5]
+            },
+            "Index": 5,
+            "MaxReading": 30000,
+            "Name": "SYS_FAN5",
+            "PowerState": "On",
+            "Type": "AspeedFan"
+        },
+        {
+            "Address": "0x48",
+            "Bus": 6,
+            "Name": "EnvTemp1_Outlet",
+            "PowerState": "Always",
+            "Type": "LM75A"
+        },
+        {
+            "Address": "0x49",
+            "Bus": 6,
+            "Name": "EnvTemp1_Inlet",
+            "PowerState": "Always",
+            "Type": "LM75A"
+        },
+        {
+            "Address": "0x4a",
+            "Bus": 6,
+            "Name": "BoardTemp_PCIe",
+            "PowerState": "Always",
+            "Type": "LM75A"
+        },
+        {
+            "Address": "0x4b",
+            "Bus": 6,
+            "Name": "BoardTemp_M2",
+            "PowerState": "Always",
+            "Type": "LM75A"
+        }
+    ],
+    "Name": "CEB-GNRD Sensors",
+    "Probe": "True",
+    "Type": "Board"
+}

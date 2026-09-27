@@ -20,16 +20,16 @@ interfaces:
       - { bus: 4, signal: BMC_SLOT5_I2C4, device: PCIE_X8, address: not-applicable }
       - { bus: 5, signal: BMC_SLOT6_I2C5, device: PCIE_X16, address: not-applicable }
       - { bus: 6, signal: BMC_SLOT7_I2C6, device: PCIE_X8, address: not-applicable }
-      - { bus: 7, signal: BMC_SENSOR_I2C7, device: NST175H-QSPR, address: [0x48, 0x49, 0x4a, 0x4b] }
-      - { bus: 8, signal: BMC_CPRS_I2C8, device: CPRS, address: 0x4a, max_speed_hz: 100000 }
-      - { bus: 9, signal: BMC_CPLD_I2C9, device: M2_CPLD, address: not-applicable }
-      - { bus: 10, signal: BMC_RTC_I2C10, device: NCT3015Y, address: pending }
-      - { bus: 11, signal: BMC_FRU_I2C11, device: FM24C08D, address: pending }
-      - { bus: 12, signal: BMC_TCA9546_I2C12, device: TCA9546A, address: pending }
-      - { bus: 13, signal: BMC_MCIO_I2C13, device: MCIO_X8, address: not-applicable }
-      - { bus: 14, signal: BMC_MCIO_I2C14, device: reserved, address: pending }
-      - { bus: 15, signal: BMC_PROM_SMBUS, device: CPU_SMBUS_HOST, address: pending }
-      - { bus: 16, signal: MIPI60_I2C, device: MIPI60_CONNECTOR, address: pending }
+      - { bus: 7, linux_controller: i2c6, signal: BMC_SENSOR_I2C7, device: NST175H-QSPR, address: [0x48, 0x49, 0x4a, 0x4b] }
+      - { bus: 8, linux_controller: i2c7, signal: BMC_CPRS_I2C8, device: CPRS, address: pending, max_speed_hz: 100000 }
+      - { bus: 9, linux_controller: i2c8, signal: BMC_CPLD_I2C9, device: M2_CPLD, address: not-applicable }
+      - { bus: 10, linux_controller: i2c9, signal: BMC_RTC_I2C10, device: NCT3015Y, address: pending }
+      - { bus: 11, linux_controller: i2c10, signal: BMC_FRU_I2C11, device: FM24C08D, address: 0x50 }
+      - { bus: 12, linux_controller: i2c11, signal: BMC_TCA9546_I2C12, device: TCA9546A, address: pending }
+      - { bus: 13, linux_controller: i2c12, signal: BMC_MCIO_I2C13, device: MCIO_X8, address: not-applicable }
+      - { bus: 14, linux_controller: i2c13, signal: BMC_MCIO_I2C14, device: reserved, address: pending }
+      - { bus: 15, linux_controller: i2c14, signal: BMC_PROM_SMBUS, device: CPU_SMBUS_HOST, address: pending }
+      - { bus: 16, linux_controller: i2c15, signal: MIPI60_I2C, device: MIPI60_CONNECTOR, address: pending }
     i3c:
       - { bus: 1, signal: I3C_BMC_SPD_SCL1_SDA1, device: DIMM0-3_SPD_TEMPERATURE, status: pending-device-tree-map }
       - { bus: 2, signal: I3C_BMC_SPD_SCL2_SDA2, device: DIMM4-7_SPD_TEMPERATURE, status: pending-device-tree-map }
@@ -42,19 +42,19 @@ interfaces:
 
   adc:
     source: AST2600 ADC0 channels 0-15
-    scaling: board-divider-values-required-before-publishing-volts
+    scaling: confirmed-by-page-49-resistor-dividers
     channels:
       - { channel: 0, name: P12V_SYS, net: P12V_SYS_ADC0, nominal: 12.0 }
       - { channel: 1, name: P5V0_SYS, net: P5V0_SYS_ADC1, nominal: 5.0 }
       - { channel: 2, name: P3V3_SYS, net: P3V3_SYS_ADC2, nominal: 3.3 }
-      - { channel: 3, name: PVCCIN_CPU, net: PVCCIN_CPU_ADC3, nominal: pending }
-      - { channel: 4, name: PVNN_NAC_CPU, net: PVNN_NAC_CPU_ADC4, nominal: pending }
-      - { channel: 5, name: PVCCD0_HV_CPU, net: PVCCD0_HV_CPU_ADC5, nominal: pending }
-      - { channel: 6, name: PVCCINF_CPU, net: PVCCINF_CPU_ADC6, nominal: pending }
-      - { channel: 7, name: PVNN_MAIN_CPU, net: PVNN_MAIN_CPU_ADC7, nominal: pending }
-      - { channel: 8, name: PVCCFA_EHV_CPU, net: PVCCFA_EHV_CPU_ADC8, nominal: pending }
-      - { channel: 9, name: PVCCD1_HV_CPU, net: PVCCD1_HV_CPU_ADC9, nominal: pending }
-      - { channel: 10, name: PVCCINF_EHV_FIVRA_CPU, net: PVCCINF_EHV_FIVRA_CPU_ADC10, nominal: pending }
+      - { channel: 3, name: PVCCIN_CPU, net: PVCCIN_CPU_ADC3, nominal: 1.8 }
+      - { channel: 4, name: PVNN_NAC_CPU, net: PVNN_NAC_CPU_ADC4, nominal: 1.0 }
+      - { channel: 5, name: PVCCD0_HV_CPU, net: PVCCD0_HV_CPU_ADC5, nominal: 1.13 }
+      - { channel: 6, name: PVCCINF_CPU, net: PVCCINF_CPU_ADC6, nominal: 0.85 }
+      - { channel: 7, name: PVNN_MAIN_CPU, net: PVNN_MAIN_CPU_ADC7, nominal: 1.0 }
+      - { channel: 8, name: PVCCFA_EHV_CPU, net: PVCCFA_EHV_CPU_ADC8, nominal: 1.8 }
+      - { channel: 9, name: PVCCD1_HV_CPU, net: PVCCD1_HV_CPU_ADC9, nominal: 1.13 }
+      - { channel: 10, name: PVCCINF_EHV_FIVRA_CPU, net: PVCCINF_EHV_FIVRA_CPU_ADC10, nominal: 1.8 }
       - { channel: 11, name: P3V3_STBY, net: P3V3_STBY_ADC11, nominal: 3.3 }
       - { channel: 12, name: P1V8_STBY, net: P1V8_STBY_ADC12, nominal: 1.8 }
       - { channel: 13, name: P1V2_STBY, net: P1V2_STBY_ADC13, nominal: 1.2 }
@@ -64,15 +64,19 @@ interfaces:
   fans:
     source: AST2600 G6 PWM/TACH
     channels:
-      - { index: 0, tach: SYS_FAN0_TACH, pwm: BMC_FAN0_PWM, tach_pin: AA25, pwm_pin: AD26 }
-      - { index: 1, tach: SYS_FAN1_TACH, pwm: BMC_FAN1_PWM, tach_pin: AB25, pwm_pin: AD22 }
-      - { index: 2, tach: SYS_FAN2_TACH, pwm: BMC_FAN2_PWM, tach_pin: Y24, pwm_pin: AD23 }
-      - { index: 3, tach: SYS_FAN3_TACH, pwm: BMC_FAN3_PWM, tach_pin: AB26, pwm_pin: AD24 }
-      - { index: 4, tach: SYS_FAN4_TACH, pwm: BMC_FAN4_PWM, tach_pin: Y26, pwm_pin: AD25 }
-      - { index: 5, tach: SYS_FAN5_TACH, pwm: BMC_FAN5_PWM, tach_pin: AC26, pwm_pin: AC22 }
+      - { index: 0, tach: SYS_FAN0_TACH, pwm: BMC_FAN0_PWM, tach_channel: 0, pwm_channel: 0 }
+      - { index: 1, tach: SYS_FAN1_TACH, pwm: BMC_FAN1_PWM, tach_channel: 1, pwm_channel: 1 }
+      - { index: 2, tach: SYS_FAN2_TACH, pwm: BMC_FAN2_PWM, tach_channel: 2, pwm_channel: 2 }
+      - { index: 3, tach: SYS_FAN3_TACH, pwm: BMC_FAN3_PWM, tach_channel: 3, pwm_channel: 3 }
+      - { index: 4, tach: SYS_FAN4_TACH, pwm: BMC_FAN4_PWM, tach_channel: 4, pwm_channel: 4 }
+      - { index: 5, tach: SYS_FAN5_TACH, pwm: BMC_FAN5_PWM, tach_channel: 5, pwm_channel: 5 }
     policy: adaptive-from-CPU-temperature-with-web-manual-override
+    web_control:
+      modes: [adaptive, fixed]
+      minimum_pwm_percent: { min: 10, default: 30, max: 100 }
+      fixed_pwm_presets_percent: [20, 40, 60, 80, 100]
     unit: RPM
-    status: pending-device-tree-map
+    status: confirmed-schematic-and-device-tree
 
   gpio:
     active_low_inputs:
@@ -102,11 +106,19 @@ interfaces:
     - name: EnvTemp1
       source: dbus-sensors ExitAirTempSensor or hwmon
       accuracy_celsius: 2
-      status: pending-hardware-map
+      status: confirmed-i2c7-address-map
     - name: EnvTemp2
       source: dbus-sensors ExitAirTempSensor or hwmon
       accuracy_celsius: 2
-      status: pending-hardware-map
+      status: confirmed-i2c7-address-map
+    - name: BoardTemp_PCIe
+      source: NST175H at schematic I2C7 address 0x4a
+      accuracy_celsius: 2
+      status: confirmed-i2c7-address-map
+    - name: BoardTemp_M2
+      source: NST175H at schematic I2C7 address 0x4b
+      accuracy_celsius: 2
+      status: confirmed-i2c7-address-map
     - name: CPU_Temp
       source: PECI CPU temperature through dbus-sensors IntelCPUSensor
       status: kernel-and-host-dependent
@@ -119,14 +131,14 @@ interfaces:
 
   voltages:
     - name: CPU_Core_Voltage
-      source: hwmon or PMBus regulator channel
-      status: pending-hardware-map
+      source: AST2600 ADC channels 3/6/8/9/10 and JW6375 PMBus telemetry
+      status: adc-confirmed-pmbus-channel-map-pending
     - name: DIMM_Voltage
-      source: hwmon or PMBus regulator channel
-      status: pending-hardware-map
+      source: AST2600 ADC channel 7 (PVNN_MAIN_CPU) and PMBus telemetry
+      status: adc-confirmed-pmbus-channel-map-pending
     - name: PCIe_12V
-      source: hwmon or PMBus regulator channel
-      status: pending-hardware-map
+      source: AST2600 ADC channel 0 P12V_SYS
+      status: confirmed-adc-channel
     - name: PSU_Input_Voltage
       source: PMBus PSU sensor
       status: pending-pmbus-map
@@ -148,6 +160,11 @@ interfaces:
   events:
     sel_time: phosphor-time-manager synchronized with host/BIOS RTC
     sel_policy: rollover oldest entries when full
+    cpu0_status:
+      source: GPIOM7
+      meaning: BIOS POST complete when asserted
+      failure_action: FRB2 Watchdog 2 SEL plus alert LED
+      status: board-gpio-event-path-required
     bios_reset_reasons: power-on, power-button, BIOS/OS initiated
     threshold_events: phosphor-sel-logger sensor threshold events
     power_button: GPIO or host event source

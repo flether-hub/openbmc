@@ -25,6 +25,7 @@ MTD_DEV=12
 
 # TODO: Adjust GPIO name for flash security override
 FLASH_OVERRIDE_GPIO="FM_FLASH_SEC_OVRD"
+FLASH_OVERRIDE_PID=""
 
 # TODO: Adjust ME IPMI slave address (0x2e is typical for Intel SPS/ME)
 ME_IPMI_ADDR=0x2e
@@ -87,6 +88,31 @@ power_on() {
     fi
 }
 
+power_cycle() {
+    echo "Power cycling host after BIOS update"
+    power_off
+    sleep 2
+    power_on
+}
+
+enable_flash_override() {
+    echo "Enabling flash security override (${FLASH_OVERRIDE_GPIO})"
+    # Keep the GPIO asserted for the complete flashrom transaction.
+    gpioset --mode=signal "$(gpiofind "${FLASH_OVERRIDE_GPIO}")=1" &
+    FLASH_OVERRIDE_PID=$!
+    sleep 0.1
+}
+
+disable_flash_override() {
+    if [ -n "${FLASH_OVERRIDE_PID}" ]; then
+        kill "${FLASH_OVERRIDE_PID}" 2>/dev/null || true
+        wait "${FLASH_OVERRIDE_PID}" 2>/dev/null || true
+        FLASH_OVERRIDE_PID=""
+    fi
+}
+
+trap disable_flash_override EXIT
+
 me_wait_poweron() {
     echo "Waiting for ME/SPS firmware to start..."
     for i in $(seq 1 30); do
@@ -119,8 +145,7 @@ me_reset() {
 power_off
 
 # Step 2: Enable flash security override GPIO
-echo "Enabling flash security override (${FLASH_OVERRIDE_GPIO})"
-gpioset "$(gpiofind "${FLASH_OVERRIDE_GPIO}")"=1
+enable_flash_override
 
 # Step 3: Power on the host (ME boots but host stays in recovery)
 power_on
@@ -145,12 +170,13 @@ me_reset
 
 sleep 5
 
-# Step 8: Power off the host
-power_off
+# Step 8: Power cycle the host so the ME reset cannot leave GNR-D partially
+# powered after the BIOS flash.
+power_cycle
 
 # Step 9: Disable flash security override GPIO
 echo "Disabling flash security override (${FLASH_OVERRIDE_GPIO})"
-gpioset "$(gpiofind "${FLASH_OVERRIDE_GPIO}")"=0
+disable_flash_override
 
 # Clean up cached BIOS version
 rm -f /var/cache/bios_version

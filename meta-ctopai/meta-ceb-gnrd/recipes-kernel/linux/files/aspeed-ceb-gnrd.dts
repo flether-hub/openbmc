@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+/*
+ * CEB-GNRD network topology:
+ *   MAC2: independent management RJ45 through the RTL8211 RGMII PHY
+ *   MAC3: host-side NC-SI through the RMII interface
+ *
+ * MAC0 and MAC1 are AST2600 EVB interfaces and must not be exposed on this
+ * board.  Keeping the board-specific mapping here prevents the EVB DT from
+ * creating four Linux network devices.
+ */
+#include "aspeed-ast2600-evb.dts"
+
+/ {
+    model = "CEB-GNRD Xeon 6 BMC";
+    compatible = "ctopai,ceb-gnrd", "aspeed,ast2600";
+
+    aliases {
+        ethernet0 = &mac2;
+        ethernet1 = &mac3;
+    };
+
+    /* Publish all confirmed AST2600 ADC inputs to hwmon/dbus-sensors. */
+    iio-hwmon {
+        compatible = "iio-hwmon";
+        io-channels = <&adc0 0>, <&adc0 1>, <&adc0 2>, <&adc0 3>,
+            <&adc0 4>, <&adc0 5>, <&adc0 6>, <&adc0 7>,
+            <&adc0 8>, <&adc0 9>, <&adc0 10>, <&adc0 11>,
+            <&adc0 12>, <&adc0 13>, <&adc0 14>, <&adc0 15>;
+};
+
+&mac0 {
+    status = "disabled";
+};
+
+&mac1 {
+    status = "disabled";
+};
+
+/* Independent BMC management port. */
+&mac2 {
+    status = "okay";
+    phy-mode = "rgmii";
+    phy-handle = <&ethphy2>;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rgmii3_default>;
+};
+
+/* Host NIC sideband management port. */
+&mac3 {
+    status = "okay";
+    /delete-property/ phy-handle;
+    /delete-property/ phy-mode;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rmii4_default>;
+    use-ncsi;
+};
+
+/* The schematic labels these as ADC0..ADC15 and uses the 10K/1K or
+ * 10K/10K dividers recorded in the Entity-Manager configuration. */
+&adc0 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_adc0_default &pinctrl_adc1_default
+        &pinctrl_adc2_default &pinctrl_adc3_default
+        &pinctrl_adc4_default &pinctrl_adc5_default
+        &pinctrl_adc6_default &pinctrl_adc7_default
+        &pinctrl_adc8_default &pinctrl_adc9_default
+        &pinctrl_adc10_default &pinctrl_adc11_default
+        &pinctrl_adc12_default &pinctrl_adc13_default
+        &pinctrl_adc14_default &pinctrl_adc15_default>;
+};
+
+/* Six fan headers are wired to PWM/TACH channels 0..5. */
+&pwm_tach {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_pwm0_default &pinctrl_pwm1_default
+        &pinctrl_pwm2_default &pinctrl_pwm3_default
+        &pinctrl_pwm4_default &pinctrl_pwm5_default
+        &pinctrl_tach0_default &pinctrl_tach1_default
+        &pinctrl_tach2_default &pinctrl_tach3_default
+        &pinctrl_tach4_default &pinctrl_tach5_default>;
+
+    fan@0 {
+        reg = <0>;
+        aspeed,fan-tach-ch = /bits/ 8 <0>;
+    };
+
+    fan@1 {
+        reg = <1>;
+        aspeed,fan-tach-ch = /bits/ 8 <1>;
+    };
+
+    fan@2 {
+        reg = <2>;
+        aspeed,fan-tach-ch = /bits/ 8 <2>;
+    };
+
+    fan@3 {
+        reg = <3>;
+        aspeed,fan-tach-ch = /bits/ 8 <3>;
+    };
+
+    fan@4 {
+        reg = <4>;
+        aspeed,fan-tach-ch = /bits/ 8 <4>;
+    };
+
+    fan@5 {
+        reg = <5>;
+        aspeed,fan-tach-ch = /bits/ 8 <5>;
+    };
+};
+
+/* Required by IntelCPUSensor/DIMMSensor for CPU and memory temperatures. */
+&peci0 {
+    status = "okay";
+};
+
+/*
+ * AST2600 DT labels are zero-based: schematic I2C7 is &i2c6.  The EVB
+ * include enables its own I2C8 demo devices, so remove those before enabling
+ * the board's actual I2C8/9 functions below.
+ */
+&i2c6 {
+    status = "okay";
+
+    /* NST175H is LM75 register compatible. */
+    outlet-temp@48 {
+        compatible = "national,lm75";
+        reg = <0x48>;
+    };
+
+    inlet-temp@49 {
+        compatible = "national,lm75";
+        reg = <0x49>;
+    };
+
+    pcie-temp@4a {
+        compatible = "national,lm75";
+        reg = <0x4a>;
+    };
+
+    m2-temp@4b {
+        compatible = "national,lm75";
+        reg = <0x4b>;
+    };
+};
+
+&i2c7 {
+    /delete-node/ temp@2e;
+    /delete-node/ eeprom@50;
+    status = "okay";
+};
+
+/* CPRS/ATX power monitor bus; device address is intentionally left to the
+ * runtime PMBus/CPRS configuration because the schematic does not identify
+ * a standard Linux-compatible part number. */
+
+&i2c8 { status = "okay"; };
+&i2c9 { status = "okay"; };
+
+/* Schematic I2C11 carries the FM24C08D board FRU. */
+&i2c10 {
+    status = "okay";
+
+    eeprom@50 {
+        compatible = "atmel,24c08";
+        reg = <0x50>;
+        pagesize = <16>;
+    };
+};
+
+/* Schematic I2C12 is the TCA9546 branch bus.  Its address is strap-defined. */
+&i2c11 { status = "okay"; };
+&i2c12 { status = "okay"; };
+&i2c13 { status = "okay"; };
+&i2c14 { status = "okay"; };
+&i2c15 { status = "okay"; };

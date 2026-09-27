@@ -30,5 +30,7 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         phosphor-sel-logger \
         phosphor-time-manager \
         phosphor-watchdog \
+        phosphor-u-boot-mgr \
+        u-boot-fw-utils \
         ipmitool \
         "

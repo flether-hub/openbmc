@@ -1,7 +1,7 @@
-# Keep the Xeon 6 sensor applications enabled even if the upstream default
-# PACKAGECONFIG changes.  Hardware paths and names are supplied later by
-# Entity-Manager/dbus-sensors configuration once the schematic is available.
+# Keep the Xeon 6 sensor applications enabled and consume the board-specific
+# ADC, fan and temperature definitions installed by Entity-Manager.
 PACKAGECONFIG:append:ceb-gnrd = " \
+    adcsensor \
     exitairtempsensor \
     fansensor \
     hwmontempsensor \

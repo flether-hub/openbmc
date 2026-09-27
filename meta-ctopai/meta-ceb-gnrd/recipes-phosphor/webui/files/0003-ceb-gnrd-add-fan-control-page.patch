@@ -1,0 +1,286 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <openbmc@localhost>
+Date: Sun, 27 Sep 2026 00:00:00 +0800
+Subject: [PATCH] ceb-gnrd: add WebUI fan speed control page
+
+Expose the existing OpenBMC OEM fan-controller Redfish interface through a
+board-specific WebUI page. The page supports adaptive control with a minimum
+PWM limit and fixed speed presets. It remains unavailable until the board fan
+controller configuration is present on D-Bus.
+
+Upstream-Status: Inappropriate [CEB-GNRD product policy]
+---
+
+diff --git a/src/components/AppNavigation/AppNavigationMixin.js b/src/components/AppNavigation/AppNavigationMixin.js
+index dc9e050..cabbbc9 100644
+--- a/src/components/AppNavigation/AppNavigationMixin.js
++++ b/src/components/AppNavigation/AppNavigationMixin.js
+@@ -131,6 +131,11 @@ const AppNavigationMixin = {
+               label: i18n.global.t('appNavigation.dateTime'),
+               route: '/settings/date-time',
+             },
++            {
++              id: 'fan-control',
++              label: i18n.global.t('appNavigation.fanControl'),
++              route: '/settings/fan-control',
++            },
+             {
+               id: 'network',
+               label: i18n.global.t('appNavigation.network'),
+               route: '/settings/network',
+diff --git a/src/locales/en-US.json b/src/locales/en-US.json
+index 99f4bd8..34172b8 100644
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -113,6 +113,7 @@
+         "settings": "Settings",
+         "operations": "Operations",
+         "dateTime": "@:appPageTitle.dateTime",
++        "fanControl": "@:appPageTitle.fanControl",
+         "dumps": "@:appPageTitle.dumps",
+         "eventLogs": "@:appPageTitle.eventLogs",
+         "factoryReset": "@:appPageTitle.factoryReset",
+@@ -144,6 +145,7 @@
+         "power": "Power",
+         "sessions": "Sessions",
+         "dateTime": "Date and time",
++        "fanControl": "Fan control",
+         "dumps": "Dumps",
+         "eventLogs": "Event logs",
+         "factoryReset": "Factory reset",
+@@ -198,6 +200,18 @@
+             "successDelete": "Successfully disconnected {count} session. | Successfully disconnected {count} sessions."
+         }
+     },
++    "pageFanControl": {
++        "description": "Configure adaptive or fixed fan speed control.",
++        "mode": "Control mode",
++        "adaptive": "Adaptive",
++        "fixed": "Fixed speed",
++        "minimumSpeed": "Minimum fan speed",
++        "fixedSpeed": "Fixed fan speed",
++        "unavailable": "Fan control is unavailable until a board fan controller is configured.",
++        "loadError": "Unable to load fan control settings.",
++        "saveSuccess": "Fan control settings saved successfully.",
++        "saveError": "Unable to save fan control settings."
++    },
+     "pageDateTime": {
+         "alert": {
+             "message": "To change how date and time are displayed (either UTC or browser offset) throughout the application, visit ",
+diff --git a/src/locales/zh-CN.json b/src/locales/zh-CN.json
+index 4a2d4a1..6a0b3d2 100644
+--- a/src/locales/zh-CN.json
++++ b/src/locales/zh-CN.json
+@@ -37,5 +37,23 @@
+     "systemInformation": "系统信息",
+     "logoutConfirmation": "退出登录确认",
+     "confirmLogout": "确定要退出登录吗？"
+   },
++  "appNavigation": {
++    "fanControl": "风扇控制"
++  },
++  "appPageTitle": {
++    "fanControl": "风扇控制"
++  },
++  "pageFanControl": {
++    "description": "配置自适应或固定风扇转速控制。",
++    "mode": "控制模式",
++    "adaptive": "自适应",
++    "fixed": "固定转速",
++    "minimumSpeed": "最低风扇转速",
++    "fixedSpeed": "固定风扇转速",
++    "unavailable": "尚未配置板级风扇控制器，风扇控制不可用。",
++    "loadError": "无法读取风扇控制设置。",
++    "saveSuccess": "风扇控制设置已保存。",
++    "saveError": "无法保存风扇控制设置。"
++  },
+   "login": {
+diff --git a/src/router/routes.js b/src/router/routes.js
+index f3f6f6b..f9d340d 100644
+--- a/src/router/routes.js
++++ b/src/router/routes.js
+@@ -2,6 +2,7 @@ import AppLayout from '@/layouts/AppLayout.vue';
+ import ChangePassword from '@/views/ChangePassword';
+ import ConsoleLayout from '@/layouts/ConsoleLayout.vue';
+ import DateTime from '@/views/Settings/DateTime';
++import FanControl from '@/views/Settings/FanControl';
+ import EventLogs from '@/views/Logs/EventLogs';
+ import FactoryReset from '@/views/Operations/FactoryReset';
+ import Firmware from '@/views/Operations/Firmware';
+@@ -201,6 +202,14 @@ const routes = [
+           title: i18n.global.t('appPageTitle.dateTime'),
+         },
+       },
++      {
++        path: '/settings/fan-control',
++        name: 'fan-control',
++        component: FanControl,
++        meta: {
++          title: i18n.global.t('appPageTitle.fanControl'),
++        },
++      },
+       {
+         path: '/settings/snmp-alerts',
+         name: 'snmp-alerts',
+         component: SnmpAlerts,
+diff --git a/src/views/Settings/FanControl/FanControl.vue b/src/views/Settings/FanControl/FanControl.vue
+new file mode 100644
+index 0000000..065091b
+--- /dev/null
++++ b/src/views/Settings/FanControl/FanControl.vue
+@@ -0,0 +1,155 @@
++<template>
++  <b-container fluid="xl">
++    <page-title :description="$t('pageFanControl.description')" />
++
++    <b-alert v-if="loadError" show variant="danger">
++      {{ $t('pageFanControl.loadError') }}
++    </b-alert>
++    <b-alert v-else-if="!hasControl" show variant="warning">
++      {{ $t('pageFanControl.unavailable') }}
++    </b-alert>
++
++    <b-form @submit.prevent="saveSettings">
++      <b-form-group :label="$t('pageFanControl.mode')">
++        <b-form-radio-group
++          v-model="mode"
++          :options="modeOptions"
++          name="fan-control-mode"
++          :disabled="!hasControl"
++        />
++      </b-form-group>
++
++      <b-form-group :label="$t('pageFanControl.minimumSpeed')">
++        <b-form-input
++          v-model.number="minimumSpeed"
++          type="range"
++          min="10"
++          max="100"
++          step="1"
++          :disabled="!hasControl"
++        />
++        <output>{{ minimumSpeed }}%</output>
++      </b-form-group>
++
++      <b-form-group
++        v-if="mode === 'fixed'"
++        :label="$t('pageFanControl.fixedSpeed')"
++      >
++        <b-form-select
++          v-model.number="fixedSpeed"
++          :options="fixedOptions"
++          :disabled="!hasControl"
++        />
++      </b-form-group>
++
++      <b-button
++        variant="primary"
++        type="submit"
++        :disabled="isSaving || !hasControl"
++      >
++        {{ $t('global.action.saveSettings') }}
++      </b-button>
++    </b-form>
++  </b-container>
++</template>
++
++<script>
++import api from '@/store/api';
++import BVToastMixin from '@/components/Mixins/BVToastMixin';
++import PageTitle from '@/components/Global/PageTitle';
++
++const managerPath = '/redfish/v1/Managers/bmc';
++
++export default {
++  name: 'FanControl',
++  components: { PageTitle },
++  mixins: [BVToastMixin],
++  data() {
++    return {
++      mode: 'adaptive',
++      minimumSpeed: 30,
++      fixedSpeed: 60,
++      modeOptions: [
++        { text: this.$t('pageFanControl.adaptive'), value: 'adaptive' },
++        { text: this.$t('pageFanControl.fixed'), value: 'fixed' },
++      ],
++      fixedOptions: [20, 40, 60, 80, 100].map((value) => ({
++        text: `${value}%`,
++        value,
++      })),
++      controllers: [],
++      zones: [],
++      isSaving: false,
++      loadError: false,
++    };
++  },
++  computed: {
++    hasControl() {
++      return this.controllers.length > 0 || this.zones.length > 0;
++    },
++  },
++  created() {
++    this.loadSettings();
++  },
++  methods: {
++    async loadSettings() {
++      try {
++        const { data } = await api.get(managerPath);
++        const fan = data?.Oem?.OpenBmc?.Fan;
++        if (!fan) return;
++
++        this.controllers = Object.entries(fan.FanControllers || {});
++        this.zones = Object.entries(fan.FanZones || {});
++        const first = this.controllers[0]?.[1];
++        const configuredMinimum = Number(first?.OutLimitMin);
++        if (Number.isFinite(configuredMinimum)) {
++          this.minimumSpeed = Math.min(100, Math.max(10, configuredMinimum));
++        }
++        const configuredMaximum = Number(first?.OutLimitMax);
++        if (
++          Number.isFinite(configuredMaximum) &&
++          configuredMaximum < 100 &&
++          configuredMaximum >= this.minimumSpeed
++        ) {
++          this.mode = 'fixed';
++          this.fixedSpeed = configuredMaximum;
++        }
++      } catch {
++        this.loadError = true;
++      }
++    },
++    async saveSettings() {
++      const minimum = Math.min(100, Math.max(10, Number(this.minimumSpeed)));
++      const maximum = this.mode === 'fixed' ? this.fixedSpeed : 100;
++      const fanControllers = Object.fromEntries(
++        this.controllers.map(([name]) => [name, {
++          OutLimitMin: minimum,
++          OutLimitMax: maximum,
++        }]),
++      );
++      const fanZones = Object.fromEntries(
++        this.zones.map(([name]) => [name, { MinThermalOutput: minimum }]),
++      );
++
++      this.isSaving = true;
++      try {
++        await api.patch(managerPath, {
++          Oem: {
++            OpenBmc: {
++              Fan: {
++                ...(this.controllers.length ? { FanControllers: fanControllers } : {}),
++                ...(this.zones.length ? { FanZones: fanZones } : {}),
++              },
++            },
++          },
++        });
++        this.successToast(this.$t('pageFanControl.saveSuccess'));
++      } catch {
++        this.errorToast(this.$t('pageFanControl.saveError'));
++      } finally {
++        this.isSaving = false;
++      }
++    },
++  },
++};
++</script>

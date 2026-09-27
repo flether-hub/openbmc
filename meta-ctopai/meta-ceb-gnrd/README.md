@@ -40,8 +40,10 @@ Platform features
 
 ### eSPI
 
-* `CONFIG_ASPEED_ESPI=y` in `recipes-kernel/linux/files/espi-peci.cfg` —
-  the AST2600 eSPI slave connects to the Intel Xeon host's eSPI master.
+* `CONFIG_ASPEED_ESPI=y`, `CONFIG_ASPEED_ESPI_PERIPHERAL=y` and
+  `CONFIG_ASPEED_LPC_SIO=y` in `recipes-kernel/linux/files/espi-peci.cfg` —
+  enable the AST2600 eSPI peripheral/LPC path used by Intel BIOS port-80
+  accesses.
 * Corrected from the original invalid `CONFIG_ASPEED_LPC_ESPI` symbol
   (verified against meta-ibm/meta-system1 reference for linux-aspeed 6.18).
 * `ceb-gnrd-espi-ready-gpio.service` waits for an eSPI platform device or
@@ -79,9 +81,17 @@ The product exposes two BMC network paths:
 * `eth0`: dedicated management RJ45 port, with static and DHCP address modes.
 * `eth1`: host-side NC-SI path, also represented as IPMI LAN channel 2.
 
-The board contract and the existing IPMI channel table use this mapping. The
-production device tree must still bind the correct AST2600 MAC, PHY and NC-SI
-nodes; the current EVB device tree is only a buildable placeholder.
+The board device tree now enforces this mapping: AST2600 `mac2` is the
+dedicated RGMII/RTL8211 port and `mac3` is the RMII NC-SI port; `mac0` and
+`mac1` are disabled. After flashing a new image, only two Linux network
+devices should be present. An old image will continue to expose the EVB's
+four MACs until the new kernel device tree is booted.
+
+The Web UI fan-control page uses the existing bmcweb OpenBMC fan-controller
+Redfish API. It provides adaptive mode with a configurable 10-100% minimum
+PWM limit, or fixed 20/40/60/80/100% presets. The page stays read-only with a
+configuration warning until Entity-Manager exposes the production fan PID
+controllers and zones.
 
 ### Web UI languages
 
