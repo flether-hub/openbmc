@@ -3,3 +3,28 @@ customrc
 *.sw?
 .repo/
 .vscode/
+
+# ===== Yocto/OpenBMC build output =====
+build/
+build-*/
+tmp/
+sstate-cache/
+downloads/
+
+# BitBake
+bitbake.lock
+bitbake-cookerdaemon.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Editor
+.idea/
+
+# Temporary files
+*.swo
+*~
