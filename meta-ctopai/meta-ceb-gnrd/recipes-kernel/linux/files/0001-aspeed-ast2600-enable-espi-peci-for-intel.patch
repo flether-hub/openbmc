@@ -1,0 +1,36 @@
+From: OpenBMC Maintainers <openbmc@lists.ozlabs.org>
+Subject: [PATCH] aspeed/ast2600: Enable eSPI and PECI interfaces for Intel platform
+Date: Sun, 27 Sep 2026 06:00:00 +0000
+
+Enable eSPI (Enhanced Serial Peripheral Interface) and PECI (Platform
+Environment Control Interface) support in the AST2600 device tree to support
+Intel platform BMC integration. This allows:
+
+- eSPI communication with Intel PCH for LPC/eSPI tunneling
+- PECI communication for CPU temperature and DIMM temperature monitoring
+- Access to CPU and memory thermal information via hwmon
+
+Signed-off-by: OpenBMC Developers <openbmc@lists.ozlabs.org>
+---
+
+Note: This is a template patch. Actual device tree modifications depend on:
+1. Specific Intel platform (e.g., Eagle Stream, Whitley, Birch Stream)
+2. AST2600 pin assignments for eSPI/PECI
+3. PECI target device addresses on the bus
+
+The following should be added to aspeed-ast2600-evb.dts or a platform-specific override:
+
+&espi {
+    status = "okay";
+};
+
+&peci {
+    status = "okay";
+    // PECI target device configuration for Intel CPUs
+    // Example: CPU at 0x30, DIMM temp at 0x31
+};
+
+To apply this patch to a real build:
+1. Customize the device tree nodes based on your Intel platform
+2. Place the actual .dts changes in a proper patch file
+3. Ensure proper pin muxing configuration in U-Boot as well
