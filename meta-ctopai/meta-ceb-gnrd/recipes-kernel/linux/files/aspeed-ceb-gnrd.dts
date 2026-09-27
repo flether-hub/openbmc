@@ -29,6 +29,7 @@
             <&adc0 8>, <&adc0 9>, <&adc0 10>, <&adc0 11>,
             <&adc0 12>, <&adc0 13>, <&adc0 14>, <&adc0 15>;
 };
+};
 
 &mac0 {
     status = "disabled";
