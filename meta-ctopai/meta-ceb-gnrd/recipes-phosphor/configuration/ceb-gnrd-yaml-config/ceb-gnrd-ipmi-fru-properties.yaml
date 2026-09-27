@@ -10,3 +10,8 @@
 #         MACAddress:
 #             IPMIFruProperty: Custom Field 2
 #             IPMIFruSection: Board
+
+# Keep the placeholder as an empty YAML mapping.  The phosphor-ipmi-fru
+# generator iterates the document and does not accept YAML null (comments
+# only), which would make the compile-time generated C++ fail.
+{}
