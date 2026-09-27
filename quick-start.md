@@ -35,20 +35,32 @@
 
 ---
 
-## 二、构建环境准备
+## 二、构建环境与完整依赖准备
 
 以下命令应在 Linux 主机或虚拟机中执行（推荐使用 **Ubuntu 22.04 LTS / 24.04 LTS**）。
 
-### 1. 安装 OpenEmbedded / Yocto 基础依赖
+### 1. 安装 OpenBMC / Yocto / QEMU 全套依赖
+
+原生的 Yocto 基础包仅涵盖通用编译工具，进行 OpenBMC 开发、测试和模拟器验证还需要补充 **QEMU ARM 模拟器**、**IPMI 测试工具**、**Redfish/JSON 解析工具** 以及 **Python YAML/打包库**。
+
+请直接运行以下一键安装命令：
 
 ```bash
 sudo apt update
 sudo apt install -y \
-    build-essential chrpath diffstat gawk git wget \
-    libegl1-mesa libsdl1.2-dev pylint3 python3 python3-git \
-    python3-jinja2 python3-pexpect python3-subunit socat \
-    texinfo unzip xterm zstd file locales
+    build-essential chrpath diffstat gawk git wget curl \
+    libegl1-mesa libsdl1.2-dev python3 python3-git \
+    python3-jinja2 python3-pexpect python3-subunit python3-pip \
+    python3-yaml python3-setuptools socat texinfo unzip xterm \
+    zstd lz4 cpio file locales libssl-dev jq ipmitool \
+    qemu-system-arm qemu-utils openssh-client
 ```
+
+#### 📦 关键依赖分类说明：
+* **Yocto / BitBake 核心构建依赖**：`build-essential`、`diffstat`、`gawk`、`chrpath`、`texinfo`、`zstd`、`lz4`、`cpio`、`file`、`socat`、`unzip`
+* **Python 开发与 YAML 解析库**：`python3-pip`、`python3-yaml`（处理 IPMI/Entity-Manager YAML 配置）、`python3-jinja2`、`python3-git`
+* **QEMU 模拟与固件运行工具**：`qemu-system-arm`（运行 AST2600 模拟器必选）、`qemu-utils`
+* **BMC 联调与测试工具**：`ipmitool`（执行 IPMI 指令/读写 FRU/传感器）、`curl` & `jq`（测试与格式化 Redfish API 返回的 JSON 数据）、`openssh-client`（SSH 登录）
 
 ### 2. 设置 UTF-8 语言环境
 
