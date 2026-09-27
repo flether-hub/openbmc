@@ -3,7 +3,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/entity-manager:"
 SRC_URI:append:ceb-gnrd = " file://ceb-gnrd.json"
 
 do_install:append:ceb-gnrd() {
-    install -D -m 0644 ${WORKDIR}/ceb-gnrd.json \
+    install -D -m 0644 ${UNPACKDIR}/ceb-gnrd.json \
         ${D}${datadir}/entity-manager/configurations/ceb-gnrd.json
 }
 
