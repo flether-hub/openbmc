@@ -1,121 +1,101 @@
-# OpenBMC Guide Tutorial (全套教程合集)
+# OpenBMC Guide Tutorial (全套教程完整合集)
 
-> **来源说明**：本文档爬取整理自开源教程 [Home | OpenBMC Guide Tutorial](https://michaeltien8901.github.io/openbmc-guide-tutorial/)。
+> **来源说明**：本文档整理自开源教程 [Home | OpenBMC Guide Tutorial](https://michaeltien8901.github.io/openbmc-guide-tutorial/)。
 > 本教程涵盖了从 OpenBMC 基础入门、架构与 D-Bus、核心服务、接口开发、进阶特性到板级移植的完整开发体系。
 > **文档生成时间**：2026-09-28
+> **文章总数**：88 篇
 
 ---
 
-## 📖 目录索引 (Table of Contents)
+## 📖 目录大纲 (Table of Contents)
 
-### 📂 00-00
 * [Home](#home)
-
-### 📂 00-01
 * [Learning Paths](#learning-paths)
-
-### 📂 01-GETTING
-* [Introduction](#introduction)
-* [Environment Setup](#environment-setup)
-* [First Build](#first-build)
-* [Development Workflow](#development-workflow)
-* [Building QEMU](#building-qemu)
-* [Devtool Workflow Guide](#devtool-workflow-guide)
-* [Gerrit Contribution Guide](#gerrit-contribution-guide)
-
-### 📂 02-ARCHITECTURE
-* [OpenBMC Overview](#openbmc-overview)
-* [D-Bus Guide](#d-bus-guide)
-* [State Manager Guide](#state-manager-guide)
-* [Custom D-Bus Services Guide](#custom-d-bus-services-guide)
-* [Systemd Boot Ordering Guide](#systemd-boot-ordering-guide)
-
-### 📂 03-CORE
-* [D-Bus Sensors Guide](#d-bus-sensors-guide)
-* [Hwmon Sensors Guide](#hwmon-sensors-guide)
-* [Entity Manager Guide](#entity-manager-guide)
-* [Fan Control Guide](#fan-control-guide)
-* [Power Management Guide](#power-management-guide)
-* [User Manager Guide](#user-manager-guide)
-* [Network Guide](#network-guide)
-* [LED Manager Guide](#led-manager-guide)
-* [Certificate Manager Guide](#certificate-manager-guide)
-* [Time Manager Guide](#time-manager-guide)
-* [Inventory Manager Guide](#inventory-manager-guide)
-* [Watchdog Guide](#watchdog-guide)
-* [Buttons Guide](#buttons-guide)
-* [GPIO Management Guide](#gpio-management-guide)
-* [PECI Thermal Monitoring](#peci-thermal-monitoring)
-* [I2C Device Integration](#i2c-device-integration)
-* [PSU & PMBus Management](#psu-pmbus-management)
-* [LDAP Integration](#ldap-integration)
-* [PID Thermal Tuning](#pid-thermal-tuning)
-* [Intrusion Detection Guide](#intrusion-detection-guide)
-* [Leak Detection](#leak-detection)
-* [NVIDIA GPU Management](#nvidia-gpu-management)
-
-### 📂 04-INTERFACES
-* [IPMI Guide](#ipmi-guide)
-* [Redfish Guide](#redfish-guide)
-* [WebUI Guide](#webui-guide)
-* [KVM Guide](#kvm-guide)
-* [Virtual Media Guide](#virtual-media-guide)
-* [Console Guide](#console-guide)
-* [SSH Security Guide](#ssh-security-guide)
-* [Redfish Events & Telemetry](#redfish-events-telemetry)
-* [Redfish OEM Extensions](#redfish-oem-extensions)
-
-### 📂 05-ADVANCED
-* [MCTP & PLDM Guide](#mctp-pldm-guide)
-* [SPDM Guide](#spdm-guide)
-* [Firmware Update Guide](#firmware-update-guide)
-* [Intel ASD/ACD Guide](#intel-asd-acd-guide)
-* [AMD Debug & Management Guide](#amd-debug-management-guide)
-* [Logging Guide](#logging-guide)
-* [SDR Guide](#sdr-guide)
-* [Linux Debug Tools Guide](#linux-debug-tools-guide)
-* [eSPI Guide](#espi-guide)
-* [Unit Testing Guide](#unit-testing-guide)
-* [Robot Framework Guide](#robot-framework-guide)
-* [Linux Kernel Driver Development](#linux-kernel-driver-development)
-* [Secure Boot & Image Signing](#secure-boot-image-signing)
-* [Multi-Host Support](#multi-host-support)
-* [Performance Optimization](#performance-optimization)
-* [BIOS Firmware Management](#bios-firmware-management)
-* [Debug Dump Collection](#debug-dump-collection)
-* [POST Code Monitoring](#post-code-monitoring)
-* [PLDM Platform Monitoring](#pldm-platform-monitoring)
-* [PLDM Firmware Update](#pldm-firmware-update)
-* [DICE Security](#dice-security)
-* [SGPIO (Serial GPIO)](#sgpio-serial-gpio)
-* [Device Firmware Update](#device-firmware-update)
-
-### 📂 06-PORTING
-* [Porting Reference](#porting-reference)
-* [Machine Layer Guide](#machine-layer-guide)
-* [Device Tree Guide](#device-tree-guide)
-* [U-Boot Guide](#u-boot-guide)
-* [Verification Guide](#verification-guide)
-* [ARM Platform Guide](#arm-platform-guide)
-* [Entity Manager Advanced](#entity-manager-advanced)
-* [Flash Layout & Optimization Guide](#flash-layout-optimization-guide)
-* [AST2700 Enablement](#ast2700-enablement)
-
-### 📂 07-APPENDIX
-* [Jenkins CI/CD Infrastructure](#jenkins-ci-cd-infrastructure)
-* [AMI OneTree vs OpenBMC](#ami-onetree-vs-openbmc)
-* [Yocto BitBake Build Optimization](#yocto-bitbake-build-optimization)
-
-### 📂 08-SEC
-* [Advanced Topics](#advanced-topics)
-* [Appendix](#appendix)
-* [Architecture](#architecture)
-* [Core Services](#core-services)
 * [Getting Started](#getting-started)
+  * [Introduction](#introduction)
+  * [Environment Setup](#environment-setup)
+  * [First Build](#first-build)
+  * [Development Workflow](#development-workflow)
+  * [Building QEMU](#building-qemu)
+  * [Devtool Workflow Guide](#devtool-workflow-guide)
+  * [Gerrit Contribution Guide](#gerrit-contribution-guide)
+* [Architecture](#architecture)
+  * [OpenBMC Overview](#openbmc-overview)
+  * [D-Bus Guide](#d-bus-guide)
+  * [State Manager Guide](#state-manager-guide)
+  * [Custom D-Bus Services Guide](#custom-d-bus-services-guide)
+  * [Systemd Boot Ordering Guide](#systemd-boot-ordering-guide)
+* [Core Services](#core-services)
+  * [D-Bus Sensors Guide](#d-bus-sensors-guide)
+  * [Hwmon Sensors Guide](#hwmon-sensors-guide)
+  * [Entity Manager Guide](#entity-manager-guide)
+  * [Fan Control Guide](#fan-control-guide)
+  * [Power Management Guide](#power-management-guide)
+  * [User Manager Guide](#user-manager-guide)
+  * [Network Guide](#network-guide)
+  * [LED Manager Guide](#led-manager-guide)
+  * [Certificate Manager Guide](#certificate-manager-guide)
+  * [Time Manager Guide](#time-manager-guide)
+  * [Inventory Manager Guide](#inventory-manager-guide)
+  * [Watchdog Guide](#watchdog-guide)
+  * [Buttons Guide](#buttons-guide)
+  * [GPIO Management Guide](#gpio-management-guide)
+  * [PECI Thermal Monitoring](#peci-thermal-monitoring)
+  * [I2C Device Integration](#i2c-device-integration)
+  * [PSU & PMBus Management](#psu-pmbus-management)
+  * [LDAP Integration](#ldap-integration)
+  * [PID Thermal Tuning](#pid-thermal-tuning)
+  * [Intrusion Detection Guide](#intrusion-detection-guide)
+  * [Leak Detection](#leak-detection)
+  * [NVIDIA GPU Management](#nvidia-gpu-management)
 * [Interfaces](#interfaces)
+  * [IPMI Guide](#ipmi-guide)
+  * [Redfish Guide](#redfish-guide)
+  * [WebUI Guide](#webui-guide)
+  * [KVM Guide](#kvm-guide)
+  * [Virtual Media Guide](#virtual-media-guide)
+  * [Console Guide](#console-guide)
+  * [SSH Security Guide](#ssh-security-guide)
+  * [Redfish Events & Telemetry](#redfish-events-telemetry)
+  * [Redfish OEM Extensions](#redfish-oem-extensions)
+* [Advanced Topics](#advanced-topics)
+  * [MCTP & PLDM Guide](#mctp-pldm-guide)
+  * [SPDM Guide](#spdm-guide)
+  * [Firmware Update Guide](#firmware-update-guide)
+  * [Intel ASD/ACD Guide](#intel-asd-acd-guide)
+  * [AMD Debug & Management Guide](#amd-debug-management-guide)
+  * [Logging Guide](#logging-guide)
+  * [SDR Guide](#sdr-guide)
+  * [Linux Debug Tools Guide](#linux-debug-tools-guide)
+  * [eSPI Guide](#espi-guide)
+  * [Unit Testing Guide](#unit-testing-guide)
+  * [Robot Framework Guide](#robot-framework-guide)
+  * [Linux Kernel Driver Development](#linux-kernel-driver-development)
+  * [Secure Boot & Image Signing](#secure-boot-image-signing)
+  * [Multi-Host Support](#multi-host-support)
+  * [Performance Optimization](#performance-optimization)
+  * [BIOS Firmware Management](#bios-firmware-management)
+  * [Debug Dump Collection](#debug-dump-collection)
+  * [POST Code Monitoring](#post-code-monitoring)
+  * [PLDM Platform Monitoring](#pldm-platform-monitoring)
+  * [PLDM Firmware Update](#pldm-firmware-update)
+  * [DICE Security](#dice-security)
+  * [SGPIO (Serial GPIO)](#sgpio-serial-gpio)
+  * [Device Firmware Update](#device-firmware-update)
 * [Porting](#porting)
-
-### 📂 09-CONTRIBUTING
+  * [Porting Reference](#porting-reference)
+  * [Machine Layer Guide](#machine-layer-guide)
+  * [Device Tree Guide](#device-tree-guide)
+  * [U-Boot Guide](#u-boot-guide)
+  * [Verification Guide](#verification-guide)
+  * [ARM Platform Guide](#arm-platform-guide)
+  * [Entity Manager Advanced](#entity-manager-advanced)
+  * [Flash Layout & Optimization Guide](#flash-layout-optimization-guide)
+  * [AST2700 Enablement](#ast2700-enablement)
+* [Appendix](#appendix)
+  * [Jenkins CI/CD Infrastructure](#jenkins-ci-cd-infrastructure)
+  * [AMI OneTree vs OpenBMC](#ami-onetree-vs-openbmc)
+  * [Yocto BitBake Build Optimization](#yocto-bitbake-build-optimization)
 * [Contributing](#contributing)
 
 ---
@@ -477,6 +457,145 @@ Choose based on your job function or project goals.
 ---
 
 These paths are suggestions, not requirements. Feel free to skip guides you already know or explore topics in any order that suits your learning style.
+
+
+
+<a id="getting-started"></a>
+
+---
+
+<div id="main-content" class="main-content">
+        <main>
+          
+            
+# Getting Started
+
+    
+
+This section covers everything you need to start developing with OpenBMC.
+
+## What You’ll Learn
+
+    
+
+* Set up a development environment on Linux, macOS, or Windows (via Docker)
+* Clone and configure the OpenBMC repositories
+* Build your first OpenBMC image
+* Run and test in QEMU (the standard development environment)
+* Use the SDK for application development
+
+## No Hardware Required
+
+    
+
+**QEMU is the standard development environment for OpenBMC** — not a compromise or simulation fallback. Professional OpenBMC developers at Google, Meta, IBM, and other companies use QEMU daily for most development work.
+
+### Feature Comparison: QEMU vs Raspberry Pi vs Real Hardware
+
+    
+
+<div class="table-wrapper">
+| Feature | QEMU (ASPEED) | Raspberry Pi | ASPEED AST2600 EVB |
+| --- | --- | --- | --- |
+| OpenBMC software stack | ✅ Full | ✅ Full | ✅ Full |
+| D-Bus services | ✅ Full | ✅ Full | ✅ Full |
+| Redfish API (bmcweb) | ✅ Full | ✅ Full | ✅ Full |
+| Yocto/BitBake build | ✅ Full | ✅ Full | ✅ Full |
+| I2C sensors (tmp105, EEPROMs) | ✅ Well emulated | ❌ No ASPEED I2C | ✅ Hardware |
+| SPI flash (boot, firmware) | ✅ Well emulated | ❌ SD card boot | ✅ Hardware |
+| GPIO (pins, interrupts) | ✅ Functional | ⚠️ Limited | ✅ Hardware |
+| ADC (analog sensors) | ⚠️ Synthetic values | ❌ No built-in ADC | ✅ Hardware |
+| IPMI KCS/BT interface | ⚠️ Partial | ❌ Not available | ✅ Hardware |
+| PECI (CPU temperature) | ⚠️ Stub only | ❌ Not available | ✅ Hardware |
+| PWM / fan tachometer | ⚠️ Register stub | ❌ Not available | ✅ Hardware |
+| KVM-over-IP (video) | ❌ Not emulated | ❌ Not available | ✅ Hardware |
+| eSPI host interface | ❌ Not emulated | ❌ Not available | ✅ Hardware |
+| Secure Boot (RoT) | ⚠️ Basic OTP only | ❌ Not available | ✅ Hardware |
+| **Cost** | **Free** | **$35-75** | **$500-800** |
+
+</div>
+
+### What Requires Real Hardware
+
+    
+
+Only specialized hardware bring-up tasks need physical BMC hardware:
+
+* KVM-over-IP video capture and encoding
+* eSPI/LPC host interface debugging
+* PECI CPU temperature monitoring with real data
+* Real fan control with PWM and tachometer feedback
+* Real analog sensor calibration
+* Platform-specific GPIO timing
+
+These topics are relevant only for hardware engineers doing board bring-up — not for learning OpenBMC software development.
+
+### Recommendation
+
+    
+
+<div class="table-wrapper">
+| Option | Cost | Best For |
+| --- | --- | --- |
+| **QEMU** | Free | ✅ Learning and software development — start here |
+| Raspberry Pi | $35-75 | ⚠️ Exploring the software stack on real hardware, but no BMC peripherals |
+| ASPEED AST2600 EVB | $500-800 | Full hardware bring-up and production development |
+
+</div>
+
+## Prerequisites
+
+    
+
+* A Linux workstation (Ubuntu 22.04+ or Fedora 38+ recommended) OR Docker
+* At least 16GB RAM (32GB recommended)
+* 100GB+ free disk space
+* Basic command line experience
+
+## Guides in This Section
+
+    
+
+<div class="table-wrapper">
+| Guide | Description | Time |
+| --- | --- | --- |
+| [Introduction](/openbmc-guide-tutorial/docs/01-getting-started/01-introduction.html) | What is OpenBMC and why use it | 10 min |
+| [Environment Setup](/openbmc-guide-tutorial/docs/01-getting-started/02-environment-setup.html) | Set up your development environment | 30 min |
+| [First Build](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html) | Build and run OpenBMC in QEMU | 45 min |
+| [Development Workflow](/openbmc-guide-tutorial/docs/01-getting-started/04-development-workflow.html) | Iterate quickly with devtool and bbappend | 30 min |
+| [Building QEMU](/openbmc-guide-tutorial/docs/01-getting-started/05-qemu-build.html) | Build QEMU from source if needed | 20 min |
+| [Devtool Workflow](/openbmc-guide-tutorial/docs/01-getting-started/06-devtool-workflow-guide.html) | Advanced devtool usage for recipe development | 30 min |
+| [Gerrit Contribution](/openbmc-guide-tutorial/docs/01-getting-started/07-gerrit-contribution-guide.html) | Submit patches to OpenBMC via Gerrit | 30 min |
+
+</div>
+
+## Quick Path
+
+    
+
+If you’re eager to get started:
+
+1. **[Environment Setup](/openbmc-guide-tutorial/docs/01-getting-started/02-environment-setup.html)** - Get your tools ready
+2. **[First Build](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html)** - Build and run in QEMU
+3. **[OpenBMC Overview](/openbmc-guide-tutorial/docs/02-architecture/01-openbmc-overview.html)** - Understand the architecture
+
+If you encounter issues, check the [Troubleshooting](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html#troubleshooting) section or search the [OpenBMC mailing list](https://lists.ozlabs.org/listinfo/openbmc).
+
+          
+
+          
+            
+---
+
+## Table of contents
+
+* [Introduction](/openbmc-guide-tutorial/docs/01-getting-started/01-introduction.html)
+* [Environment Setup](/openbmc-guide-tutorial/docs/01-getting-started/02-environment-setup.html)
+* [First Build](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html)
+* [Development Workflow](/openbmc-guide-tutorial/docs/01-getting-started/04-development-workflow.html)
+* [Building QEMU](/openbmc-guide-tutorial/docs/01-getting-started/05-qemu-build.html)
+* [Devtool Workflow Guide](/openbmc-guide-tutorial/docs/01-getting-started/06-devtool-workflow-guide.html)
+* [Gerrit Contribution Guide](/openbmc-guide-tutorial/docs/01-getting-started/07-gerrit-contribution-guide.html)
 
 
 
@@ -4868,6 +4987,96 @@ git push origin HEAD:refs/for/master
 
 **Tested on**: Ubuntu 22.04, OpenBMC master branch (Kirkstone/Scarthgap), Gerrit 3.x
 Last updated: 2026-02-06
+
+
+
+<a id="architecture"></a>
+
+---
+
+<div id="main-content" class="main-content">
+        <main>
+          
+            
+# Architecture
+
+    
+
+Understand how OpenBMC is designed and how its components work together.
+
+## What You’ll Learn
+
+    
+
+* OpenBMC’s overall architecture and design philosophy
+* The D-Bus communication system that connects all services
+* State management for BMC, chassis, and host
+* How to navigate the codebase and find components
+
+## Key Concepts
+
+    
+
+### D-Bus: The Nervous System
+
+    
+
+OpenBMC uses D-Bus as the central communication backbone. All services expose their data and functionality through D-Bus interfaces, enabling:
+
+* Loose coupling between components
+* Dynamic service discovery
+* Language-agnostic communication
+* Easy debugging and introspection
+
+### Phosphor Services
+
+    
+
+The “phosphor-*” repositories contain the core OpenBMC services:
+
+* **phosphor-state-manager**: System state control
+* **phosphor-logging**: Event and error logging
+* **phosphor-dbus-interfaces**: Standard interface definitions
+* And many more…
+
+## Guides in This Section
+
+    
+
+<div class="table-wrapper">
+| Guide | Description | Difficulty |
+| --- | --- | --- |
+| [OpenBMC Overview](/openbmc-guide-tutorial/docs/02-architecture/01-openbmc-overview.html) | Architecture, build system, community | Beginner |
+| [D-Bus Fundamentals](/openbmc-guide-tutorial/docs/02-architecture/02-dbus-guide.html) | D-Bus concepts and usage | Beginner |
+| [State Management](/openbmc-guide-tutorial/docs/02-architecture/03-state-manager-guide.html) | BMC/Chassis/Host states | Intermediate |
+| [Custom D-Bus Services](/openbmc-guide-tutorial/docs/02-architecture/04-custom-dbus-services-guide.html) | Build your own D-Bus service with sdbus++ | Intermediate |
+| [Systemd Boot Ordering](/openbmc-guide-tutorial/docs/02-architecture/05-systemd-boot-ordering-guide.html) | Service dependencies and boot sequence | Intermediate |
+
+</div>
+
+## Prerequisite Knowledge
+
+    
+
+Before diving into architecture:
+
+* Complete the [Getting Started](/openbmc-guide-tutorial/docs/getting-started) section
+* Have a working QEMU environment
+* Basic understanding of Linux services (systemd)
+
+          
+
+          
+            
+---
+
+## Table of contents
+
+* [OpenBMC Overview](/openbmc-guide-tutorial/docs/02-architecture/01-openbmc-overview.html)
+* [D-Bus Guide](/openbmc-guide-tutorial/docs/02-architecture/02-dbus-guide.html)
+* [State Manager Guide](/openbmc-guide-tutorial/docs/02-architecture/03-state-manager-guide.html)
+* [Custom D-Bus Services Guide](/openbmc-guide-tutorial/docs/02-architecture/04-custom-dbus-services-guide.html)
+* [Systemd Boot Ordering Guide](/openbmc-guide-tutorial/docs/02-architecture/05-systemd-boot-ordering-guide.html)
 
 
 
@@ -10330,6 +10539,153 @@ Circular dependencies cause unpredictable boot order. If you see `Found ordering
 
 **Tested on**: QEMU ast2600-evb, OpenBMC master branch
 Last updated: 2026-02-06
+
+
+
+<a id="core-services"></a>
+
+---
+
+<div id="main-content" class="main-content">
+        <main>
+          
+            
+# Core Services
+
+    
+
+Master the essential services that make up an OpenBMC system.
+
+## What You’ll Learn
+
+    
+
+* Sensor monitoring and configuration (D-Bus sensors, hwmon)
+* Entity Manager for hardware discovery
+* Thermal management and fan control (PID, zones)
+* Power management and sequencing
+* User management (accounts, privileges, LDAP)
+* Network configuration (IP, VLAN)
+* LED control (identify, lamp test)
+* Certificate management (TLS/SSL)
+* Time synchronization (NTP, RTC)
+* Hardware inventory and FRU data
+* Watchdog timer configuration
+* Button handling (power, reset)
+* Physical-security and intrusion detection (chassis switch, BMC tamper input, battery-removal)
+
+## Service Categories
+
+    
+
+### Sensors & Monitoring
+
+    
+
+Monitor hardware health through temperature, voltage, current, and fan sensors.
+
+<div class="table-wrapper">
+| Guide | Description |
+| --- | --- |
+| [D-Bus Sensors](/openbmc-guide-tutorial/docs/03-core-services/01-dbus-sensors-guide.html) | ADC, hwmon, virtual sensors |
+| [Hwmon Sensors](/openbmc-guide-tutorial/docs/03-core-services/02-hwmon-sensors-guide.html) | Linux hwmon integration |
+| [Entity Manager](/openbmc-guide-tutorial/docs/03-core-services/03-entity-manager-guide.html) | Hardware discovery and configuration |
+| [GPIO Management](/openbmc-guide-tutorial/docs/03-core-services/14-gpio-management-guide.html) | GPIO monitoring, phosphor-gpio-monitor |
+| [PECI Thermal Monitoring](/openbmc-guide-tutorial/docs/03-core-services/15-peci-thermal-monitoring-guide.html) | CPU temperature via PECI interface |
+| [I2C Device Integration](/openbmc-guide-tutorial/docs/03-core-services/16-i2c-device-integration-guide.html) | I2C device trees, tools, custom drivers |
+| [Leak Detection](/openbmc-guide-tutorial/docs/03-core-services/21-leak-detection-guide.html) | Liquid-cooling leak sensors, shutdown orchestration |
+| [NVIDIA GPU Management](/openbmc-guide-tutorial/docs/03-core-services/22-nvidia-gpu-management-guide.html) | GPU/PCIe/SMA telemetry and control over MCTP |
+
+</div>
+
+### Thermal & Power
+
+    
+
+Control cooling and power systems to keep hardware within operating limits.
+
+<div class="table-wrapper">
+| Guide | Description |
+| --- | --- |
+| [Fan Control](/openbmc-guide-tutorial/docs/03-core-services/04-fan-control-guide.html) | PID thermal control, zones |
+| [Power Management](/openbmc-guide-tutorial/docs/03-core-services/05-power-management-guide.html) | Power sequencing, regulators |
+| [PSU PMBus Management](/openbmc-guide-tutorial/docs/03-core-services/17-psu-pmbus-management-guide.html) | PSU monitoring via PMBus/phosphor-psu-monitor |
+| [PID Thermal Tuning](/openbmc-guide-tutorial/docs/03-core-services/19-pid-thermal-tuning-guide.html) | PID coefficient tuning methodology |
+
+</div>
+
+### System Services
+
+    
+
+Essential services for system operation.
+
+<div class="table-wrapper">
+| Guide | Description |
+| --- | --- |
+| [User Manager](/openbmc-guide-tutorial/docs/03-core-services/06-user-manager-guide.html) | Accounts, privileges, LDAP |
+| [Network](/openbmc-guide-tutorial/docs/03-core-services/07-network-guide.html) | IP configuration, VLAN |
+| [LED Manager](/openbmc-guide-tutorial/docs/03-core-services/08-led-manager-guide.html) | LED control, identify, lamp test |
+| [Certificate Manager](/openbmc-guide-tutorial/docs/03-core-services/09-certificate-manager-guide.html) | TLS/SSL certificates |
+| [Time Manager](/openbmc-guide-tutorial/docs/03-core-services/10-time-manager-guide.html) | NTP, RTC, timezones |
+| [Inventory Manager](/openbmc-guide-tutorial/docs/03-core-services/11-inventory-manager-guide.html) | FRU, hardware inventory |
+| [Watchdog](/openbmc-guide-tutorial/docs/03-core-services/12-watchdog-guide.html) | Host watchdog timer |
+| [Buttons](/openbmc-guide-tutorial/docs/03-core-services/13-buttons-guide.html) | Power/reset buttons |
+| [LDAP Integration](/openbmc-guide-tutorial/docs/03-core-services/18-ldap-integration-guide.html) | LDAP/Active Directory authentication |
+
+</div>
+
+### Physical Security
+
+    
+
+Detect chassis tampering and protect against unauthorized hardware access.
+
+<div class="table-wrapper">
+| Guide | Description |
+| --- | --- |
+| [Intrusion Detection](/openbmc-guide-tutorial/docs/03-core-services/20-intrusion-detection-guide.html) | Chassis switch, BMC tamper input, battery-backed latch, VBAT-SRAM token |
+
+</div>
+
+## Prerequisites
+
+    
+
+* Complete [Architecture](/openbmc-guide-tutorial/docs/architecture) section
+* Understand D-Bus basics
+* Working QEMU environment
+
+          
+
+          
+            
+---
+
+## Table of contents
+
+* [D-Bus Sensors Guide](/openbmc-guide-tutorial/docs/03-core-services/01-dbus-sensors-guide.html)
+* [Hwmon Sensors Guide](/openbmc-guide-tutorial/docs/03-core-services/02-hwmon-sensors-guide.html)
+* [Entity Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/03-entity-manager-guide.html)
+* [Fan Control Guide](/openbmc-guide-tutorial/docs/03-core-services/04-fan-control-guide.html)
+* [Power Management Guide](/openbmc-guide-tutorial/docs/03-core-services/05-power-management-guide.html)
+* [User Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/06-user-manager-guide.html)
+* [Network Guide](/openbmc-guide-tutorial/docs/03-core-services/07-network-guide.html)
+* [LED Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/08-led-manager-guide.html)
+* [Certificate Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/09-certificate-manager-guide.html)
+* [Time Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/10-time-manager-guide.html)
+* [Inventory Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/11-inventory-manager-guide.html)
+* [Watchdog Guide](/openbmc-guide-tutorial/docs/03-core-services/12-watchdog-guide.html)
+* [Buttons Guide](/openbmc-guide-tutorial/docs/03-core-services/13-buttons-guide.html)
+* [GPIO Management Guide](/openbmc-guide-tutorial/docs/03-core-services/14-gpio-management-guide.html)
+* [PECI Thermal Monitoring](/openbmc-guide-tutorial/docs/03-core-services/15-peci-thermal-monitoring-guide.html)
+* [I2C Device Integration](/openbmc-guide-tutorial/docs/03-core-services/16-i2c-device-integration-guide.html)
+* [PSU & PMBus Management](/openbmc-guide-tutorial/docs/03-core-services/17-psu-pmbus-management-guide.html)
+* [LDAP Integration](/openbmc-guide-tutorial/docs/03-core-services/18-ldap-integration-guide.html)
+* [PID Thermal Tuning](/openbmc-guide-tutorial/docs/03-core-services/19-pid-thermal-tuning-guide.html)
+* [Intrusion Detection Guide](/openbmc-guide-tutorial/docs/03-core-services/20-intrusion-detection-guide.html)
+* [Leak Detection](/openbmc-guide-tutorial/docs/03-core-services/21-leak-detection-guide.html)
+* [NVIDIA GPU Management](/openbmc-guide-tutorial/docs/03-core-services/22-nvidia-gpu-management-guide.html)
 
 
 
@@ -31322,6 +31678,149 @@ Last updated: 2026-07-15
 
 
 
+<a id="interfaces"></a>
+
+---
+
+<div id="main-content" class="main-content">
+        <main>
+          
+            
+# External Interfaces
+
+    
+
+Learn how to interact with OpenBMC through its management interfaces.
+
+## What You’ll Learn
+
+    
+
+* IPMI protocol and OEM command implementation
+* Redfish REST API, OEM extensions, and multi-BMC aggregation
+* WebUI customization and branding
+* Remote access via KVM, virtual media, and console
+* SSH access and security hardening
+
+## Interface Overview
+
+    
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight">
+```
+┌─────────────────────────────────────┐
+                    │          Management Client          │
+                    └─────────────────────────────────────┘
+                                     │
+        ┌────────────────────────────┼────────────────────────────┐
+        │                            │                            │
+        ▼                            ▼                            ▼
+┌───────────────┐          ┌─────────────────┐          ┌─────────────────┐
+│     IPMI      │          │     Redfish     │          │     WebUI       │
+│  (ipmitool)   │          │   (REST API)    │          │   (Browser)     │
+└───────────────┘          └─────────────────┘          └─────────────────┘
+        │                            │                            │
+        ▼                            ▼                            ▼
+┌────────────────┐         ┌─────────────────┐          ┌─────────────────┐
+│  ipmid/netipmid│         │     bmcweb      │          │   webui-vue     │
+└────────────────┘         └─────────────────┘          └─────────────────┘
+        │                            │                            │
+        └────────────────────────────┼────────────────────────────┘
+                                     │
+                                     ▼
+                    ┌─────────────────────────────────────┐
+                    │             D-Bus Services          │
+                    └─────────────────────────────────────┘
+```
+
+</div></div>
+
+## Guides in This Section
+
+    
+
+### Management Protocols
+
+    
+
+<div class="table-wrapper">
+| Guide | Description | Use Case |
+| --- | --- | --- |
+| [IPMI](/openbmc-guide-tutorial/docs/04-interfaces/01-ipmi-guide.html) | IPMI protocol, OEM commands | Legacy management, scripting |
+| [Redfish](/openbmc-guide-tutorial/docs/04-interfaces/02-redfish-guide.html) | REST API, modern management | Cloud integration, automation |
+| [WebUI](/openbmc-guide-tutorial/docs/04-interfaces/03-webui-guide.html) | Browser-based management | Human operators |
+| [Redfish Events & Telemetry](/openbmc-guide-tutorial/docs/04-interfaces/08-redfish-events-telemetry-guide.html) | SSE subscriptions, metric reports | Monitoring, alerting |
+| [Redfish OEM Extensions](/openbmc-guide-tutorial/docs/04-interfaces/09-redfish-oem-extensions-guide.html) | Custom OEM resources and actions | Vendor-specific features |
+
+</div>
+
+### Remote Access
+
+    
+
+<div class="table-wrapper">
+| Guide | Description | Use Case |
+| --- | --- | --- |
+| [KVM](/openbmc-guide-tutorial/docs/04-interfaces/04-kvm-guide.html) | Remote keyboard/video/mouse | OS installation, troubleshooting |
+| [Virtual Media](/openbmc-guide-tutorial/docs/04-interfaces/05-virtual-media-guide.html) | Remote ISO/image mounting | OS installation |
+| [Console](/openbmc-guide-tutorial/docs/04-interfaces/06-console-guide.html) | Serial over LAN | Boot monitoring, recovery |
+
+</div>
+
+### Security
+
+    
+
+<div class="table-wrapper">
+| Guide | Description |
+| --- | --- |
+| [SSH](/openbmc-guide-tutorial/docs/04-interfaces/07-ssh-security-guide.html) | SSH access and hardening |
+
+</div>
+
+## Which Interface to Use?
+
+    
+
+<div class="table-wrapper">
+| Scenario | Recommended Interface |
+| --- | --- |
+| Scripting / Automation | Redfish (REST) |
+| Legacy tools / ipmitool | IPMI |
+| Human operators | WebUI |
+| Cloud management platforms | Redfish |
+| Bulk operations | Redfish with scripting |
+
+</div>
+
+## Prerequisites
+
+    
+
+* Complete [Core Services](/openbmc-guide-tutorial/docs/core-services) basics
+* Understand D-Bus object model
+* Working QEMU environment with network access
+
+          
+
+          
+            
+---
+
+## Table of contents
+
+* [IPMI Guide](/openbmc-guide-tutorial/docs/04-interfaces/01-ipmi-guide.html)
+* [Redfish Guide](/openbmc-guide-tutorial/docs/04-interfaces/02-redfish-guide.html)
+* [WebUI Guide](/openbmc-guide-tutorial/docs/04-interfaces/03-webui-guide.html)
+* [KVM Guide](/openbmc-guide-tutorial/docs/04-interfaces/04-kvm-guide.html)
+* [Virtual Media Guide](/openbmc-guide-tutorial/docs/04-interfaces/05-virtual-media-guide.html)
+* [Console Guide](/openbmc-guide-tutorial/docs/04-interfaces/06-console-guide.html)
+* [SSH Security Guide](/openbmc-guide-tutorial/docs/04-interfaces/07-ssh-security-guide.html)
+* [Redfish Events & Telemetry](/openbmc-guide-tutorial/docs/04-interfaces/08-redfish-events-telemetry-guide.html)
+* [Redfish OEM Extensions](/openbmc-guide-tutorial/docs/04-interfaces/09-redfish-oem-extensions-guide.html)
+
+
+
 <a id="ipmi-guide"></a>
 
 ---
@@ -42497,6 +42996,233 @@ Working examples are available in the [examples/redfish](https://github.com/Mich
 ---
 
 **Tested on**: OpenBMC master, QEMU ast2600-evb
+
+
+
+<a id="advanced-topics"></a>
+
+---
+
+<div id="main-content" class="main-content">
+        <main>
+          
+            
+# Advanced Topics
+
+    
+
+Dive into advanced protocols, security features, logging, and debug capabilities.
+
+## What You’ll Learn
+
+    
+
+* MCTP and PLDM for platform management (sensors, firmware update, BIOS config)
+* SPDM for device attestation and security
+* Secure boot and image signing
+* Logging, diagnostics, and debug tools
+* POST code monitoring and debug dump collection
+* Firmware update mechanisms (BMC and BIOS/host firmware)
+* Linux kernel and application debugging (sanitizers, Valgrind)
+* eSPI communication (virtual wires, console, eDAF)
+* Unit testing with GTest/GMock
+* Integration testing with Robot Framework
+* Linux kernel patching for driver development
+* SGPIO (serial GPIO) for expanding signal count over a few shared pins
+* Multi-host BMC management
+* Performance optimization for constrained BMC environments
+
+## Topics
+
+    
+
+### Protocols & Security
+
+    
+
+Modern platform management relies on standardized protocols for component communication and security.
+
+<div class="table-wrapper">
+| Guide | Description | Difficulty |
+| --- | --- | --- |
+| [MCTP/PLDM](/openbmc-guide-tutorial/docs/05-advanced/01-mctp-pldm-guide.html) | Platform management protocols | Advanced |
+| [PLDM Platform Monitoring](/openbmc-guide-tutorial/docs/05-advanced/19-pldm-platform-monitoring-guide.html) | Type 2 sensors, PDRs, effecters, events | Advanced |
+| [SPDM](/openbmc-guide-tutorial/docs/05-advanced/02-spdm-guide.html) | Device attestation, security | Advanced |
+| [Secure Boot & Signing](/openbmc-guide-tutorial/docs/05-advanced/13-secure-boot-signing-guide.html) | Image signing, hardware root of trust | Advanced |
+| [DICE Security](/openbmc-guide-tutorial/docs/05-advanced/21-dice-security-guide.html) | Hardware root-of-trust for device identity and firmware attestation | Advanced |
+
+</div>
+
+### Firmware Management
+
+    
+
+<div class="table-wrapper">
+| Guide | Description |
+| --- | --- |
+| [Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/03-firmware-update-guide.html) | BMC/PNOR updates, signing |
+| [PLDM Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/20-pldm-firmware-update-guide.html) | Type 5 device firmware update via PLDM |
+| [BIOS Firmware Management](/openbmc-guide-tutorial/docs/05-advanced/16-bios-firmware-management-guide.html) | Host firmware update via BMC, BIOS config |
+| [Device Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/23-device-firmware-update-guide.html) | CPLD, voltage regulator, EEPROM, TPM device updaters |
+
+</div>
+
+### Debug Features
+
+    
+
+Vendor-specific tools for deep system debugging.
+
+<div class="table-wrapper">
+| Guide | Description | Platform |
+| --- | --- | --- |
+| [Intel ASD/ACD](/openbmc-guide-tutorial/docs/05-advanced/04-intel-asd-acd-guide.html) | At-Scale Debug, Crash Dump, Error Injection | Intel |
+| [AMD Debug & Management](/openbmc-guide-tutorial/docs/05-advanced/05-amd-ihdt-guide.html) | APML, HDT, EPYC system management | AMD |
+
+</div>
+
+### Logging & Diagnostics
+
+    
+
+Capture events, errors, and diagnostic data for troubleshooting.
+
+<div class="table-wrapper">
+| Guide | Description |
+| --- | --- |
+| [Logging](/openbmc-guide-tutorial/docs/05-advanced/06-logging-guide.html) | Event logs, SEL, POST codes, debug dumps |
+| [SDR](/openbmc-guide-tutorial/docs/05-advanced/07-sdr-guide.html) | Sensor Data Records for IPMI |
+| [Linux Debug Tools](/openbmc-guide-tutorial/docs/05-advanced/08-linux-debug-tools-guide.html) | ASan, UBSan, TSan, Valgrind, KASAN |
+| [Debug Dump Collection](/openbmc-guide-tutorial/docs/05-advanced/17-debug-dump-collection-guide.html) | phosphor-debug-collector, dreport plugins |
+| [POST Code Monitoring](/openbmc-guide-tutorial/docs/05-advanced/18-post-code-monitoring-guide.html) | BIOS POST codes, boot progress tracking |
+
+</div>
+
+### Host Communication
+
+    
+
+Low-level interfaces for BMC-to-host communication.
+
+<div class="table-wrapper">
+| Guide | Description | Platform |
+| --- | --- | --- |
+| [eSPI](/openbmc-guide-tutorial/docs/05-advanced/09-espi-guide.html) | Virtual wires, console, eDAF boot | Intel/AMD |
+
+</div>
+
+### Testing
+
+    
+
+Validate code correctness with unit tests and system behavior with integration tests.
+
+<div class="table-wrapper">
+| Guide | Description | Scope |
+| --- | --- | --- |
+| [Unit Testing](/openbmc-guide-tutorial/docs/05-advanced/10-unit-testing-guide.html) | GTest/GMock for C++ unit tests | Single function/class |
+| [Robot Framework](/openbmc-guide-tutorial/docs/05-advanced/11-robot-framework-guide.html) | Integration testing with openbmc-test-automation | Full system behavior |
+
+</div>
+
+### Kernel & Driver Development
+
+    
+
+Develop and debug Linux kernel drivers for BMC hardware.
+
+<div class="table-wrapper">
+| Guide | Description | Difficulty |
+| --- | --- | --- |
+| [Linux Kernel Driver Development](/openbmc-guide-tutorial/docs/05-advanced/12-linux-kernel-driver-development-guide.html) | Kernel patching, out-of-tree modules, userspace drivers, debugging, I2C/SPI binding | Advanced |
+| [SGPIO (Serial GPIO)](/openbmc-guide-tutorial/docs/05-advanced/22-sgpio-guide.html) | Serial GPIO master on ASPEED/Nuvoton — device tree, driver, and usage compared with parallel GPIO | Advanced |
+
+</div>
+
+### Multi-Host & Platform Scaling
+
+    
+
+Manage multiple hosts from a single BMC and optimize for resource-constrained environments.
+
+<div class="table-wrapper">
+| Guide | Description | Difficulty |
+| --- | --- | --- |
+| [Multi-Host Support](/openbmc-guide-tutorial/docs/05-advanced/14-multi-host-support-guide.html) | Multi-host BMC management, instance routing | Advanced |
+| [Performance Optimization](/openbmc-guide-tutorial/docs/05-advanced/15-performance-optimization-guide.html) | Memory, startup, and I/O optimization | Advanced |
+
+</div>
+
+## Protocol Stack
+
+    
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight">
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Application Layer                        │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
+│  │    PLDM     │  │    SPDM      │  │   Vendor Specific   │ │
+│  │  (Type 0-5) │  │ (Attestation)│  │   (ASD, APML)       │ │
+│  └─────────────┘  └──────────────┘  └─────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                    Transport Layer                          │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │                       MCTP                              ││
+│  │            (Management Component Transport)             ││
+│  └─────────────────────────────────────────────────────────┘│
+├─────────────────────────────────────────────────────────────┤
+│                    Physical Layer                           │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐  │
+│  │  SMBus    │  │   PCIe    │  │    I3C    │  │   USB    │  │
+│  └───────────┘  └───────────┘  └───────────┘  └──────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+</div></div>
+
+## Prerequisites
+
+    
+
+* Strong understanding of [Architecture](/openbmc-guide-tutorial/docs/architecture)
+* Familiarity with [Core Services](/openbmc-guide-tutorial/docs/core-services)
+* Experience with [Interfaces](/openbmc-guide-tutorial/docs/interfaces)
+* Knowledge of low-level hardware interfaces (I2C, PCIe)
+
+Advanced features often require specific hardware support. Check your platform capabilities before implementing.
+
+          
+
+          
+            
+---
+
+## Table of contents
+
+* [MCTP & PLDM Guide](/openbmc-guide-tutorial/docs/05-advanced/01-mctp-pldm-guide.html)
+* [SPDM Guide](/openbmc-guide-tutorial/docs/05-advanced/02-spdm-guide.html)
+* [Firmware Update Guide](/openbmc-guide-tutorial/docs/05-advanced/03-firmware-update-guide.html)
+* [Intel ASD/ACD Guide](/openbmc-guide-tutorial/docs/05-advanced/04-intel-asd-acd-guide.html)
+* [AMD Debug & Management Guide](/openbmc-guide-tutorial/docs/05-advanced/05-amd-ihdt-guide.html)
+* [Logging Guide](/openbmc-guide-tutorial/docs/05-advanced/06-logging-guide.html)
+* [SDR Guide](/openbmc-guide-tutorial/docs/05-advanced/07-sdr-guide.html)
+* [Linux Debug Tools Guide](/openbmc-guide-tutorial/docs/05-advanced/08-linux-debug-tools-guide.html)
+* [eSPI Guide](/openbmc-guide-tutorial/docs/05-advanced/09-espi-guide.html)
+* [Unit Testing Guide](/openbmc-guide-tutorial/docs/05-advanced/10-unit-testing-guide.html)
+* [Robot Framework Guide](/openbmc-guide-tutorial/docs/05-advanced/11-robot-framework-guide.html)
+* [Linux Kernel Driver Development](/openbmc-guide-tutorial/docs/05-advanced/12-linux-kernel-driver-development-guide.html)
+* [Secure Boot & Image Signing](/openbmc-guide-tutorial/docs/05-advanced/13-secure-boot-signing-guide.html)
+* [Multi-Host Support](/openbmc-guide-tutorial/docs/05-advanced/14-multi-host-support-guide.html)
+* [Performance Optimization](/openbmc-guide-tutorial/docs/05-advanced/15-performance-optimization-guide.html)
+* [BIOS Firmware Management](/openbmc-guide-tutorial/docs/05-advanced/16-bios-firmware-management-guide.html)
+* [Debug Dump Collection](/openbmc-guide-tutorial/docs/05-advanced/17-debug-dump-collection-guide.html)
+* [POST Code Monitoring](/openbmc-guide-tutorial/docs/05-advanced/18-post-code-monitoring-guide.html)
+* [PLDM Platform Monitoring](/openbmc-guide-tutorial/docs/05-advanced/19-pldm-platform-monitoring-guide.html)
+* [PLDM Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/20-pldm-firmware-update-guide.html)
+* [DICE Security](/openbmc-guide-tutorial/docs/05-advanced/21-dice-security-guide.html)
+* [SGPIO (Serial GPIO)](/openbmc-guide-tutorial/docs/05-advanced/22-sgpio-guide.html)
+* [Device Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/23-device-firmware-update-guide.html)
 
 
 
@@ -71357,6 +72083,148 @@ Last updated: 2026-07-15
 
 
 
+<a id="porting"></a>
+
+---
+
+<div id="main-content" class="main-content">
+        <main>
+          
+            
+# Platform Porting
+
+    
+
+Port OpenBMC to your custom hardware platform.
+
+## What You’ll Learn
+
+    
+
+* Create a machine-specific layer
+* Configure device tree for your BMC SoC
+* Set up U-Boot for your platform
+* Enable and configure OpenBMC services
+* Verify and validate your port
+* Port to ARM-based server platforms (NVIDIA, Ampere)
+
+## Porting Overview
+
+    
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight">
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Your Machine Layer                       │
+│                   meta-<your-company>                       │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐  │
+│  │ Machine Config  │  │  Device Tree    │  │   Recipes   │  │
+│  │   <machine>.conf│  │   <soc>.dts     │  │   *.bb      │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│                    Phosphor Layer                           │
+│                     meta-phosphor                           │
+├─────────────────────────────────────────────────────────────┤
+│                    OpenBMC Distro                           │
+│                     meta-openbmc                            │
+├─────────────────────────────────────────────────────────────┤
+│                    Yocto/Poky                               │
+│           meta-poky, meta-oe, meta-networking               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+</div></div>
+
+## Porting Workflow
+
+    
+
+1. **Plan** - Identify hardware, map features to OpenBMC services
+2. **Create Layer** - Set up meta- structure
+3. **Device Tree** - Configure BMC SoC peripherals
+4. **U-Boot** - Configure bootloader
+5. **Enable Services** - Configure OpenBMC features
+6. **Test** - Verify each feature works
+7. **Iterate** - Fix issues, add features
+
+## Guides in This Section
+
+    
+
+<div class="table-wrapper">
+| Guide | Description | Phase |
+| --- | --- | --- |
+| [Porting Reference](/openbmc-guide-tutorial/docs/06-porting/01-porting-reference.html) | Complete checklist | Planning |
+| [Machine Layer](/openbmc-guide-tutorial/docs/06-porting/02-machine-layer.html) | Create your layer | Setup |
+| [Device Tree](/openbmc-guide-tutorial/docs/06-porting/03-device-tree.html) | BMC SoC configuration | Configuration |
+| [U-Boot](/openbmc-guide-tutorial/docs/06-porting/04-uboot.html) | Bootloader setup | Configuration |
+| [Verification](/openbmc-guide-tutorial/docs/06-porting/05-verification.html) | Testing procedures | Validation |
+| [ARM Platform Guide](/openbmc-guide-tutorial/docs/06-porting/06-arm-platform-guide.html) | ARM server platforms | Advanced |
+| [Entity Manager Advanced](/openbmc-guide-tutorial/docs/06-porting/07-entity-manager-advanced.html) | Dynamic hardware config | Advanced |
+| [Flash Layout Optimization](/openbmc-guide-tutorial/docs/06-porting/08-flash-layout-optimization-guide.html) | SPI flash partitioning, image size reduction | Advanced |
+| [AST2700 Enablement](/openbmc-guide-tutorial/docs/06-porting/09-ast2700-enablement-guide.html) | ASPEED AST2700 next-gen SoC porting | Advanced |
+
+</div>
+
+## Supported BMC SoCs
+
+    
+
+OpenBMC supports several BMC system-on-chip platforms:
+
+<div class="table-wrapper">
+| SoC | Vendor | Common Platforms |
+| --- | --- | --- |
+| AST2400 | ASPEED | Legacy systems |
+| AST2500 | ASPEED | Current mainstream |
+| AST2600 | ASPEED | Latest generation |
+| NPCM7xx | Nuvoton | Alternative platforms |
+
+</div>
+
+For ARM-based server platforms (NVIDIA Grace, Ampere, etc.), see the [ARM Platform Guide](/openbmc-guide-tutorial/docs/06-porting/06-arm-platform-guide.html).
+
+## Prerequisites
+
+    
+
+* Complete all previous sections
+* Strong Linux kernel knowledge
+* Device tree experience
+* Yocto/BitBake proficiency
+* Access to your target hardware
+
+Porting requires hardware access. While some testing can be done in QEMU, final validation needs real hardware.
+
+## Getting Help
+
+    
+
+* [OpenBMC Mailing List](https://lists.ozlabs.org/listinfo/openbmc)
+* [OpenBMC Discord](https://discord.gg/openbmc)
+* Review existing machine layers in the OpenBMC repository
+
+          
+
+          
+            
+---
+
+## Table of contents
+
+* [Porting Reference](/openbmc-guide-tutorial/docs/06-porting/01-porting-reference.html)
+* [Machine Layer Guide](/openbmc-guide-tutorial/docs/06-porting/02-machine-layer.html)
+* [Device Tree Guide](/openbmc-guide-tutorial/docs/06-porting/03-device-tree.html)
+* [U-Boot Guide](/openbmc-guide-tutorial/docs/06-porting/04-uboot.html)
+* [Verification Guide](/openbmc-guide-tutorial/docs/06-porting/05-verification.html)
+* [ARM Platform Guide](/openbmc-guide-tutorial/docs/06-porting/06-arm-platform-guide.html)
+* [Entity Manager Advanced](/openbmc-guide-tutorial/docs/06-porting/07-entity-manager-advanced.html)
+* [Flash Layout & Optimization Guide](/openbmc-guide-tutorial/docs/06-porting/08-flash-layout-optimization-guide.html)
+* [AST2700 Enablement](/openbmc-guide-tutorial/docs/06-porting/09-ast2700-enablement-guide.html)
+
+
+
 <a id="porting-reference"></a>
 
 ---
@@ -77381,6 +78249,47 @@ Last updated: 2026-02-06
 
 
 
+<a id="appendix"></a>
+
+---
+
+<div id="main-content" class="main-content">
+        <main>
+          
+            
+# Appendix
+
+    
+
+Reference material, infrastructure details, and supplementary documentation for OpenBMC development.
+
+## Contents
+
+    
+
+<div class="table-wrapper">
+| Document | Description |
+| --- | --- |
+| [Jenkins CI/CD Infrastructure](/openbmc-guide-tutorial/docs/07-appendix/01-jenkins-ci-infrastructure.html) | OpenBMC’s Jenkins-based build and test system |
+| [AMI OneTree vs OpenBMC](/openbmc-guide-tutorial/docs/07-appendix/02-ami-onetree-vs-openbmc.html) | Technical comparison of AMI MegaRAC OneTree and upstream OpenBMC |
+| [Yocto BitBake Build Optimization](/openbmc-guide-tutorial/docs/07-appendix/03-yocto-bitbake-optimization.html) | Practical guide to speeding up Yocto/BitBake builds for OpenBMC |
+
+</div>
+
+          
+
+          
+            
+---
+
+## Table of contents
+
+* [Jenkins CI/CD Infrastructure](/openbmc-guide-tutorial/docs/07-appendix/01-jenkins-ci-infrastructure.html)
+* [AMI OneTree vs OpenBMC](/openbmc-guide-tutorial/docs/07-appendix/02-ami-onetree-vs-openbmc.html)
+* [Yocto BitBake Build Optimization](/openbmc-guide-tutorial/docs/07-appendix/03-yocto-bitbake-optimization.html)
+
+
+
 <a id="jenkins-ci-cd-infrastructure"></a>
 
 ---
@@ -78752,935 +79661,6 @@ Approximate build time improvements (cumulative, on a first-time full OpenBMC bu
 * [OpenBMC Yocto Development Docs](https://github.com/openbmc/docs/blob/master/yocto-development.md) — OpenBMC-specific Yocto usage
 * [OpenBMC Cheatsheet](https://github.com/openbmc/docs/blob/master/cheatsheet.md) — quick reference for OpenBMC builds
 * [Icecream Distributed Compiler](https://github.com/icecc/icecream) — icecc project for distributed builds
-
-
-
-<a id="advanced-topics"></a>
-
----
-
-<div id="main-content" class="main-content">
-        <main>
-          
-            
-# Advanced Topics
-
-    
-
-Dive into advanced protocols, security features, logging, and debug capabilities.
-
-## What You’ll Learn
-
-    
-
-* MCTP and PLDM for platform management (sensors, firmware update, BIOS config)
-* SPDM for device attestation and security
-* Secure boot and image signing
-* Logging, diagnostics, and debug tools
-* POST code monitoring and debug dump collection
-* Firmware update mechanisms (BMC and BIOS/host firmware)
-* Linux kernel and application debugging (sanitizers, Valgrind)
-* eSPI communication (virtual wires, console, eDAF)
-* Unit testing with GTest/GMock
-* Integration testing with Robot Framework
-* Linux kernel patching for driver development
-* SGPIO (serial GPIO) for expanding signal count over a few shared pins
-* Multi-host BMC management
-* Performance optimization for constrained BMC environments
-
-## Topics
-
-    
-
-### Protocols & Security
-
-    
-
-Modern platform management relies on standardized protocols for component communication and security.
-
-<div class="table-wrapper">
-| Guide | Description | Difficulty |
-| --- | --- | --- |
-| [MCTP/PLDM](/openbmc-guide-tutorial/docs/05-advanced/01-mctp-pldm-guide.html) | Platform management protocols | Advanced |
-| [PLDM Platform Monitoring](/openbmc-guide-tutorial/docs/05-advanced/19-pldm-platform-monitoring-guide.html) | Type 2 sensors, PDRs, effecters, events | Advanced |
-| [SPDM](/openbmc-guide-tutorial/docs/05-advanced/02-spdm-guide.html) | Device attestation, security | Advanced |
-| [Secure Boot & Signing](/openbmc-guide-tutorial/docs/05-advanced/13-secure-boot-signing-guide.html) | Image signing, hardware root of trust | Advanced |
-| [DICE Security](/openbmc-guide-tutorial/docs/05-advanced/21-dice-security-guide.html) | Hardware root-of-trust for device identity and firmware attestation | Advanced |
-
-</div>
-
-### Firmware Management
-
-    
-
-<div class="table-wrapper">
-| Guide | Description |
-| --- | --- |
-| [Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/03-firmware-update-guide.html) | BMC/PNOR updates, signing |
-| [PLDM Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/20-pldm-firmware-update-guide.html) | Type 5 device firmware update via PLDM |
-| [BIOS Firmware Management](/openbmc-guide-tutorial/docs/05-advanced/16-bios-firmware-management-guide.html) | Host firmware update via BMC, BIOS config |
-| [Device Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/23-device-firmware-update-guide.html) | CPLD, voltage regulator, EEPROM, TPM device updaters |
-
-</div>
-
-### Debug Features
-
-    
-
-Vendor-specific tools for deep system debugging.
-
-<div class="table-wrapper">
-| Guide | Description | Platform |
-| --- | --- | --- |
-| [Intel ASD/ACD](/openbmc-guide-tutorial/docs/05-advanced/04-intel-asd-acd-guide.html) | At-Scale Debug, Crash Dump, Error Injection | Intel |
-| [AMD Debug & Management](/openbmc-guide-tutorial/docs/05-advanced/05-amd-ihdt-guide.html) | APML, HDT, EPYC system management | AMD |
-
-</div>
-
-### Logging & Diagnostics
-
-    
-
-Capture events, errors, and diagnostic data for troubleshooting.
-
-<div class="table-wrapper">
-| Guide | Description |
-| --- | --- |
-| [Logging](/openbmc-guide-tutorial/docs/05-advanced/06-logging-guide.html) | Event logs, SEL, POST codes, debug dumps |
-| [SDR](/openbmc-guide-tutorial/docs/05-advanced/07-sdr-guide.html) | Sensor Data Records for IPMI |
-| [Linux Debug Tools](/openbmc-guide-tutorial/docs/05-advanced/08-linux-debug-tools-guide.html) | ASan, UBSan, TSan, Valgrind, KASAN |
-| [Debug Dump Collection](/openbmc-guide-tutorial/docs/05-advanced/17-debug-dump-collection-guide.html) | phosphor-debug-collector, dreport plugins |
-| [POST Code Monitoring](/openbmc-guide-tutorial/docs/05-advanced/18-post-code-monitoring-guide.html) | BIOS POST codes, boot progress tracking |
-
-</div>
-
-### Host Communication
-
-    
-
-Low-level interfaces for BMC-to-host communication.
-
-<div class="table-wrapper">
-| Guide | Description | Platform |
-| --- | --- | --- |
-| [eSPI](/openbmc-guide-tutorial/docs/05-advanced/09-espi-guide.html) | Virtual wires, console, eDAF boot | Intel/AMD |
-
-</div>
-
-### Testing
-
-    
-
-Validate code correctness with unit tests and system behavior with integration tests.
-
-<div class="table-wrapper">
-| Guide | Description | Scope |
-| --- | --- | --- |
-| [Unit Testing](/openbmc-guide-tutorial/docs/05-advanced/10-unit-testing-guide.html) | GTest/GMock for C++ unit tests | Single function/class |
-| [Robot Framework](/openbmc-guide-tutorial/docs/05-advanced/11-robot-framework-guide.html) | Integration testing with openbmc-test-automation | Full system behavior |
-
-</div>
-
-### Kernel & Driver Development
-
-    
-
-Develop and debug Linux kernel drivers for BMC hardware.
-
-<div class="table-wrapper">
-| Guide | Description | Difficulty |
-| --- | --- | --- |
-| [Linux Kernel Driver Development](/openbmc-guide-tutorial/docs/05-advanced/12-linux-kernel-driver-development-guide.html) | Kernel patching, out-of-tree modules, userspace drivers, debugging, I2C/SPI binding | Advanced |
-| [SGPIO (Serial GPIO)](/openbmc-guide-tutorial/docs/05-advanced/22-sgpio-guide.html) | Serial GPIO master on ASPEED/Nuvoton — device tree, driver, and usage compared with parallel GPIO | Advanced |
-
-</div>
-
-### Multi-Host & Platform Scaling
-
-    
-
-Manage multiple hosts from a single BMC and optimize for resource-constrained environments.
-
-<div class="table-wrapper">
-| Guide | Description | Difficulty |
-| --- | --- | --- |
-| [Multi-Host Support](/openbmc-guide-tutorial/docs/05-advanced/14-multi-host-support-guide.html) | Multi-host BMC management, instance routing | Advanced |
-| [Performance Optimization](/openbmc-guide-tutorial/docs/05-advanced/15-performance-optimization-guide.html) | Memory, startup, and I/O optimization | Advanced |
-
-</div>
-
-## Protocol Stack
-
-    
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight">
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Application Layer                        │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
-│  │    PLDM     │  │    SPDM      │  │   Vendor Specific   │ │
-│  │  (Type 0-5) │  │ (Attestation)│  │   (ASD, APML)       │ │
-│  └─────────────┘  └──────────────┘  └─────────────────────┘ │
-├─────────────────────────────────────────────────────────────┤
-│                    Transport Layer                          │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │                       MCTP                              ││
-│  │            (Management Component Transport)             ││
-│  └─────────────────────────────────────────────────────────┘│
-├─────────────────────────────────────────────────────────────┤
-│                    Physical Layer                           │
-│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐  │
-│  │  SMBus    │  │   PCIe    │  │    I3C    │  │   USB    │  │
-│  └───────────┘  └───────────┘  └───────────┘  └──────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-</div></div>
-
-## Prerequisites
-
-    
-
-* Strong understanding of [Architecture](/openbmc-guide-tutorial/docs/architecture)
-* Familiarity with [Core Services](/openbmc-guide-tutorial/docs/core-services)
-* Experience with [Interfaces](/openbmc-guide-tutorial/docs/interfaces)
-* Knowledge of low-level hardware interfaces (I2C, PCIe)
-
-Advanced features often require specific hardware support. Check your platform capabilities before implementing.
-
-          
-
-          
-            
----
-
-## Table of contents
-
-* [MCTP & PLDM Guide](/openbmc-guide-tutorial/docs/05-advanced/01-mctp-pldm-guide.html)
-* [SPDM Guide](/openbmc-guide-tutorial/docs/05-advanced/02-spdm-guide.html)
-* [Firmware Update Guide](/openbmc-guide-tutorial/docs/05-advanced/03-firmware-update-guide.html)
-* [Intel ASD/ACD Guide](/openbmc-guide-tutorial/docs/05-advanced/04-intel-asd-acd-guide.html)
-* [AMD Debug & Management Guide](/openbmc-guide-tutorial/docs/05-advanced/05-amd-ihdt-guide.html)
-* [Logging Guide](/openbmc-guide-tutorial/docs/05-advanced/06-logging-guide.html)
-* [SDR Guide](/openbmc-guide-tutorial/docs/05-advanced/07-sdr-guide.html)
-* [Linux Debug Tools Guide](/openbmc-guide-tutorial/docs/05-advanced/08-linux-debug-tools-guide.html)
-* [eSPI Guide](/openbmc-guide-tutorial/docs/05-advanced/09-espi-guide.html)
-* [Unit Testing Guide](/openbmc-guide-tutorial/docs/05-advanced/10-unit-testing-guide.html)
-* [Robot Framework Guide](/openbmc-guide-tutorial/docs/05-advanced/11-robot-framework-guide.html)
-* [Linux Kernel Driver Development](/openbmc-guide-tutorial/docs/05-advanced/12-linux-kernel-driver-development-guide.html)
-* [Secure Boot & Image Signing](/openbmc-guide-tutorial/docs/05-advanced/13-secure-boot-signing-guide.html)
-* [Multi-Host Support](/openbmc-guide-tutorial/docs/05-advanced/14-multi-host-support-guide.html)
-* [Performance Optimization](/openbmc-guide-tutorial/docs/05-advanced/15-performance-optimization-guide.html)
-* [BIOS Firmware Management](/openbmc-guide-tutorial/docs/05-advanced/16-bios-firmware-management-guide.html)
-* [Debug Dump Collection](/openbmc-guide-tutorial/docs/05-advanced/17-debug-dump-collection-guide.html)
-* [POST Code Monitoring](/openbmc-guide-tutorial/docs/05-advanced/18-post-code-monitoring-guide.html)
-* [PLDM Platform Monitoring](/openbmc-guide-tutorial/docs/05-advanced/19-pldm-platform-monitoring-guide.html)
-* [PLDM Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/20-pldm-firmware-update-guide.html)
-* [DICE Security](/openbmc-guide-tutorial/docs/05-advanced/21-dice-security-guide.html)
-* [SGPIO (Serial GPIO)](/openbmc-guide-tutorial/docs/05-advanced/22-sgpio-guide.html)
-* [Device Firmware Update](/openbmc-guide-tutorial/docs/05-advanced/23-device-firmware-update-guide.html)
-
-
-
-<a id="appendix"></a>
-
----
-
-<div id="main-content" class="main-content">
-        <main>
-          
-            
-# Appendix
-
-    
-
-Reference material, infrastructure details, and supplementary documentation for OpenBMC development.
-
-## Contents
-
-    
-
-<div class="table-wrapper">
-| Document | Description |
-| --- | --- |
-| [Jenkins CI/CD Infrastructure](/openbmc-guide-tutorial/docs/07-appendix/01-jenkins-ci-infrastructure.html) | OpenBMC’s Jenkins-based build and test system |
-| [AMI OneTree vs OpenBMC](/openbmc-guide-tutorial/docs/07-appendix/02-ami-onetree-vs-openbmc.html) | Technical comparison of AMI MegaRAC OneTree and upstream OpenBMC |
-| [Yocto BitBake Build Optimization](/openbmc-guide-tutorial/docs/07-appendix/03-yocto-bitbake-optimization.html) | Practical guide to speeding up Yocto/BitBake builds for OpenBMC |
-
-</div>
-
-          
-
-          
-            
----
-
-## Table of contents
-
-* [Jenkins CI/CD Infrastructure](/openbmc-guide-tutorial/docs/07-appendix/01-jenkins-ci-infrastructure.html)
-* [AMI OneTree vs OpenBMC](/openbmc-guide-tutorial/docs/07-appendix/02-ami-onetree-vs-openbmc.html)
-* [Yocto BitBake Build Optimization](/openbmc-guide-tutorial/docs/07-appendix/03-yocto-bitbake-optimization.html)
-
-
-
-<a id="architecture"></a>
-
----
-
-<div id="main-content" class="main-content">
-        <main>
-          
-            
-# Architecture
-
-    
-
-Understand how OpenBMC is designed and how its components work together.
-
-## What You’ll Learn
-
-    
-
-* OpenBMC’s overall architecture and design philosophy
-* The D-Bus communication system that connects all services
-* State management for BMC, chassis, and host
-* How to navigate the codebase and find components
-
-## Key Concepts
-
-    
-
-### D-Bus: The Nervous System
-
-    
-
-OpenBMC uses D-Bus as the central communication backbone. All services expose their data and functionality through D-Bus interfaces, enabling:
-
-* Loose coupling between components
-* Dynamic service discovery
-* Language-agnostic communication
-* Easy debugging and introspection
-
-### Phosphor Services
-
-    
-
-The “phosphor-*” repositories contain the core OpenBMC services:
-
-* **phosphor-state-manager**: System state control
-* **phosphor-logging**: Event and error logging
-* **phosphor-dbus-interfaces**: Standard interface definitions
-* And many more…
-
-## Guides in This Section
-
-    
-
-<div class="table-wrapper">
-| Guide | Description | Difficulty |
-| --- | --- | --- |
-| [OpenBMC Overview](/openbmc-guide-tutorial/docs/02-architecture/01-openbmc-overview.html) | Architecture, build system, community | Beginner |
-| [D-Bus Fundamentals](/openbmc-guide-tutorial/docs/02-architecture/02-dbus-guide.html) | D-Bus concepts and usage | Beginner |
-| [State Management](/openbmc-guide-tutorial/docs/02-architecture/03-state-manager-guide.html) | BMC/Chassis/Host states | Intermediate |
-| [Custom D-Bus Services](/openbmc-guide-tutorial/docs/02-architecture/04-custom-dbus-services-guide.html) | Build your own D-Bus service with sdbus++ | Intermediate |
-| [Systemd Boot Ordering](/openbmc-guide-tutorial/docs/02-architecture/05-systemd-boot-ordering-guide.html) | Service dependencies and boot sequence | Intermediate |
-
-</div>
-
-## Prerequisite Knowledge
-
-    
-
-Before diving into architecture:
-
-* Complete the [Getting Started](/openbmc-guide-tutorial/docs/getting-started) section
-* Have a working QEMU environment
-* Basic understanding of Linux services (systemd)
-
-          
-
-          
-            
----
-
-## Table of contents
-
-* [OpenBMC Overview](/openbmc-guide-tutorial/docs/02-architecture/01-openbmc-overview.html)
-* [D-Bus Guide](/openbmc-guide-tutorial/docs/02-architecture/02-dbus-guide.html)
-* [State Manager Guide](/openbmc-guide-tutorial/docs/02-architecture/03-state-manager-guide.html)
-* [Custom D-Bus Services Guide](/openbmc-guide-tutorial/docs/02-architecture/04-custom-dbus-services-guide.html)
-* [Systemd Boot Ordering Guide](/openbmc-guide-tutorial/docs/02-architecture/05-systemd-boot-ordering-guide.html)
-
-
-
-<a id="core-services"></a>
-
----
-
-<div id="main-content" class="main-content">
-        <main>
-          
-            
-# Core Services
-
-    
-
-Master the essential services that make up an OpenBMC system.
-
-## What You’ll Learn
-
-    
-
-* Sensor monitoring and configuration (D-Bus sensors, hwmon)
-* Entity Manager for hardware discovery
-* Thermal management and fan control (PID, zones)
-* Power management and sequencing
-* User management (accounts, privileges, LDAP)
-* Network configuration (IP, VLAN)
-* LED control (identify, lamp test)
-* Certificate management (TLS/SSL)
-* Time synchronization (NTP, RTC)
-* Hardware inventory and FRU data
-* Watchdog timer configuration
-* Button handling (power, reset)
-* Physical-security and intrusion detection (chassis switch, BMC tamper input, battery-removal)
-
-## Service Categories
-
-    
-
-### Sensors & Monitoring
-
-    
-
-Monitor hardware health through temperature, voltage, current, and fan sensors.
-
-<div class="table-wrapper">
-| Guide | Description |
-| --- | --- |
-| [D-Bus Sensors](/openbmc-guide-tutorial/docs/03-core-services/01-dbus-sensors-guide.html) | ADC, hwmon, virtual sensors |
-| [Hwmon Sensors](/openbmc-guide-tutorial/docs/03-core-services/02-hwmon-sensors-guide.html) | Linux hwmon integration |
-| [Entity Manager](/openbmc-guide-tutorial/docs/03-core-services/03-entity-manager-guide.html) | Hardware discovery and configuration |
-| [GPIO Management](/openbmc-guide-tutorial/docs/03-core-services/14-gpio-management-guide.html) | GPIO monitoring, phosphor-gpio-monitor |
-| [PECI Thermal Monitoring](/openbmc-guide-tutorial/docs/03-core-services/15-peci-thermal-monitoring-guide.html) | CPU temperature via PECI interface |
-| [I2C Device Integration](/openbmc-guide-tutorial/docs/03-core-services/16-i2c-device-integration-guide.html) | I2C device trees, tools, custom drivers |
-| [Leak Detection](/openbmc-guide-tutorial/docs/03-core-services/21-leak-detection-guide.html) | Liquid-cooling leak sensors, shutdown orchestration |
-| [NVIDIA GPU Management](/openbmc-guide-tutorial/docs/03-core-services/22-nvidia-gpu-management-guide.html) | GPU/PCIe/SMA telemetry and control over MCTP |
-
-</div>
-
-### Thermal & Power
-
-    
-
-Control cooling and power systems to keep hardware within operating limits.
-
-<div class="table-wrapper">
-| Guide | Description |
-| --- | --- |
-| [Fan Control](/openbmc-guide-tutorial/docs/03-core-services/04-fan-control-guide.html) | PID thermal control, zones |
-| [Power Management](/openbmc-guide-tutorial/docs/03-core-services/05-power-management-guide.html) | Power sequencing, regulators |
-| [PSU PMBus Management](/openbmc-guide-tutorial/docs/03-core-services/17-psu-pmbus-management-guide.html) | PSU monitoring via PMBus/phosphor-psu-monitor |
-| [PID Thermal Tuning](/openbmc-guide-tutorial/docs/03-core-services/19-pid-thermal-tuning-guide.html) | PID coefficient tuning methodology |
-
-</div>
-
-### System Services
-
-    
-
-Essential services for system operation.
-
-<div class="table-wrapper">
-| Guide | Description |
-| --- | --- |
-| [User Manager](/openbmc-guide-tutorial/docs/03-core-services/06-user-manager-guide.html) | Accounts, privileges, LDAP |
-| [Network](/openbmc-guide-tutorial/docs/03-core-services/07-network-guide.html) | IP configuration, VLAN |
-| [LED Manager](/openbmc-guide-tutorial/docs/03-core-services/08-led-manager-guide.html) | LED control, identify, lamp test |
-| [Certificate Manager](/openbmc-guide-tutorial/docs/03-core-services/09-certificate-manager-guide.html) | TLS/SSL certificates |
-| [Time Manager](/openbmc-guide-tutorial/docs/03-core-services/10-time-manager-guide.html) | NTP, RTC, timezones |
-| [Inventory Manager](/openbmc-guide-tutorial/docs/03-core-services/11-inventory-manager-guide.html) | FRU, hardware inventory |
-| [Watchdog](/openbmc-guide-tutorial/docs/03-core-services/12-watchdog-guide.html) | Host watchdog timer |
-| [Buttons](/openbmc-guide-tutorial/docs/03-core-services/13-buttons-guide.html) | Power/reset buttons |
-| [LDAP Integration](/openbmc-guide-tutorial/docs/03-core-services/18-ldap-integration-guide.html) | LDAP/Active Directory authentication |
-
-</div>
-
-### Physical Security
-
-    
-
-Detect chassis tampering and protect against unauthorized hardware access.
-
-<div class="table-wrapper">
-| Guide | Description |
-| --- | --- |
-| [Intrusion Detection](/openbmc-guide-tutorial/docs/03-core-services/20-intrusion-detection-guide.html) | Chassis switch, BMC tamper input, battery-backed latch, VBAT-SRAM token |
-
-</div>
-
-## Prerequisites
-
-    
-
-* Complete [Architecture](/openbmc-guide-tutorial/docs/architecture) section
-* Understand D-Bus basics
-* Working QEMU environment
-
-          
-
-          
-            
----
-
-## Table of contents
-
-* [D-Bus Sensors Guide](/openbmc-guide-tutorial/docs/03-core-services/01-dbus-sensors-guide.html)
-* [Hwmon Sensors Guide](/openbmc-guide-tutorial/docs/03-core-services/02-hwmon-sensors-guide.html)
-* [Entity Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/03-entity-manager-guide.html)
-* [Fan Control Guide](/openbmc-guide-tutorial/docs/03-core-services/04-fan-control-guide.html)
-* [Power Management Guide](/openbmc-guide-tutorial/docs/03-core-services/05-power-management-guide.html)
-* [User Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/06-user-manager-guide.html)
-* [Network Guide](/openbmc-guide-tutorial/docs/03-core-services/07-network-guide.html)
-* [LED Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/08-led-manager-guide.html)
-* [Certificate Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/09-certificate-manager-guide.html)
-* [Time Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/10-time-manager-guide.html)
-* [Inventory Manager Guide](/openbmc-guide-tutorial/docs/03-core-services/11-inventory-manager-guide.html)
-* [Watchdog Guide](/openbmc-guide-tutorial/docs/03-core-services/12-watchdog-guide.html)
-* [Buttons Guide](/openbmc-guide-tutorial/docs/03-core-services/13-buttons-guide.html)
-* [GPIO Management Guide](/openbmc-guide-tutorial/docs/03-core-services/14-gpio-management-guide.html)
-* [PECI Thermal Monitoring](/openbmc-guide-tutorial/docs/03-core-services/15-peci-thermal-monitoring-guide.html)
-* [I2C Device Integration](/openbmc-guide-tutorial/docs/03-core-services/16-i2c-device-integration-guide.html)
-* [PSU & PMBus Management](/openbmc-guide-tutorial/docs/03-core-services/17-psu-pmbus-management-guide.html)
-* [LDAP Integration](/openbmc-guide-tutorial/docs/03-core-services/18-ldap-integration-guide.html)
-* [PID Thermal Tuning](/openbmc-guide-tutorial/docs/03-core-services/19-pid-thermal-tuning-guide.html)
-* [Intrusion Detection Guide](/openbmc-guide-tutorial/docs/03-core-services/20-intrusion-detection-guide.html)
-* [Leak Detection](/openbmc-guide-tutorial/docs/03-core-services/21-leak-detection-guide.html)
-* [NVIDIA GPU Management](/openbmc-guide-tutorial/docs/03-core-services/22-nvidia-gpu-management-guide.html)
-
-
-
-<a id="getting-started"></a>
-
----
-
-<div id="main-content" class="main-content">
-        <main>
-          
-            
-# Getting Started
-
-    
-
-This section covers everything you need to start developing with OpenBMC.
-
-## What You’ll Learn
-
-    
-
-* Set up a development environment on Linux, macOS, or Windows (via Docker)
-* Clone and configure the OpenBMC repositories
-* Build your first OpenBMC image
-* Run and test in QEMU (the standard development environment)
-* Use the SDK for application development
-
-## No Hardware Required
-
-    
-
-**QEMU is the standard development environment for OpenBMC** — not a compromise or simulation fallback. Professional OpenBMC developers at Google, Meta, IBM, and other companies use QEMU daily for most development work.
-
-### Feature Comparison: QEMU vs Raspberry Pi vs Real Hardware
-
-    
-
-<div class="table-wrapper">
-| Feature | QEMU (ASPEED) | Raspberry Pi | ASPEED AST2600 EVB |
-| --- | --- | --- | --- |
-| OpenBMC software stack | ✅ Full | ✅ Full | ✅ Full |
-| D-Bus services | ✅ Full | ✅ Full | ✅ Full |
-| Redfish API (bmcweb) | ✅ Full | ✅ Full | ✅ Full |
-| Yocto/BitBake build | ✅ Full | ✅ Full | ✅ Full |
-| I2C sensors (tmp105, EEPROMs) | ✅ Well emulated | ❌ No ASPEED I2C | ✅ Hardware |
-| SPI flash (boot, firmware) | ✅ Well emulated | ❌ SD card boot | ✅ Hardware |
-| GPIO (pins, interrupts) | ✅ Functional | ⚠️ Limited | ✅ Hardware |
-| ADC (analog sensors) | ⚠️ Synthetic values | ❌ No built-in ADC | ✅ Hardware |
-| IPMI KCS/BT interface | ⚠️ Partial | ❌ Not available | ✅ Hardware |
-| PECI (CPU temperature) | ⚠️ Stub only | ❌ Not available | ✅ Hardware |
-| PWM / fan tachometer | ⚠️ Register stub | ❌ Not available | ✅ Hardware |
-| KVM-over-IP (video) | ❌ Not emulated | ❌ Not available | ✅ Hardware |
-| eSPI host interface | ❌ Not emulated | ❌ Not available | ✅ Hardware |
-| Secure Boot (RoT) | ⚠️ Basic OTP only | ❌ Not available | ✅ Hardware |
-| **Cost** | **Free** | **$35-75** | **$500-800** |
-
-</div>
-
-### What Requires Real Hardware
-
-    
-
-Only specialized hardware bring-up tasks need physical BMC hardware:
-
-* KVM-over-IP video capture and encoding
-* eSPI/LPC host interface debugging
-* PECI CPU temperature monitoring with real data
-* Real fan control with PWM and tachometer feedback
-* Real analog sensor calibration
-* Platform-specific GPIO timing
-
-These topics are relevant only for hardware engineers doing board bring-up — not for learning OpenBMC software development.
-
-### Recommendation
-
-    
-
-<div class="table-wrapper">
-| Option | Cost | Best For |
-| --- | --- | --- |
-| **QEMU** | Free | ✅ Learning and software development — start here |
-| Raspberry Pi | $35-75 | ⚠️ Exploring the software stack on real hardware, but no BMC peripherals |
-| ASPEED AST2600 EVB | $500-800 | Full hardware bring-up and production development |
-
-</div>
-
-## Prerequisites
-
-    
-
-* A Linux workstation (Ubuntu 22.04+ or Fedora 38+ recommended) OR Docker
-* At least 16GB RAM (32GB recommended)
-* 100GB+ free disk space
-* Basic command line experience
-
-## Guides in This Section
-
-    
-
-<div class="table-wrapper">
-| Guide | Description | Time |
-| --- | --- | --- |
-| [Introduction](/openbmc-guide-tutorial/docs/01-getting-started/01-introduction.html) | What is OpenBMC and why use it | 10 min |
-| [Environment Setup](/openbmc-guide-tutorial/docs/01-getting-started/02-environment-setup.html) | Set up your development environment | 30 min |
-| [First Build](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html) | Build and run OpenBMC in QEMU | 45 min |
-| [Development Workflow](/openbmc-guide-tutorial/docs/01-getting-started/04-development-workflow.html) | Iterate quickly with devtool and bbappend | 30 min |
-| [Building QEMU](/openbmc-guide-tutorial/docs/01-getting-started/05-qemu-build.html) | Build QEMU from source if needed | 20 min |
-| [Devtool Workflow](/openbmc-guide-tutorial/docs/01-getting-started/06-devtool-workflow-guide.html) | Advanced devtool usage for recipe development | 30 min |
-| [Gerrit Contribution](/openbmc-guide-tutorial/docs/01-getting-started/07-gerrit-contribution-guide.html) | Submit patches to OpenBMC via Gerrit | 30 min |
-
-</div>
-
-## Quick Path
-
-    
-
-If you’re eager to get started:
-
-1. **[Environment Setup](/openbmc-guide-tutorial/docs/01-getting-started/02-environment-setup.html)** - Get your tools ready
-2. **[First Build](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html)** - Build and run in QEMU
-3. **[OpenBMC Overview](/openbmc-guide-tutorial/docs/02-architecture/01-openbmc-overview.html)** - Understand the architecture
-
-If you encounter issues, check the [Troubleshooting](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html#troubleshooting) section or search the [OpenBMC mailing list](https://lists.ozlabs.org/listinfo/openbmc).
-
-          
-
-          
-            
----
-
-## Table of contents
-
-* [Introduction](/openbmc-guide-tutorial/docs/01-getting-started/01-introduction.html)
-* [Environment Setup](/openbmc-guide-tutorial/docs/01-getting-started/02-environment-setup.html)
-* [First Build](/openbmc-guide-tutorial/docs/01-getting-started/03-first-build.html)
-* [Development Workflow](/openbmc-guide-tutorial/docs/01-getting-started/04-development-workflow.html)
-* [Building QEMU](/openbmc-guide-tutorial/docs/01-getting-started/05-qemu-build.html)
-* [Devtool Workflow Guide](/openbmc-guide-tutorial/docs/01-getting-started/06-devtool-workflow-guide.html)
-* [Gerrit Contribution Guide](/openbmc-guide-tutorial/docs/01-getting-started/07-gerrit-contribution-guide.html)
-
-
-
-<a id="interfaces"></a>
-
----
-
-<div id="main-content" class="main-content">
-        <main>
-          
-            
-# External Interfaces
-
-    
-
-Learn how to interact with OpenBMC through its management interfaces.
-
-## What You’ll Learn
-
-    
-
-* IPMI protocol and OEM command implementation
-* Redfish REST API, OEM extensions, and multi-BMC aggregation
-* WebUI customization and branding
-* Remote access via KVM, virtual media, and console
-* SSH access and security hardening
-
-## Interface Overview
-
-    
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight">
-```
-┌─────────────────────────────────────┐
-                    │          Management Client          │
-                    └─────────────────────────────────────┘
-                                     │
-        ┌────────────────────────────┼────────────────────────────┐
-        │                            │                            │
-        ▼                            ▼                            ▼
-┌───────────────┐          ┌─────────────────┐          ┌─────────────────┐
-│     IPMI      │          │     Redfish     │          │     WebUI       │
-│  (ipmitool)   │          │   (REST API)    │          │   (Browser)     │
-└───────────────┘          └─────────────────┘          └─────────────────┘
-        │                            │                            │
-        ▼                            ▼                            ▼
-┌────────────────┐         ┌─────────────────┐          ┌─────────────────┐
-│  ipmid/netipmid│         │     bmcweb      │          │   webui-vue     │
-└────────────────┘         └─────────────────┘          └─────────────────┘
-        │                            │                            │
-        └────────────────────────────┼────────────────────────────┘
-                                     │
-                                     ▼
-                    ┌─────────────────────────────────────┐
-                    │             D-Bus Services          │
-                    └─────────────────────────────────────┘
-```
-
-</div></div>
-
-## Guides in This Section
-
-    
-
-### Management Protocols
-
-    
-
-<div class="table-wrapper">
-| Guide | Description | Use Case |
-| --- | --- | --- |
-| [IPMI](/openbmc-guide-tutorial/docs/04-interfaces/01-ipmi-guide.html) | IPMI protocol, OEM commands | Legacy management, scripting |
-| [Redfish](/openbmc-guide-tutorial/docs/04-interfaces/02-redfish-guide.html) | REST API, modern management | Cloud integration, automation |
-| [WebUI](/openbmc-guide-tutorial/docs/04-interfaces/03-webui-guide.html) | Browser-based management | Human operators |
-| [Redfish Events & Telemetry](/openbmc-guide-tutorial/docs/04-interfaces/08-redfish-events-telemetry-guide.html) | SSE subscriptions, metric reports | Monitoring, alerting |
-| [Redfish OEM Extensions](/openbmc-guide-tutorial/docs/04-interfaces/09-redfish-oem-extensions-guide.html) | Custom OEM resources and actions | Vendor-specific features |
-
-</div>
-
-### Remote Access
-
-    
-
-<div class="table-wrapper">
-| Guide | Description | Use Case |
-| --- | --- | --- |
-| [KVM](/openbmc-guide-tutorial/docs/04-interfaces/04-kvm-guide.html) | Remote keyboard/video/mouse | OS installation, troubleshooting |
-| [Virtual Media](/openbmc-guide-tutorial/docs/04-interfaces/05-virtual-media-guide.html) | Remote ISO/image mounting | OS installation |
-| [Console](/openbmc-guide-tutorial/docs/04-interfaces/06-console-guide.html) | Serial over LAN | Boot monitoring, recovery |
-
-</div>
-
-### Security
-
-    
-
-<div class="table-wrapper">
-| Guide | Description |
-| --- | --- |
-| [SSH](/openbmc-guide-tutorial/docs/04-interfaces/07-ssh-security-guide.html) | SSH access and hardening |
-
-</div>
-
-## Which Interface to Use?
-
-    
-
-<div class="table-wrapper">
-| Scenario | Recommended Interface |
-| --- | --- |
-| Scripting / Automation | Redfish (REST) |
-| Legacy tools / ipmitool | IPMI |
-| Human operators | WebUI |
-| Cloud management platforms | Redfish |
-| Bulk operations | Redfish with scripting |
-
-</div>
-
-## Prerequisites
-
-    
-
-* Complete [Core Services](/openbmc-guide-tutorial/docs/core-services) basics
-* Understand D-Bus object model
-* Working QEMU environment with network access
-
-          
-
-          
-            
----
-
-## Table of contents
-
-* [IPMI Guide](/openbmc-guide-tutorial/docs/04-interfaces/01-ipmi-guide.html)
-* [Redfish Guide](/openbmc-guide-tutorial/docs/04-interfaces/02-redfish-guide.html)
-* [WebUI Guide](/openbmc-guide-tutorial/docs/04-interfaces/03-webui-guide.html)
-* [KVM Guide](/openbmc-guide-tutorial/docs/04-interfaces/04-kvm-guide.html)
-* [Virtual Media Guide](/openbmc-guide-tutorial/docs/04-interfaces/05-virtual-media-guide.html)
-* [Console Guide](/openbmc-guide-tutorial/docs/04-interfaces/06-console-guide.html)
-* [SSH Security Guide](/openbmc-guide-tutorial/docs/04-interfaces/07-ssh-security-guide.html)
-* [Redfish Events & Telemetry](/openbmc-guide-tutorial/docs/04-interfaces/08-redfish-events-telemetry-guide.html)
-* [Redfish OEM Extensions](/openbmc-guide-tutorial/docs/04-interfaces/09-redfish-oem-extensions-guide.html)
-
-
-
-<a id="porting"></a>
-
----
-
-<div id="main-content" class="main-content">
-        <main>
-          
-            
-# Platform Porting
-
-    
-
-Port OpenBMC to your custom hardware platform.
-
-## What You’ll Learn
-
-    
-
-* Create a machine-specific layer
-* Configure device tree for your BMC SoC
-* Set up U-Boot for your platform
-* Enable and configure OpenBMC services
-* Verify and validate your port
-* Port to ARM-based server platforms (NVIDIA, Ampere)
-
-## Porting Overview
-
-    
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight">
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Your Machine Layer                       │
-│                   meta-<your-company>                       │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐  │
-│  │ Machine Config  │  │  Device Tree    │  │   Recipes   │  │
-│  │   <machine>.conf│  │   <soc>.dts     │  │   *.bb      │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────┘  │
-├─────────────────────────────────────────────────────────────┤
-│                    Phosphor Layer                           │
-│                     meta-phosphor                           │
-├─────────────────────────────────────────────────────────────┤
-│                    OpenBMC Distro                           │
-│                     meta-openbmc                            │
-├─────────────────────────────────────────────────────────────┤
-│                    Yocto/Poky                               │
-│           meta-poky, meta-oe, meta-networking               │
-└─────────────────────────────────────────────────────────────┘
-```
-
-</div></div>
-
-## Porting Workflow
-
-    
-
-1. **Plan** - Identify hardware, map features to OpenBMC services
-2. **Create Layer** - Set up meta- structure
-3. **Device Tree** - Configure BMC SoC peripherals
-4. **U-Boot** - Configure bootloader
-5. **Enable Services** - Configure OpenBMC features
-6. **Test** - Verify each feature works
-7. **Iterate** - Fix issues, add features
-
-## Guides in This Section
-
-    
-
-<div class="table-wrapper">
-| Guide | Description | Phase |
-| --- | --- | --- |
-| [Porting Reference](/openbmc-guide-tutorial/docs/06-porting/01-porting-reference.html) | Complete checklist | Planning |
-| [Machine Layer](/openbmc-guide-tutorial/docs/06-porting/02-machine-layer.html) | Create your layer | Setup |
-| [Device Tree](/openbmc-guide-tutorial/docs/06-porting/03-device-tree.html) | BMC SoC configuration | Configuration |
-| [U-Boot](/openbmc-guide-tutorial/docs/06-porting/04-uboot.html) | Bootloader setup | Configuration |
-| [Verification](/openbmc-guide-tutorial/docs/06-porting/05-verification.html) | Testing procedures | Validation |
-| [ARM Platform Guide](/openbmc-guide-tutorial/docs/06-porting/06-arm-platform-guide.html) | ARM server platforms | Advanced |
-| [Entity Manager Advanced](/openbmc-guide-tutorial/docs/06-porting/07-entity-manager-advanced.html) | Dynamic hardware config | Advanced |
-| [Flash Layout Optimization](/openbmc-guide-tutorial/docs/06-porting/08-flash-layout-optimization-guide.html) | SPI flash partitioning, image size reduction | Advanced |
-| [AST2700 Enablement](/openbmc-guide-tutorial/docs/06-porting/09-ast2700-enablement-guide.html) | ASPEED AST2700 next-gen SoC porting | Advanced |
-
-</div>
-
-## Supported BMC SoCs
-
-    
-
-OpenBMC supports several BMC system-on-chip platforms:
-
-<div class="table-wrapper">
-| SoC | Vendor | Common Platforms |
-| --- | --- | --- |
-| AST2400 | ASPEED | Legacy systems |
-| AST2500 | ASPEED | Current mainstream |
-| AST2600 | ASPEED | Latest generation |
-| NPCM7xx | Nuvoton | Alternative platforms |
-
-</div>
-
-For ARM-based server platforms (NVIDIA Grace, Ampere, etc.), see the [ARM Platform Guide](/openbmc-guide-tutorial/docs/06-porting/06-arm-platform-guide.html).
-
-## Prerequisites
-
-    
-
-* Complete all previous sections
-* Strong Linux kernel knowledge
-* Device tree experience
-* Yocto/BitBake proficiency
-* Access to your target hardware
-
-Porting requires hardware access. While some testing can be done in QEMU, final validation needs real hardware.
-
-## Getting Help
-
-    
-
-* [OpenBMC Mailing List](https://lists.ozlabs.org/listinfo/openbmc)
-* [OpenBMC Discord](https://discord.gg/openbmc)
-* Review existing machine layers in the OpenBMC repository
-
-          
-
-          
-            
----
-
-## Table of contents
-
-* [Porting Reference](/openbmc-guide-tutorial/docs/06-porting/01-porting-reference.html)
-* [Machine Layer Guide](/openbmc-guide-tutorial/docs/06-porting/02-machine-layer.html)
-* [Device Tree Guide](/openbmc-guide-tutorial/docs/06-porting/03-device-tree.html)
-* [U-Boot Guide](/openbmc-guide-tutorial/docs/06-porting/04-uboot.html)
-* [Verification Guide](/openbmc-guide-tutorial/docs/06-porting/05-verification.html)
-* [ARM Platform Guide](/openbmc-guide-tutorial/docs/06-porting/06-arm-platform-guide.html)
-* [Entity Manager Advanced](/openbmc-guide-tutorial/docs/06-porting/07-entity-manager-advanced.html)
-* [Flash Layout & Optimization Guide](/openbmc-guide-tutorial/docs/06-porting/08-flash-layout-optimization-guide.html)
-* [AST2700 Enablement](/openbmc-guide-tutorial/docs/06-porting/09-ast2700-enablement-guide.html)
 
 
 

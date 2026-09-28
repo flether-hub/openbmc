@@ -60,11 +60,13 @@ Thumbs.db
 *.orig
 *.rej
 
-# Tutorial scraper intermediate files
+# Tutorial scraper intermediate files & tools
+tools/tutorial_crawler/
+tutorial-assets/
+openbmc-tutorial.html
 scrape_all.js
 scrape_helpers.js
 test_crawler.js
 sample_page.html
 nav.html
-tutorial-assets/
-openbmc-tutorial.html
+
