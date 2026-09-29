@@ -2,7 +2,7 @@
 
 > **来源说明**：本文档整理自开源教程 [Home | OpenBMC Guide Tutorial](https://michaeltien8901.github.io/openbmc-guide-tutorial/)。
 > 本教程涵盖了从 OpenBMC 基础入门、架构与 D-Bus、核心服务、接口开发、进阶特性到板级移植的完整开发体系。
-> **文档生成时间**：2026-09-28
+> **文档生成时间**：2026-09-29
 > **文章总数**：88 篇
 
 ---
