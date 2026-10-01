@@ -6,4 +6,4 @@ Name=eth1
 ActivationPolicy=manual
 
 [Network]
-DHCP=no
+DHCP=ipv4

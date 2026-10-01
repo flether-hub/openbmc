@@ -164,7 +164,8 @@ created.
 The product exposes two BMC network paths:
 
 * `eth0`: MAC2 with RTL8211FS-CG on the independent management RJ45. It boots
-  with static IPv4 `192.168.1.200/24`, gateway and DNS `192.168.1.1`.
+  with static IPv4 `192.168.185.200/24`, gateway `192.168.185.1` and DNS
+  `192.168.185.1`, `223.5.5.5`, `223.6.6.6`.
 * `eth1`: MAC3 NC-SI connection to the Intel E810, also represented as IPMI
   LAN channel 2. Since the E810 has no standby power, `ceb-gnrd-ncsi` keeps
   this link administratively down while the host is off and raises it when
