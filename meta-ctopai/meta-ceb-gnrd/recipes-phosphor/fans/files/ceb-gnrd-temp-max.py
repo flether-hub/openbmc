@@ -21,8 +21,11 @@ Warning / Critical / HardShutdown threshold interfaces, so phosphor-sel-logger
 records the alarms and IPMI shows UNC / UC / UNR.
 
 When the host is off the value is 0 (no thermal load); when the host is on but
-no source sensor is readable the value is NaN so that the fan controller falls
-back to its fail-safe speed.
+no source sensor is readable the value is FAILSAFE_TEMP, which lies above the
+last point of both fan curves, so the fans run at full speed.  The zone's own
+fail-safe speed is kept at the minimum on purpose: the number of readable fans
+must not decide whether the fans go to full speed.  No alarm is raised for the
+substitute value.
 
 All discovered names and their group are written to the journal whenever the
 set changes:  journalctl -u ceb-gnrd-temp-max
@@ -58,6 +61,9 @@ DIMM_RE = re.compile(r"dimm", re.IGNORECASE)
 EXCLUDE_RE = re.compile(r"dts|tcontrol|tthrottle|tjmax|margin", re.IGNORECASE)
 
 POLL_SECONDS = 2
+
+# Published while the host is on but no temperature can be read (full speed)
+FAILSAFE_TEMP = 127.0
 
 # Upper thresholds in degrees C: (non-critical UNC, critical UC, non-recoverable UNR)
 THRESHOLDS = {
@@ -208,7 +214,7 @@ async def host_is_on(bus):
                           "ss", [CHASSIS_STATE[2], CHASSIS_STATE[3]])
         return str(body[0].value).endswith(".On")
     except Exception:
-        return True  # unknown: assume on so that a missing sensor is fail-safe
+        return True  # unknown: assume on
 
 
 async def find_sources(bus):
@@ -293,18 +299,19 @@ async def main():
                 values.append(value)
                 if not assoc:
                     assoc = await read_assoc(bus, service, path)
+            real = max(values) if values else math.nan
             if values:
-                sensor.update(max(values))
+                sensor.update(real)
             elif on:
-                sensor.update(math.nan)   # no reading while the host is on: fail-safe
+                sensor.update(FAILSAFE_TEMP)   # no reading while the host is on: full speed
             else:
-                sensor.update(0.0)        # host off: no thermal load
+                sensor.update(0.0)             # host off: no thermal load
             for obj, alarm_name, level in thresholds[group]:
-                if obj.evaluate(sensor.value, alarm_name):
+                if obj.evaluate(real, alarm_name):
                     LOG.warning("%s %s %s (value %.1f, threshold %.1f)",
                                 sensor.name, level,
                                 "asserted" if obj.alarm else "cleared",
-                                sensor.value, obj.high)
+                                real, obj.high)
             if assoc:
                 assocs[group].update(assoc)
         await asyncio.sleep(POLL_SECONDS)
