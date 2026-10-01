@@ -240,15 +240,15 @@ index 0000000..065091b
 +    },
 +    async loadPersistence() {
 +      try {
-+        const { data } = await api.get(${settingsPath}/attr/Persist);
++        const { data } = await api.get(`${settingsPath}/attr/Persist`);
 +        this.persist = data?.data === true;
 +      } catch {
 +        // The persistence service is optional; keep the default (off).
 +      }
 +    },
 +    async savePersistence() {
-+      await api.put(${settingsPath}/attr/Persist, { data: this.persist });
-+      await api.post(${settingsPath}/action/Save, { data: [] });
++      await api.put(`${settingsPath}/attr/Persist`, { data: this.persist });
++      await api.post(`${settingsPath}/action/Save`, { data: [] });
 +    },
 +    loadSelectedSettings() {
 +      const first = this.controllers.find(
