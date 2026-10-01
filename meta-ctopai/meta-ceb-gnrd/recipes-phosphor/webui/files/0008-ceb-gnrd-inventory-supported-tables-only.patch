@@ -9,8 +9,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
 --- a/src/views/HardwareStatus/Inventory/Inventory.vue
 +++ b/src/views/HardwareStatus/Inventory/Inventory.vue
-@@ -30,23 +30,8 @@
-
+@@ -30,21 +30,6 @@
+ 
      <!-- Chassis table -->
      <table-chassis ref="chassis" />
 -
@@ -30,8 +30,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 -    <table-assembly ref="assembly" />
    </b-container>
  </template>
-
-@@ -54,14 +39,9 @@
+ 
+@@ -54,12 +39,7 @@
  import PageTitle from '@/components/Global/PageTitle';
  import ServiceIndicator from './InventoryServiceIndicator';
  import TableSystem from './InventoryTableSystem';
@@ -44,7 +44,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 -import TableAssembly from './InventoryTableAssembly';
  import LoadingBarMixin from '@/components/Mixins/LoadingBarMixin';
  import PageSection from '@/components/Global/PageSection';
-@@ -72,14 +52,9 @@
+@@ -72,13 +52,8 @@
      PageTitle,
      ServiceIndicator,
 -    TableDimmSlot,
