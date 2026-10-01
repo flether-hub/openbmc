@@ -22,7 +22,7 @@ interfaces:
       - { bus: 5, linux_controller: i2c4, pins: [GPIOK0_SCL5, GPIOK1_SDA5], signal: BMC_SLOT6_I2C5, device: PCIE_SLOT6, address: per_card }
       - { bus: 6, linux_controller: i2c5, pins: [GPIOK2_SCL6, GPIOK3_SDA6], signal: BMC_SLOT7_I2C6, device: PCIE_SLOT7, address: per_card }
       - { bus: 7, linux_controller: i2c6, signal: BMC_SENSOR_I2C7, device: NST175H-QSPR, address: [0x48, 0x49, 0x4a, 0x4b], temperature_only: true, thresholds: none }
-      - { bus: 8, linux_controller: i2c7, signal: BMC_CPRS_I2C8, device: CRPS_PMBus, addresses: [0x58, 0x59, 0x5a], sensors: [input_voltage, output_voltage, input_power, output_power], optional_modules: true, installed_modules: 0-2_depending_on_chassis, missing_module_alarm: false }
+      - { bus: 8, linux_controller: i2c7, signal: BMC_CPRS_I2C8, device: CRPS_PMBus, addresses: [0x58, 0x59, 0x5a], sensors: [input_voltage, output_voltage, input_power, output_power, temperature], optional_modules: true, installed_modules: 0-2_depending_on_chassis, missing_module_alarm: false }
       - { bus: 9, linux_controller: i2c8, pins: [GPIOL0_SCL9, GPIOL1_SDA9], signal: BMC_CPLD_I2C9, device: CPLD_reserved, address: pending }
       - { bus: 10, linux_controller: i2c9, signal: BMC_RTC_I2C10, device: NCT3015Y-R, address: 0x6f, rtc_device: rtc0, purpose: BMC_system_clock }
       - { bus: 11, linux_controller: i2c10, pins: [GPIOA0_SCL11, GPIOA1_SDA11], signal: BMC_FRU_I2C11, device: FM24C08D, package_outline: 24C02, address: 0x50, num_addresses: 4, size_bytes: 1024, page_size_bytes: 16, wp_signal: BMC_FRU_WP, board_default_wp: pulldown_low_write_enabled, wp_gpio_function: GPIOG6_TXD9_SD2CD#_SALT15, wp_linux_offset: 54, nvmem_wp_gpio: configured }
@@ -37,7 +37,7 @@ interfaces:
       - { bus: 3, ast2600_node: i3c2, pins: [I3C3SCL_FSI1CLK, I3C3SDA_FSI1DATA], signal: CPU_I3C_MNG_SCL_SDA, device: Xeon6_CPU, status: enabled, purpose: cpu_management, temperature_source: none }
       - { bus: 4, ast2600_node: i3c3, pins: [I3C4SCL_FSI2CLK, I3C4SDA_FSI2DATA], signal: I3C4, device: unused, status: disabled, purpose: unused, temperature_source: none }
     pmbus:
-      - { bus_signal: BMC_CPRS_I2C8, linux_controller: i2c7, device: CRPS, addresses: [0x58, 0x59, 0x5a], telemetry: [input_voltage, output_voltage, input_power, output_power], optional_modules: true, absent_module_alarm: false }
+      - { bus_signal: BMC_CPRS_I2C8, linux_controller: i2c7, device: CRPS, addresses: [0x58, 0x59, 0x5a], telemetry: [input_voltage, output_voltage, input_power, output_power, temperature], optional_modules: true, absent_module_alarm: false }
       - { bus_signal: JW6375_PMBCLK0_PMBDATA0, svid_addresses: [0x00, 0x02], pmbus_address_low_nibble: 0x1 }
       - { bus_signal: JW6375_PMBCLK0_PMBDATA0, svid_addresses: [0x01, 0x03], pmbus_address_low_nibble: 0x3 }
       - { bus_signal: JW6375_PMBCLK1_PMBDATA1, svid_addresses: [0x02, 0x00], pmbus_address_low_nibble: 0x1 }
@@ -108,7 +108,7 @@ interfaces:
       - { function: CPU_reset_output, package_ball: AC15, ast_gpio: GPIOV3, linux_chip: gpio0, line_offset: 171, line_name: BMC_CPU_RESET, direction: output, active_low: true, pulse_level: low, idle_level: high, behavior: x86-power-control ResetOut; 500ms reset pulse, control_status: enabled-for-host-reset-and-chassis-system-reset }
       - { function: CPU_power_good_input, package_ball: AE15, ast_gpio: GPIOV4, linux_chip: gpio0, line_offset: 172, line_name: BMC_CPU_PWRGD, direction: input, active_low: false, asserted_level: high, behavior: x86-power-control PowerOk state feedback, control_status: monitored }
       - { function: FRU_EEPROM_write_protect, package_ball: D21, ast_gpio: GPIOG6_TXD9_SD2CD#_SALT15, linux_chip: gpio0, line_offset: 54, line_name: BMC_FRU_WP, direction: output, active_high: true, board_default: pulldown_low_write_enabled, behavior: nvmem_wp-gpios-controls-write-cycles, control_status: device-tree-mapped }
-      - { function: system_alert_LED_output, package_ball: E16, ast_gpio: GPIOI5, linux_chip: gpio0, line_offset: 69, line_name: BMC_SYS_ALERT_LED, direction: output, active_low: false, asserted_level: high, control_status: voltage-alarms-auto-clear; watchdog-timeout-and-bios-boot-timeout-latched-until-bmc-reboot }
+      - { function: system_alert_LED_output, package_ball: E16, ast_gpio: GPIOI5, linux_chip: gpio0, line_offset: 69, line_name: BMC_SYS_ALERT_LED, direction: output, active_low: false, asserted_level: high, control_status: voltage-alarms-and-temperature-upper-critical-alarms-auto-clear; watchdog-timeout-and-bios-boot-timeout-latched-until-bmc-reboot }
       - { function: fan_BMC_takeover_select, package_ball: B16, ast_gpio: GPIOI6, linux_chip: gpio0, line_offset: 70, line_name: BMC_FAN_BMC_OVERRIDE_N, direction: output, active_low: false, bmc_owns_when_high: true, cpld_owns_when_low: true, cpld_owns_at_power_on: true, handoff_ready_condition: configured-fan-control-zone-and-six-pwm-tach-channels-available, release_on_fan_control_stop: true }
       - { function: BMC_heartbeat_output, ast_gpio: GPIOP7, linux_chip: gpio0, line_offset: 127, line_name: BMC_HBLED_N, direction: output, active_low: true, waveform: kernel-heartbeat-trigger-after-espi-peripheral-driver-probe, control_status: enabled-after-eSPI-SW_READY }
       - { function: BIOS_flash_control_select, signal: GPIOM1_NDCD1_used_as_GPIO, package_ball: B13, ast_gpio: GPIOM1, linux_chip: gpio0, line_offset: 97, line_name: BMC_BIOS_FLASH_SELECT, direction: output, bmc_ownership_level: 1, bios_ownership_level: 0, behavior: wait-for-host-off; select-BMC; CPLD-forces-S5; wait-5s; flash; restore-BIOS; force-power-button-off; power-on, control_status: bios-update-script }
@@ -203,7 +203,7 @@ interfaces:
 
   management:
     web: bmcweb user, sensor, event log, FRU, network, power, fan and update APIs
-    sol: obmc-console with SSH console access
+    sol: obmc-console on AST2600 UART3 (ttyS2), receive-only (CPU serial output cross-connected to UART3 RX; TXD3 not muxed, the BMC cannot send input to the host); web SOL is read-only
     debug_console: AST2600 UART5 TXD5/RXD5 on package balls C8/D8, BMC_UART5_DEBUG_TXD/RXD; U-Boot stdout-path and SPL bootph-all use UART5; Linux SERIAL_CONSOLES ttyS4 at 115200 baud
     vga_display: AST2600 GFX DAC provides the CPU display output through BMC_VGA_B/G/R, HSYNC and VSYNC; schematic DDC clock/data are fixed-function VGA pins
     kvm: obmc-ikvm/bmcweb video capture via AST2600 VGA-video path and USB HID

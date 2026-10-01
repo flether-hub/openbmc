@@ -52,4 +52,6 @@ SUMMARY:${PN}-system = "CEB-GNRD system management"
 RDEPENDS:${PN}-system = " \
     phosphor-dbus-monitor \
     ceb-gnrd-psu-detect \
+    ceb-gnrd-rtc-sync \
+    ceb-gnrd-sel-rollover \
     "

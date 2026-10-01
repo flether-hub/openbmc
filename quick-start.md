@@ -405,7 +405,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | MAC 地址 | 保存在 U-Boot 环境变量 `ethaddr` / `eth1addr`，固件升级不会擦除 `u-boot-env` 分区 |
 | ADC | 内部 2.5 V 参考电压；`D3V0_BAT0` 因 R542/Q39 未焊会饱和 ⚠️ |
 | eSPI | 仅 Peripheral 通道；驱动带复位恢复、错误计数和 debugfs 日志 ⚠️（见下） |
-| PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备 ⚠️ |
+| PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备；传感器有输入/输出电压、输入/输出功率和 PSUn_Temp（取 pmbus 的 temp2）⚠️ |
 
 ### 2. GPIO 行为
 
@@ -415,7 +415,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | CPU 开关机 `BMC_CPU_POWER_BUTTON`（V2）、复位 `BMC_CPU_RESET`（V3） | 低脉冲，由 `x86-power-control` 输出（200 ms / 强制关机 15 s / 复位 500 ms） |
 | `BMC_CPU_PWRGD`（V4） | 高有效输入，供状态机判断上电 |
 | 电源按键输入 `BMC_POWER_BUTTON_INPUT`（GPIOM2） | **只检测**：按下时写 SEL 和日志，不触发开关机，也不直通到 CPU 电源按键输出 |
-| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 电压越限点亮（恢复后熄灭）；watchdog 超时、BIOS 启动超时（**600 秒**）锁存点亮，BMC 重启后清除 |
+| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 电压越限、温度超过 Upper Critical（含更高的不可恢复上限）点亮，两者恢复后熄灭；watchdog 超时、BIOS 启动超时（**600 秒**）锁存点亮，BMC 重启后清除 |
 | `BMC_FAN_BMC_OVERRIDE_N`（GPIOI6） | 风扇控制就绪后拉高，BMC 接管风扇；服务停止时拉低交还 CPLD |
 | `BMC_HBLED_N`（GPIOP7） | eSPI 驱动就绪后启用内核 heartbeat 触发器 |
 | `BMC_BIOS_FLASH_SELECT`（GPIOM1） | BIOS 升级时拉高切给 BMC，等 5 秒后烧写，结束后拉低 |
@@ -425,7 +425,11 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 
 * **已保留**：概要、事件日志、POST Code、转储、清单与 LED（系统/BMC/机箱三张表）、传感器、恢复出厂设置（仅 BMC）、KVM（含全屏）、固件、重启 BMC、SOL（只读）、服务器电源操作、虚拟媒体、日期与时间、风扇控制、网络、电源恢复策略、会话、用户管理、策略、证书。
 * **已移除**（无后台支持）：SNMP Alerts、清除密钥、LDAP、资源管理/电源、“仅重置服务器选项”、清单页的 DIMM/风扇/电源/处理器/组件表。
-* **SOL**：页面提示为只读模式，终端禁用输入。
+* **虚拟媒体**：网页只提供“从浏览器读取镜像文件”（走 bmcweb 的 /vm/0/0 WebSocket → jsnbd → nbd → USB mass storage → 主机 VL805 USB 口）；“从外部服务器读取镜像文件”（CIFS/HTTPS）需要已停止维护的 virtual-media 服务，镜像里没有，网页默认也不显示。上板验证：网页选一个 ISO 点开始，主机里应出现一个 USB 光盘/U 盘；BMC 上 `ls /sys/kernel/config/usb_gadget/`、`ls /dev/nbd0`。
+* **时间和 SEL**：BMC 系统时间默认从板上 RTC（NCT3015Y）读取，SEL 时间戳用系统时间。AST2600 内部 RTC 已关闭，NCT3015Y 是 `rtc0`。
+* **SEL 记录**：电压、温度（含 CPU_MAX_TEMP / DIMM_MAX_TEMP，含不可恢复级别）、watchdog 超时、BIOS 启动失败（600 秒）、电源按键都会写 SEL。SEL 为 rollover：约保留最新 2000 条，满了自动丢弃最老的。
+* **SSH / SCP**：BMC 用 dropbear 提供 SSH（22 端口），已带 `openssh-sftp-server` 和 `openssh-scp`，`scp` 新旧协议都可用，例如 `scp -P 2222 file root@127.0.0.1:/tmp/`（QEMU）。
+* **SOL**：硬件上只能接收（CPU 串口输出接 BMC UART3 的 RX，TXD3 不接管脚），网页、SSH、IPMI 的 SOL 都不能向主机输入；网页提示为只读模式，终端禁用输入。
 * **风扇控制**：6 个风扇可单独或统一设置；可选“BMC 重启后保留这些设置”（保存到 `/var/lib/ceb-gnrd`，重启和断电重启后恢复），不勾选则 BMC 重启后回到自适应。该功能依赖 bmcweb 的 `dbus-rest`。
 * **升级后保留**：普通固件升级不会清读写分区；需要清读写分区的升级会按白名单保存时区、主机名、SSH 主机密钥、网站证书和风扇设置。恢复出厂则全部清除（MAC 不受影响）。
 
@@ -457,9 +461,9 @@ ipmitool mc info                               # Manufacturer Name CTOPAI，Prod
 | :--- | :--- |
 | eSPI | `dmesg \| grep -i espi`；`cat /sys/kernel/debug/*espi*/regs`；对照分析仪抓包 |
 | PHY | U-Boot：`mdio list`；Linux：`dmesg \| grep -i -E "phy\|mdio"`、`ethtool -S eth0`、`iperf3` |
-| PSU | 插 1 个和 2 个模块各验证：`journalctl -u ceb-gnrd-psu-detect` |
+| PSU | 插 1 个和 2 个模块各验证：`journalctl -u ceb-gnrd-psu-detect`；`ipmitool sdr` 里应有 PSUn_Temp，`ls /sys/class/hwmon/*/temp*_input` 核对 temp2 确实是电源温度 |
 | 电源按键 | `journalctl -u ceb-gnrd-power-button-log -f`；`ipmitool sel list \| tail -3` |
-| 告警灯 | 电压越限、watchdog 超时、BIOS 启动超过 600 秒各验证一次 |
+| 告警灯 | 电压越限、温度超 Upper Critical、watchdog 超时、BIOS 启动超过 600 秒各验证一次（四种共用一个灯，前两种恢复后灭，后两种重启 BMC 才灭） |
 | 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings` |
 | BMC 状态 | `obmcutil state`（`Device Available` 取决于 BMC 是否为 Ready） |
 

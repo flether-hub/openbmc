@@ -39,7 +39,7 @@ import sys
 
 from dbus_fast import BusType, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
-from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property
+from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, signal
 
 LOG = logging.getLogger("ceb-gnrd-temp-max")
 
@@ -106,14 +106,26 @@ class _Threshold(ServiceInterface):
 
     def __init__(self, interface, high):
         super().__init__(interface)
+        self.interface_name = interface
         self.high = high
         self.alarm = False
+        self._signal_args = ["", interface, "", False, 0.0]
 
-    def evaluate(self, value, alarm_name):
-        alarm = (not math.isnan(value)) and value >= self.high
+    @signal()
+    def ThresholdAsserted(self) -> "sssbd":
+        # phosphor-sel-logger turns this signal into an IPMI SEL record.
+        return self._signal_args
+
+    def evaluate(self, sensor_name, value, alarm_name):
+        if math.isnan(value):
+            return False          # reading lost: keep the current alarm state
+        alarm = value >= self.high
         if alarm != self.alarm:
             self.alarm = alarm
             self.emit_properties_changed({alarm_name: alarm})
+            self._signal_args = [sensor_name, self.interface_name, alarm_name,
+                                 alarm, value]
+            self.ThresholdAsserted()
             return True
         return False
 
@@ -307,7 +319,7 @@ async def main():
             else:
                 sensor.update(0.0)             # host off: no thermal load
             for obj, alarm_name, level in thresholds[group]:
-                if obj.evaluate(real, alarm_name):
+                if obj.evaluate(sensor.name, real, alarm_name):
                     LOG.warning("%s %s %s (value %.1f, threshold %.1f)",
                                 sensor.name, level,
                                 "asserted" if obj.alarm else "cleared",

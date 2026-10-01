@@ -229,8 +229,8 @@ including stale saved language selections.
 
 ### Host serial-over-LAN
 
-* CPU serial TX/RX is wired to AST2600 UART3 (`GPIOL4/TXD3` and
-  `GPIOL5/RXD3`). UART3 is enabled in the board DTS and `obmc-console` uses
+* SOL is receive-only: the CPU serial output is cross-connected to AST2600 UART3 RX (`GPIOL5/RXD3`); only RX is muxed, `GPIOL4/TXD3` is not driven and the BMC cannot type into the host console. (Original wording: TX/RX wired to UART3 (`GPIOL4/TXD3` and
+  `GPIOL5/RXD3`).) UART3 is enabled in the board DTS and `obmc-console` uses
   `ttyS2` as its host console for SOL access.
 * UART5 (`ttyS4`, 115200 baud) is the local BMC debug console and is explicitly
   enabled in the board DTS. The schematic routes AST2600 TXD5/RXD5 to

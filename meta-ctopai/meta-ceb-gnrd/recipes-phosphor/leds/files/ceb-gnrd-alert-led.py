@@ -20,6 +20,8 @@ MAPPER_PATH = "/xyz/openbmc_project/object_mapper"
 MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper"
 SENSOR_VALUE = "xyz.openbmc_project.Sensor.Value"
 # Entity-Manager "Severity" 4 (non-recoverable) is published as HardShutdown.
+VOLTAGE_ROOT = "/xyz/openbmc_project/sensors/voltage"
+TEMPERATURE_ROOT = "/xyz/openbmc_project/sensors/temperature"
 THRESHOLD_INTERFACES = (
     "xyz.openbmc_project.Sensor.Threshold.Warning",
     "xyz.openbmc_project.Sensor.Threshold.Critical",
@@ -27,6 +29,9 @@ THRESHOLD_INTERFACES = (
     "xyz.openbmc_project.Sensor.Threshold.SoftShutdown",
     "xyz.openbmc_project.Sensor.Threshold.HardShutdown",
 )
+# Temperature alerts only follow the upper critical (and the higher upper
+# non-recoverable) thresholds; warning level and low alarms do not light the LED.
+TEMPERATURE_ALARM_PROPERTIES = ("CriticalAlarmHigh", "HardShutdownAlarmHigh")
 WATCHDOG_MATCH = (
     "type='signal',interface='xyz.openbmc_project.Watchdog',"
     "member='Timeout',path='/xyz/openbmc_project/watchdog/host0'"
@@ -56,7 +61,7 @@ def unwrap_variant(value):
     return value
 
 
-def mapper_voltage_sensors():
+def mapper_sensors(root):
     # The mapper only reports the requested interfaces, so the threshold
     # interfaces must be part of the filter to be visible in the result.
     interfaces = (SENSOR_VALUE,) + THRESHOLD_INTERFACES
@@ -68,7 +73,7 @@ def mapper_voltage_sensors():
         MAPPER_INTERFACE,
         "GetSubTree",
         "sias",
-        "/xyz/openbmc_project/sensors/voltage",
+        root,
         "0",
         str(len(interfaces)),
         *interfaces,
@@ -123,9 +128,11 @@ def as_bool(value):
     return value is True or value == 1 or value == "true"
 
 
-def any_voltage_alarm():
+def any_alarm(root, property_filter):
+    """True if any sensor under root has an asserted alarm accepted by
+    property_filter(name); None when the state cannot be determined."""
     try:
-        sensors = mapper_voltage_sensors()
+        sensors = mapper_sensors(root)
         if not sensors:
             return None
         for service, path, interfaces in sensors:
@@ -134,12 +141,44 @@ def any_voltage_alarm():
                     continue
                 props = property_map(get_all_properties(service, path, interface))
                 for name, value in props.items():
-                    if name.endswith("AlarmHigh") or name.endswith("AlarmLow"):
-                        if as_bool(value):
-                            return True
+                    if property_filter(name) and as_bool(value):
+                        return True
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        LOG.warning("Unable to read voltage threshold alarms: %s", exc)
+        LOG.warning("Unable to read threshold alarms under %s: %s", root, exc)
         return None
+    return False
+
+
+def voltage_alarm_property(name):
+    return name.endswith("AlarmHigh") or name.endswith("AlarmLow")
+
+
+def temperature_alarm_property(name):
+    return name in TEMPERATURE_ALARM_PROPERTIES
+
+
+def sel_add(message, path, data=(0x00, 0xFF, 0xFF)):
+    """Add an IPMI SEL record through phosphor-sel-logger (asserted event)."""
+    for attempt in range(3):
+        try:
+            busctl(
+                "call",
+                "xyz.openbmc_project.Logging.IPMI",
+                "/xyz/openbmc_project/Logging/IPMI",
+                "xyz.openbmc_project.Logging.IPMI",
+                "IpmiSelAdd",
+                "ssaybq",
+                message,
+                path,
+                str(len(data)),
+                *[hex(b) for b in data],
+                "true",
+                "0x0020",
+            )
+            return True
+        except (OSError, subprocess.SubprocessError) as exc:
+            LOG.warning("SEL add failed (attempt %d): %s", attempt + 1, exc)
+            time.sleep(1)
     return False
 
 
@@ -201,7 +240,11 @@ def main():
     boot_succeeded = False
     boot_failed = os.path.exists(BOOT_LATCH)
     watchdog_failed = os.path.exists(WATCHDOG_LATCH)
+    # One shared system alert LED.  Voltage and temperature alarms follow the
+    # sensors: the LED goes out once they are de-asserted.  The watchdog and BIOS
+    # boot failures are latched until the BMC is rebooted.
     voltage_alarm = False
+    temperature_alarm = False
     led_state = None
 
     while True:
@@ -230,12 +273,20 @@ def main():
                 boot_failed = True
                 boot_deadline = None
                 LOG.error("BIOS did not assert BOOT_OK within %d seconds", BOOT_TIMEOUT_SECONDS)
+                sel_add(
+                    "BIOS boot failure: BOOT_OK not asserted within %d seconds"
+                    % BOOT_TIMEOUT_SECONDS,
+                    "/xyz/openbmc_project/state/host0",
+                )
 
         watchdog_failed = watchdog_failed or os.path.exists(WATCHDOG_LATCH)
-        voltage_state = any_voltage_alarm()
+        voltage_state = any_alarm(VOLTAGE_ROOT, voltage_alarm_property)
         if voltage_state is not None:
             voltage_alarm = voltage_state
-        alert = voltage_alarm or boot_failed or watchdog_failed
+        temperature_state = any_alarm(TEMPERATURE_ROOT, temperature_alarm_property)
+        if temperature_state is not None:
+            temperature_alarm = temperature_state
+        alert = voltage_alarm or temperature_alarm or boot_failed or watchdog_failed
         if alert != led_state and set_led(alert):
             led_state = alert
         time.sleep(2)

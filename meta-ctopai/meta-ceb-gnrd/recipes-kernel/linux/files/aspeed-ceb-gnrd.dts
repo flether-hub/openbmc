@@ -86,9 +86,15 @@
     status = "disabled";
 };
 
-/* phosphor-ipmi-kcs defaults to ipmi-kcs3; keep the kernel node enabled. */
+/* phosphor-ipmi-kcs defaults to ipmi-kcs3.  The host BIOS reaches the BMC KCS
+ * interface at I/O port 0xCA2 (data) / 0xCA3 (status).  The kernel driver
+ * refuses to probe without 'aspeed,lpc-io-reg'; KCS channel 3 only supports the
+ * inferred status address, so a single address is given.  No SerIRQ
+ * ('aspeed,lpc-interrupts') is configured: the board uses eSPI without virtual
+ * wires, so the host polls the KCS status register. */
 &kcs3 {
     status = "okay";
+    aspeed,lpc-io-reg = <0xca2>;
 };
 
 /* Capture BIOS POST writes to I/O port 0x80. This snoop is separate from
@@ -127,10 +133,14 @@
     };
 };
 
-/* Host CPU serial is routed to AST2600 UART3 on GPIOL4/TXD3 and
- * GPIOL5/RXD3. UART5 remains the BMC debug console on ttyS4. */
+/* SOL is receive-only: the CPU serial output is cross-connected to AST2600
+ * UART3 RX (GPIOL5/RXD3).  The BMC cannot send characters to the host, so only
+ * the RX pin is muxed and TXD3 (GPIOL4) is left as an undriven GPIO input.
+ * UART5 remains the BMC debug console on ttyS4. */
 &uart3 {
     status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rxd3_default>;
 };
 
 /* BMC debug console is wired to the dedicated AST2600 UART5 pads C8/D8.
@@ -444,6 +454,13 @@
     pinctrl-0 = <&pinctrl_i2c9_default>;
     /delete-node/ lm75@4d;
 };
+/* The AST2600 internal RTC has no battery backup.  Disable it (the EVB include
+ * enables it) so the battery-backed NCT3015Y below is rtc0, which the kernel
+ * uses to set the system clock at boot (CONFIG_RTC_HCTOSYS_DEVICE="rtc0"). */
+&rtc {
+    status = "disabled";
+};
+
 /* Schematic RTC bus 10 is AST2600 I2C10 (Linux i2c9), on SDA2/SCL2
  * of the NCT3015Y-R; its first I2C port is connected to the host CPU. */
 &i2c9 {

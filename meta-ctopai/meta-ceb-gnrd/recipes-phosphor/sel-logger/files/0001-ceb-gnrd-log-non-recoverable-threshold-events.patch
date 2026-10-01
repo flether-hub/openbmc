@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Fri, 2 Oct 2026 00:00:00 +0000
+Subject: [PATCH] threshold monitor: log non-recoverable (HardShutdown) events
+
+Entity-Manager Severity 4 thresholds and the CPU/DIMM maximum temperature
+sensors are published on the HardShutdown threshold interface, which the
+threshold monitor ignored.  Log them as upper/lower non-recoverable SEL events.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
+---
+ include/threshold_event_monitor.hpp | 0
+ 1 file changed
+
+--- a/include/threshold_event_monitor.hpp
++++ b/include/threshold_event_monitor.hpp
+@@ -28,8 +28,10 @@
+ {
+     lowerNonCritGoingLow = 0x00,
+     lowerCritGoingLow = 0x02,
++    lowerNonRecoverableGoingLow = 0x04,
+     upperNonCritGoingHigh = 0x07,
+     upperCritGoingHigh = 0x09,
++    upperNonRecoverableGoingHigh = 0x0b,
+ };
+ 
+ static constexpr const uint8_t thresholdEventDataTriggerReadingByte2 = (1 << 6);
+@@ -111,6 +113,16 @@
+             eventData[0] =
+                 static_cast<uint8_t>(thresholdEventOffsets::upperCritGoingHigh);
+         }
++        else if (event == "HardShutdownAlarmLow")
++        {
++            eventData[0] = static_cast<uint8_t>(
++                thresholdEventOffsets::lowerNonRecoverableGoingLow);
++        }
++        else if (event == "HardShutdownAlarmHigh")
++        {
++            eventData[0] = static_cast<uint8_t>(
++                thresholdEventOffsets::upperNonRecoverableGoingHigh);
++        }
+         // Indicate that bytes 2 and 3 are threshold sensor trigger values
+         eventData[0] |= thresholdEventDataTriggerReadingByte2 |
+                         thresholdEventDataTriggerReadingByte3;
+@@ -279,6 +291,38 @@
+                 redfishMessageID += ".SensorThresholdCriticalHighGoingLow";
+             }
+         }
++        else if (event == "HardShutdownLow")
++        {
++            threshold = "non-recoverable low";
++            if (assert)
++            {
++                eventType = eventErr;
++                direction = "low";
++                redfishMessageID += ".SensorThresholdCriticalLowGoingLow";
++            }
++            else
++            {
++                eventType = eventInfo;
++                direction = "high";
++                redfishMessageID += ".SensorThresholdCriticalLowGoingHigh";
++            }
++        }
++        else if (event == "HardShutdownHigh")
++        {
++            threshold = "non-recoverable high";
++            if (assert)
++            {
++                eventType = eventErr;
++                direction = "high";
++                redfishMessageID += ".SensorThresholdCriticalHighGoingHigh";
++            }
++            else
++            {
++                eventType = eventInfo;
++                direction = "low";
++                redfishMessageID += ".SensorThresholdCriticalHighGoingLow";
++            }
++        }
+ 
+         std::string journalMsg(
+             std::string(sensorName) + " " + threshold + " threshold " +

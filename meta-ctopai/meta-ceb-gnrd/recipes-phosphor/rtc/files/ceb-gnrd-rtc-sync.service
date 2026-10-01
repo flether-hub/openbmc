@@ -1,0 +1,17 @@
+[Unit]
+Description=Set the BMC system clock from the battery-backed RTC (NCT3015Y)
+# The kernel normally does this itself (CONFIG_RTC_HCTOSYS); this is a safety
+# net for the case where the I2C RTC probed after that one-shot hook ran.
+DefaultDependencies=no
+After=dev-rtc0.device systemd-modules-load.service
+Wants=dev-rtc0.device
+Before=sysinit.target time-set.target systemd-timesyncd.service phosphor-time-manager.service
+ConditionPathExists=/dev/rtc0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/hwclock --hctosys --utc
+
+[Install]
+WantedBy=sysinit.target

@@ -193,35 +193,38 @@
         {
             "Address": "0x58",
             "Bus": 7,
-            "Labels": ["vin", "vout1", "pin", "pout1"],
+            "Labels": ["vin", "vout1", "pin", "pout1", "temp2"],
             "Name": "CRPS0",
             "Type": "pmbus",
             "vin_Name": "PSU0_InputVoltage",
             "vout1_Name": "PSU0_OutputVoltage",
             "pin_Name": "PSU0_InputPower",
-            "pout1_Name": "PSU0_OutputPower"
+            "pout1_Name": "PSU0_OutputPower",
+            "temp2_Name": "PSU0_Temp"
         },
         {
             "Address": "0x59",
             "Bus": 7,
-            "Labels": ["vin", "vout1", "pin", "pout1"],
+            "Labels": ["vin", "vout1", "pin", "pout1", "temp2"],
             "Name": "CRPS1",
             "Type": "pmbus",
             "vin_Name": "PSU1_InputVoltage",
             "vout1_Name": "PSU1_OutputVoltage",
             "pin_Name": "PSU1_InputPower",
-            "pout1_Name": "PSU1_OutputPower"
+            "pout1_Name": "PSU1_OutputPower",
+            "temp2_Name": "PSU1_Temp"
         },
         {
             "Address": "0x5a",
             "Bus": 7,
-            "Labels": ["vin", "vout1", "pin", "pout1"],
+            "Labels": ["vin", "vout1", "pin", "pout1", "temp2"],
             "Name": "CRPS2",
             "Type": "pmbus",
             "vin_Name": "PSU2_InputVoltage",
             "vout1_Name": "PSU2_OutputVoltage",
             "pin_Name": "PSU2_InputPower",
-            "pout1_Name": "PSU2_OutputPower"
+            "pout1_Name": "PSU2_OutputPower",
+            "temp2_Name": "PSU2_Temp"
         },
         {
             "Connector": {
