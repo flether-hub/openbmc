@@ -2,16 +2,18 @@
 Description=Set the BMC system clock from the battery-backed RTC (NCT3015Y)
 # The kernel normally does this itself (CONFIG_RTC_HCTOSYS); this is a safety
 # net for the case where the I2C RTC probed after that one-shot hook ran.
+# There is deliberately no dependency on dev-rtc0.device: without an RTC (for
+# example in QEMU) systemd would wait 90 s for it.  The wait is done below and
+# is limited to 30 s.
 DefaultDependencies=no
-After=dev-rtc0.device systemd-modules-load.service
-Wants=dev-rtc0.device
+After=systemd-modules-load.service
 Before=sysinit.target time-set.target systemd-timesyncd.service phosphor-time-manager.service
-ConditionPathExists=/dev/rtc0
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/sbin/hwclock --hctosys --utc
+TimeoutStartSec=40
+ExecStart=/bin/sh -c 'i=0; while [ ! -e /dev/rtc0 ] && [ "$i" -lt 30 ]; do i=$((i+1)); sleep 1; done; if [ -e /dev/rtc0 ]; then exec /sbin/hwclock --hctosys --utc; else echo "no /dev/rtc0 after 30 s, leaving the clock unchanged"; fi'
 
 [Install]
 WantedBy=sysinit.target

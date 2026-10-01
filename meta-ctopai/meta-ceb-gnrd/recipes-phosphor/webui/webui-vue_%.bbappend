@@ -9,6 +9,9 @@ SRC_URI:append:ceb-gnrd = " \
     file://0006-ceb-gnrd-kvm-full-screen.patch \
     file://0007-ceb-gnrd-factory-reset-bmc-only.patch \
     file://0008-ceb-gnrd-inventory-supported-tables-only.patch \
+    file://0009-ceb-gnrd-remove-overview-power-card.patch \
+    file://0010-ceb-gnrd-firmware-single-bank.patch \
+    file://0011-ceb-gnrd-dumps-bmc-only.patch \
     file://zh-CN.json \
 "
 

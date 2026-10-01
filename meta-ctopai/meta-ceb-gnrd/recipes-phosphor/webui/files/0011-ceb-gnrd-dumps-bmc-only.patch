@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Fri, 2 Oct 2026 00:00:00 +0000
+Subject: [PATCH] dumps: offer BMC dump only
+
+System dump needs host firmware support that this x86 board does not have.
+Remove it from the dump type selection.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
+---
+ src/views/Logs/Dumps/DumpsForm.vue | 0
+ 1 file changed
+
+--- a/src/views/Logs/Dumps/DumpsForm.vue
++++ b/src/views/Logs/Dumps/DumpsForm.vue
+@@ -57,10 +57,6 @@
+       selectedDumpType: null,
+       dumpTypeOptions: [
+         { value: 'bmc', text: i18n.global.t('pageDumps.dumpTypes.bmcDump') },
+-        {
+-          value: 'system',
+-          text: i18n.global.t('pageDumps.dumpTypes.systemDump'),
+-        },
+       ],
+     };
+   },
