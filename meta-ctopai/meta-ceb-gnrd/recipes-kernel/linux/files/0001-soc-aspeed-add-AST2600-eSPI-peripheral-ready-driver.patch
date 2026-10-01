@@ -12,7 +12,6 @@ accepted by that hardware path. Do not initialize Virtual Wire, OOB, or Flash.
  create mode 100644 drivers/soc/aspeed/aspeed-espi-peripheral.c
 
 diff --git a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
-index 000000000000..111111111111 100644
 --- a/drivers/soc/aspeed/Kconfig
 +++ b/drivers/soc/aspeed/Kconfig
 @@ -52,5 +52,13 @@ config ASPEED_SOCINFO

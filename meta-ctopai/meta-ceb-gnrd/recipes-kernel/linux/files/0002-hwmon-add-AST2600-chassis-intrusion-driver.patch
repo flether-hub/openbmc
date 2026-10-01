@@ -12,7 +12,6 @@ to expose the dedicated CHASI# latch as intrusion0_alarm.
  4 files changed, 158 insertions(+)
 
 diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
-index 000000000000..000000000000 100644
 --- a/drivers/hwmon/Kconfig
 +++ b/drivers/hwmon/Kconfig
 @@ -407,6 +407,14 @@ config SENSORS_ASPEED_G6
@@ -31,7 +30,6 @@ index 000000000000..000000000000 100644
  	tristate "Attansic ATXP1 VID controller"
  	depends on I2C
 diff --git a/drivers/hwmon/Makefile b/drivers/hwmon/Makefile
-index 000000000000..000000000000 100644
 --- a/drivers/hwmon/Makefile
 +++ b/drivers/hwmon/Makefile
 @@ -55,6 +55,7 @@
@@ -214,7 +212,6 @@ index 000000000000..000000000000
 +MODULE_DESCRIPTION("ASPEED AST2600 chassis intrusion driver");
 +MODULE_LICENSE("GPL");
 diff --git a/arch/arm/boot/dts/aspeed/aspeed-g6.dtsi b/arch/arm/boot/dts/aspeed/aspeed-g6.dtsi
-index 000000000000..000000000000 100644
 --- a/arch/arm/boot/dts/aspeed/aspeed-g6.dtsi
 +++ b/arch/arm/boot/dts/aspeed/aspeed-g6.dtsi
 @@ -399,6 +399,13 @@ adc1: adc@1e6e9100 {

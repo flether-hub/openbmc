@@ -12,7 +12,6 @@ Upstream-Status: Inappropriate [CEB-GNRD product policy]
 ---
 
 diff --git a/src/components/AppNavigation/AppNavigationMixin.js b/src/components/AppNavigation/AppNavigationMixin.js
-index dc9e050..cabbbc9 100644
 --- a/src/components/AppNavigation/AppNavigationMixin.js
 +++ b/src/components/AppNavigation/AppNavigationMixin.js
 @@ -131,6 +131,11 @@ const AppNavigationMixin = {
@@ -29,7 +28,6 @@ index dc9e050..cabbbc9 100644
                label: i18n.global.t('appNavigation.network'),
                route: '/settings/network',
 diff --git a/src/locales/en-US.json b/src/locales/en-US.json
-index 99f4bd8..34172b8 100644
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
 @@ -113,6 +113,7 @@
@@ -70,7 +68,6 @@ index 99f4bd8..34172b8 100644
          "alert": {
              "message": "To change how date and time are displayed (either UTC or browser offset) throughout the application, visit ",
 diff --git a/src/router/routes.js b/src/router/routes.js
-index f3f6f6b..f9d340d 100644
 --- a/src/router/routes.js
 +++ b/src/router/routes.js
 @@ -2,6 +2,7 @@ import AppLayout from '@/layouts/AppLayout.vue';

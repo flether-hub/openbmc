@@ -7,8 +7,8 @@ revision in the final AUX byte.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific behavior]
 ---
- apphandler.cpp | 93 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 93 insertions(+)
+ apphandler.cpp | 72 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 72 insertions(+)
 
 --- a/apphandler.cpp
 +++ b/apphandler.cpp
@@ -22,7 +22,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific behavior]
  #include <memory>
 +#include <optional>
  #include <regex>
-@@ -65,0 +68,62 @@
+@@ -65,0 +68,72 @@
 +
 +/* Return nullopt when the board straps cannot be sampled. This must not make
 + * the standard Get Device ID command unavailable. */
@@ -85,20 +85,13 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific behavior]
 +    }
 +    return std::nullopt;
 +}
-@@ -729,9 +793,16 @@
-     // Set availability to the actual current BMC state
-     devId.fw[0] &= ipmiDevIdFw1Mask;
-     if (!getCurrentBmcStateWithFallback(ctx, defaultActivationSetting))
-     {
-         devId.fw[0] |= (1 << ipmiDevIdStateShift);
-     }
 +
++static uint32_t cebGnrdAux(uint32_t aux)
++{
 +    if (const auto revision = getCebGnrdBoardRevision())
 +    {
 +        // AUX is returned little-endian; bits 31:24 are its fourth byte.
-+        devId.aux = (devId.aux & 0x00ffffffU) |
-+                    (static_cast<uint32_t>(*revision) << 24);
++        aux = (aux & 0x00ffffffU) | (static_cast<uint32_t>(*revision) << 24);
 +    }
- 
-     return ipmi::responseSuccess(
-         devId.id, devId.revision, devId.fw[0], devId.fw[1], devId.ipmiVer,
++    return aux;
++}

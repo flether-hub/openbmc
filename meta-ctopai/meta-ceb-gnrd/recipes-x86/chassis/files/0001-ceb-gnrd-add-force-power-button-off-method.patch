@@ -15,7 +15,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific power sequence]
  1 file changed, 15 insertions(+)
 
 diff --git a/src/power_control.cpp b/src/power_control.cpp
-index 0000000..0000000 100644
 --- a/src/power_control.cpp
 +++ b/src/power_control.cpp
 @@ -3211,3 +3211,18 @@
