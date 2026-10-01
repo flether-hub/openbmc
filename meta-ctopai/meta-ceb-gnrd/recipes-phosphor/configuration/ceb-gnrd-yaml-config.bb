@@ -15,9 +15,9 @@ SRC_URI:ceb-gnrd = " \
 S = "${UNPACKDIR}"
 
 do_install:ceb-gnrd() {
-    install -m 0644 -D ceb-gnrd-ipmi-fru.yaml \
+    install -m 0644 -D ${UNPACKDIR}/ceb-gnrd-ipmi-fru.yaml \
         ${D}${datadir}/${BPN}/ipmi-fru-read.yaml
-    install -m 0644 -D ceb-gnrd-ipmi-fru-properties.yaml \
+    install -m 0644 -D ${UNPACKDIR}/ceb-gnrd-ipmi-fru-properties.yaml \
         ${D}${datadir}/${BPN}/ipmi-extra-properties.yaml
 }
 

@@ -19,9 +19,13 @@ MAPPER = "xyz.openbmc_project.ObjectMapper"
 MAPPER_PATH = "/xyz/openbmc_project/object_mapper"
 MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper"
 SENSOR_VALUE = "xyz.openbmc_project.Sensor.Value"
+# Entity-Manager "Severity" 4 (non-recoverable) is published as HardShutdown.
 THRESHOLD_INTERFACES = (
     "xyz.openbmc_project.Sensor.Threshold.Warning",
     "xyz.openbmc_project.Sensor.Threshold.Critical",
+    "xyz.openbmc_project.Sensor.Threshold.PerformanceLoss",
+    "xyz.openbmc_project.Sensor.Threshold.SoftShutdown",
+    "xyz.openbmc_project.Sensor.Threshold.HardShutdown",
 )
 WATCHDOG_MATCH = (
     "type='signal',interface='xyz.openbmc_project.Watchdog',"
@@ -39,7 +43,23 @@ def busctl(*args):
     )
 
 
+def unwrap_reply(data):
+    # busctl --json wraps the reply arguments in a list.
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        return data[0]
+    return data
+
+
+def unwrap_variant(value):
+    while isinstance(value, dict) and "type" in value and "data" in value:
+        value = value["data"]
+    return value
+
+
 def mapper_voltage_sensors():
+    # The mapper only reports the requested interfaces, so the threshold
+    # interfaces must be part of the filter to be visible in the result.
+    interfaces = (SENSOR_VALUE,) + THRESHOLD_INTERFACES
     result = busctl(
         "--json=short",
         "call",
@@ -50,10 +70,10 @@ def mapper_voltage_sensors():
         "sias",
         "/xyz/openbmc_project/sensors/voltage",
         "0",
-        "1",
-        SENSOR_VALUE,
+        str(len(interfaces)),
+        *interfaces,
     )
-    payload = json.loads(result.stdout)["data"]
+    payload = unwrap_reply(json.loads(result.stdout)["data"])
     if isinstance(payload, dict):
         payload = list(payload.items())
 
@@ -85,7 +105,7 @@ def get_all_properties(service, path, interface):
         "s",
         interface,
     )
-    return json.loads(result.stdout)["data"]
+    return unwrap_reply(json.loads(result.stdout)["data"])
 
 
 def property_map(data):
@@ -97,8 +117,9 @@ def property_map(data):
 
 
 def as_bool(value):
+    value = unwrap_variant(value)
     while isinstance(value, list) and value:
-        value = value[-1]
+        value = unwrap_variant(value[-1])
     return value is True or value == 1 or value == "true"
 
 

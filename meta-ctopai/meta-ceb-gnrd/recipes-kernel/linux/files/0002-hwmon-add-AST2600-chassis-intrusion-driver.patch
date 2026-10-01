@@ -7,9 +7,9 @@ to expose the dedicated CHASI# latch as intrusion0_alarm.
 ---
  drivers/hwmon/Kconfig                  |   9 +
  drivers/hwmon/Makefile                 |   1 +
- drivers/hwmon/aspeed-chassis.c         | 139 +++++++++++++++++++++++
+ drivers/hwmon/aspeed-chassis.c         | 142 +++++++++++++++++++++++
  arch/arm/boot/dts/aspeed/aspeed-g6.dtsi |   7 +
- 4 files changed, 155 insertions(+)
+ 4 files changed, 158 insertions(+)
 
 diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
 index 000000000000..000000000000 100644
@@ -34,20 +34,20 @@ diff --git a/drivers/hwmon/Makefile b/drivers/hwmon/Makefile
 index 000000000000..000000000000 100644
 --- a/drivers/hwmon/Makefile
 +++ b/drivers/hwmon/Makefile
-@@ -52,6 +52,7 @@ obj-$(CONFIG_SENSORS_AS370) += as370-hwmon.o
- obj-$(CONFIG_SENSORS_ASC7621) += asc7621.o
- obj-$(CONFIG_SENSORS_ASPEED) += aspeed-pwm-tacho.o
+@@ -55,6 +55,7 @@
+ obj-$(CONFIG_SENSORS_ASC7621)	+= asc7621.o
+ obj-$(CONFIG_SENSORS_ASPEED)	+= aspeed-pwm-tacho.o
  obj-$(CONFIG_SENSORS_ASPEED_G6) += aspeed-g6-pwm-tach.o
 +obj-$(CONFIG_SENSORS_ASPEED_CHASSIS) += aspeed-chassis.o
- obj-$(CONFIG_SENSORS_ASUS_ROG_RYUJIN) += asus_rog_ryujin.o
- obj-$(CONFIG_SENSORS_ATXP1) += atxp1.o
+ obj-$(CONFIG_SENSORS_ASUS_ROG_RYUJIN)	+= asus_rog_ryujin.o
+ obj-$(CONFIG_SENSORS_ATXP1)	+= atxp1.o
  obj-$(CONFIG_SENSORS_AXI_FAN_CONTROL) += axi-fan-control.o
 diff --git a/drivers/hwmon/aspeed-chassis.c b/drivers/hwmon/aspeed-chassis.c
 new file mode 100644
 index 000000000000..000000000000
 --- /dev/null
 +++ b/drivers/hwmon/aspeed-chassis.c
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,142 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Copyright (C) 2021 ASPEED Technology Inc.
@@ -135,6 +135,8 @@ index 000000000000..000000000000
 +	case 2:
 +		ret = chassis_ctrl.fields.intrusion_status;
 +		break;
++	default:
++		return -EINVAL;
 +	}
 +
 +	return sprintf(buf, "%d\n", ret);
@@ -192,7 +194,8 @@ index 000000000000..000000000000
 +
 +	priv->groups[0] = &intrusion_dev_group;
 +	priv->groups[1] = NULL;
-+	hwmon = devm_hwmon_device_register_with_groups(dev, "aspeed_chassis",++						       priv, priv->groups);
++	hwmon = devm_hwmon_device_register_with_groups(dev, "aspeed_chassis",
++						       priv, priv->groups);
 +
 +	return PTR_ERR_OR_ZERO(hwmon);
 +}

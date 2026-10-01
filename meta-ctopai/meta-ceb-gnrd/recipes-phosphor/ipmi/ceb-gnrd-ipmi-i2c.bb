@@ -5,6 +5,9 @@ LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/Apache-2.0;md5
 
 inherit allarch python3native
 
+# Runtime provider named in VIRTUAL-RUNTIME_phosphor-ipmi-providers.
+RPROVIDES:${PN} += "ceb-gnrd-ipmi"
+
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = "file://generate_i2c_allowlist.py"
 S = "${UNPACKDIR}"

@@ -54,7 +54,7 @@ interfaces:
     disabled_channels: [virtual_wire, flash_access]
 
   adc:
-    source: AST2600 ADC0 channels 0-15
+    source: AST2600 ADC pads 0-15 (pads 0-7 on adc0 ch0-7, pads 8-15 on adc1 ch0-7)
     scaling: ADC sensor reading = measured pin voltage multiplied by ScaleFactor
     sampling_power_state: chassis-on-only
     thresholds: only-lower-and-upper-non-recoverable-at-nominal-minus-plus-15-percent
@@ -74,7 +74,7 @@ interfaces:
       - { channel: 12, name: P1V8_STBY, net: P1V8_STBY_ADC12, package_ball: AC16, nominal: 1.8, divider_ratio: 1.0, lnr: 1.53, unr: 2.07 }
       - { channel: 13, name: P1V2_STBY, net: P1V2_STBY_ADC13, package_ball: AA16, nominal: 1.2, divider_ratio: 1.0, lnr: 1.02, unr: 1.38 }
       - { channel: 14, name: P1V0_STBY, net: P1V0_STBY_ADC14, package_ball: AD16, nominal: 1.0, divider_ratio: 1.0, lnr: 0.85, unr: 1.15 }
-      - { channel: 15, name: D3V0_BAT0, net: D3V0_BAT0_ADC15, package_ball: AC17, nominal: 3.0, divider_ratio: 1.0, lnr: 2.55, unr: 3.45, divider: none }
+      - { channel: 15, name: D3V0_BAT0, net: D3V0_BAT0_ADC15, package_ball: AC17, nominal: 3.0, divider_ratio: 1.0, lnr: 2.55, unr: 3.45, divider: none-as-built, note: R542 and Q39 not populated so the 3 V battery exceeds the 2.5 V ADC full scale and reads saturated; populate R542 (ratio 2) and set ScaleFactor 2 }
 
   fans:
     source: AST2600 G6 PWM/TACH

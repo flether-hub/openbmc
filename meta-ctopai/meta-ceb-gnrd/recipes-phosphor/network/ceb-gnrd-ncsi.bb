@@ -8,7 +8,7 @@ SRC_URI = " \
     file://manage-ncsi-link.sh \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 inherit systemd
 
@@ -19,9 +19,9 @@ RDEPENDS:${PN} = "iproute2 systemd"
 
 do_install() {
     install -d ${D}${systemd_system_unitdir} ${D}${libexecdir}
-    install -m 0644 ${WORKDIR}/ceb-gnrd-ncsi.service \
+    install -m 0644 ${UNPACKDIR}/ceb-gnrd-ncsi.service \
         ${D}${systemd_system_unitdir}/ceb-gnrd-ncsi.service
-    install -m 0755 ${WORKDIR}/manage-ncsi-link.sh \
+    install -m 0755 ${UNPACKDIR}/manage-ncsi-link.sh \
         ${D}${libexecdir}/manage-ncsi-link.sh
 }
 

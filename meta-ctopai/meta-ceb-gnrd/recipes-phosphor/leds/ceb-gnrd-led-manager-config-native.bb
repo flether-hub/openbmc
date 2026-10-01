@@ -8,7 +8,7 @@ PROVIDES += "virtual/phosphor-led-manager-config-native"
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI += "file://led.json"
-S = "${UNPACKDIR}/sources"
+S = "${UNPACKDIR}"
 
 do_install() {
     install -d ${D}${datadir}/phosphor-led-manager

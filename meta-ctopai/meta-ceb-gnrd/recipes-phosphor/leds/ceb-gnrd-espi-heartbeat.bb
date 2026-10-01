@@ -8,7 +8,7 @@ SRC_URI = " \
     file://wait-for-espi-driver.sh \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 inherit systemd
 
@@ -20,9 +20,9 @@ RDEPENDS:${PN} = "systemd"
 do_install() {
     install -d ${D}${systemd_system_unitdir}
     install -d ${D}${libexecdir}
-    install -m 0644 ${WORKDIR}/ceb-gnrd-espi-heartbeat.service \
+    install -m 0644 ${UNPACKDIR}/ceb-gnrd-espi-heartbeat.service \
         ${D}${systemd_system_unitdir}/ceb-gnrd-espi-heartbeat.service
-    install -m 0755 ${WORKDIR}/wait-for-espi-driver.sh \
+    install -m 0755 ${UNPACKDIR}/wait-for-espi-driver.sh \
         ${D}${libexecdir}/wait-for-espi-driver.sh
 }
 

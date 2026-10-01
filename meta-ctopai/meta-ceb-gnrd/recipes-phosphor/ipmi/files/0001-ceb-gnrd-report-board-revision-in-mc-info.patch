@@ -24,7 +24,7 @@ index 0000000..0000000 100644
  #include <memory>
 +#include <optional>
  #include <regex>
-@@ -65,0 +68,84 @@
+@@ -65,0 +68,62 @@
 +
 +/* Return nullopt when the board straps cannot be sampled. This must not make
 + * the standard Get Device ID command unavailable. */
@@ -52,53 +52,31 @@ index 0000000..0000000 100644
 +            continue;
 +        }
 +
-+        std::array<unsigned int, names.size()> offsets{};
++        std::array<gpiod_line*, names.size()> lines{};
 +        bool foundAll = true;
 +        for (size_t i = 0; i < names.size(); ++i)
 +        {
-+            const int offset =
-+                gpiod_chip_get_line_offset_from_name(chip.get(), names[i]);
-+            if (offset < 0)
++            lines[i] = gpiod_chip_find_line(chip.get(), names[i]);
++            if (lines[i] == nullptr)
 +            {
 +                foundAll = false;
 +                break;
 +            }
-+            offsets[i] = static_cast<unsigned int>(offset);
 +        }
 +        if (!foundAll)
 +        {
 +            continue;
 +        }
 +
-+        std::unique_ptr<gpiod_line_settings,
-+                        decltype(&gpiod_line_settings_free)>
-+            settings(gpiod_line_settings_new(), gpiod_line_settings_free);
-+        std::unique_ptr<gpiod_line_config, decltype(&gpiod_line_config_free)>
-+            config(gpiod_line_config_new(), gpiod_line_config_free);
-+        if (!settings || !config ||
-+            gpiod_line_settings_set_direction(
-+                settings.get(), GPIOD_LINE_DIRECTION_INPUT) < 0 ||
-+            gpiod_line_config_add_line_settings(config.get(), offsets.data(),
-+                                                offsets.size(),
-+                                                settings.get()) < 0)
-+        {
-+            return std::nullopt;
-+        }
-+
-+        std::unique_ptr<gpiod_line_request,
-+                        decltype(&gpiod_line_request_release)>
-+            request(gpiod_chip_request_lines(chip.get(), nullptr, config.get()),
-+                    gpiod_line_request_release);
-+        if (!request)
-+        {
-+            return std::nullopt;
-+        }
-+
 +        uint8_t revision = 0;
-+        for (size_t bit = 0; bit < offsets.size(); ++bit)
++        for (size_t bit = 0; bit < lines.size(); ++bit)
 +        {
-+            const int value =
-+                gpiod_line_request_get_value(request.get(), offsets[bit]);
++            if (gpiod_line_request_input(lines[bit], "ceb-gnrd-mc-info") < 0)
++            {
++                return std::nullopt;
++            }
++            const int value = gpiod_line_get_value(lines[bit]);
++            gpiod_line_release(lines[bit]);
 +            if (value < 0)
 +            {
 +                return std::nullopt;
@@ -109,7 +87,7 @@ index 0000000..0000000 100644
 +    }
 +    return std::nullopt;
 +}
-@@ -729,9 +816,16 @@
+@@ -729,9 +793,16 @@
      // Set availability to the actual current BMC state
      devId.fw[0] &= ipmiDevIdFw1Mask;
      if (!getCurrentBmcStateWithFallback(ctx, defaultActivationSetting))

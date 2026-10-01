@@ -127,7 +127,7 @@ Platform features
 
 The workbook-derived map is installed as
 `/usr/share/ceb-gnrd/ceb-gnrd-hardware-contract.yaml`. It records the 16
-I2C buses, the enabled CPU I3C3 management bus and disabled I3C buses, AST2600 ADC0 channels 0-15, six PWM /
+I2C buses, the enabled CPU I3C3 management bus and disabled I3C buses, AST2600 ADC pads 0-15 (adc0 ch0-7, adc1 ch0-7), six PWM /
 TACH fan channels, and the named power, reset and alert GPIOs. Chassis-open
 detection uses the AST2600 dedicated CHASI# intrusion input on package ball
 AB21 through the intrusion hwmon latch; it is not a GPIO line. The
