@@ -5,6 +5,7 @@ The AST2600 routes eSPI peripheral I/O cycles to its integrated legacy I/O
 blocks. Set Peripheral Software Ready so host PUT_IOWR/PUT_IORD cycles can be
 accepted by that hardware path. Do not initialize Virtual Wire, OOB, or Flash.
 
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
  drivers/soc/aspeed/Kconfig                    |  8 ++++
  drivers/soc/aspeed/aspeed-espi-peripheral.c   | 129 +++++++++++++++++++++++++++

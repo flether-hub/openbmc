@@ -4,6 +4,7 @@ Subject: [PATCH] hwmon: add AST2600 chassis intrusion latch support
 Backport the AST2600 chassis hwmon driver and the SoC device-tree node needed
 to expose the dedicated CHASI# latch as intrusion0_alarm.
 
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
  drivers/hwmon/Kconfig                  |   9 +
  drivers/hwmon/Makefile                 |   1 +
