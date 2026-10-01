@@ -10,8 +10,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific behavior]
  apphandler.cpp | 93 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 93 insertions(+)
 
-diff --git a/apphandler.cpp b/apphandler.cpp
-index 0000000..0000000 100644
 --- a/apphandler.cpp
 +++ b/apphandler.cpp
 @@ -2,4 +2,5 @@

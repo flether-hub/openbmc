@@ -2,12 +2,11 @@
 # Maps FRU EEPROM sections to D-Bus inventory paths.
 # FRUID 0 = motherboard FRU EEPROM.
 #
-# TODO: Adjust entityID/entityInstance values to match your platform's
-# IPMI Entity ID assignments (see IPMI Platform Management FRU spec).
+# entityID/entityInstance use the generic value 0 (unspecified entity).
 0:
     /system/chassis/motherboard:
-        entityID: 7
-        entityInstance: 1
+        entityID: 0
+        entityInstance: 0
         interfaces:
             xyz.openbmc_project.Inventory.Item.Board.Motherboard:
                 Manufacturer:

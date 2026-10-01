@@ -14,6 +14,7 @@ board:
 interfaces:
   buses:
     i2c:
+      # The board has no PCIe slot 2, so no BMC sideband bus exists for it.
       - { bus: 1, linux_controller: i2c0, pins: [GPIOJ0_SCL1, GPIOJ1_SDA1], signal: BMC_SLOT1_I2C1, device: PCIE_SLOT1, address: per_card }
       - { bus: 2, linux_controller: i2c1, pins: [GPIOJ2_SCL2, GPIOJ3_SDA2], signal: BMC_SLOT3_I2C2, device: PCIE_SLOT3, address: per_card }
       - { bus: 3, linux_controller: i2c2, pins: [GPIOJ4_SCL3, GPIOJ5_SDA3], signal: BMC_SLOT4_I2C3, device: PCIE_SLOT4, address: per_card }
@@ -21,7 +22,7 @@ interfaces:
       - { bus: 5, linux_controller: i2c4, pins: [GPIOK0_SCL5, GPIOK1_SDA5], signal: BMC_SLOT6_I2C5, device: PCIE_SLOT6, address: per_card }
       - { bus: 6, linux_controller: i2c5, pins: [GPIOK2_SCL6, GPIOK3_SDA6], signal: BMC_SLOT7_I2C6, device: PCIE_SLOT7, address: per_card }
       - { bus: 7, linux_controller: i2c6, signal: BMC_SENSOR_I2C7, device: NST175H-QSPR, address: [0x48, 0x49, 0x4a, 0x4b], temperature_only: true, thresholds: none }
-      - { bus: 8, linux_controller: i2c7, signal: BMC_CPRS_I2C8, device: CRPS_PMBus, addresses: [0x58, 0x59, 0x5a], sensors: [input_voltage, output_voltage, input_power, output_power], optional_modules: true, missing_module_alarm: false }
+      - { bus: 8, linux_controller: i2c7, signal: BMC_CPRS_I2C8, device: CRPS_PMBus, addresses: [0x58, 0x59, 0x5a], sensors: [input_voltage, output_voltage, input_power, output_power], optional_modules: true, installed_modules: 0-2_depending_on_chassis, missing_module_alarm: false }
       - { bus: 9, linux_controller: i2c8, pins: [GPIOL0_SCL9, GPIOL1_SDA9], signal: BMC_CPLD_I2C9, device: CPLD_reserved, address: pending }
       - { bus: 10, linux_controller: i2c9, signal: BMC_RTC_I2C10, device: NCT3015Y-R, address: 0x6f, rtc_device: rtc0, purpose: BMC_system_clock }
       - { bus: 11, linux_controller: i2c10, pins: [GPIOA0_SCL11, GPIOA1_SDA11], signal: BMC_FRU_I2C11, device: FM24C08D, package_outline: 24C02, address: 0x50, num_addresses: 4, size_bytes: 1024, page_size_bytes: 16, wp_signal: BMC_FRU_WP, board_default_wp: pulldown_low_write_enabled, wp_gpio_function: GPIOG6_TXD9_SD2CD#_SALT15, wp_linux_offset: 54, nvmem_wp_gpio: configured }
@@ -56,6 +57,7 @@ interfaces:
   adc:
     source: AST2600 ADC pads 0-15 (pads 0-7 on adc0 ch0-7, pads 8-15 on adc1 ch0-7)
     scaling: ADC sensor reading = measured pin voltage multiplied by ScaleFactor
+    reference: internal 2.5 V (aspeed,int-vref-microvolt = 2500000); ADCVREFEXT0/1 (AF19/AF17) are tied to P1V8_STBY but not selected
     sampling_power_state: chassis-on-only
     thresholds: only-lower-and-upper-non-recoverable-at-nominal-minus-plus-15-percent
     channels:
@@ -115,7 +117,7 @@ interfaces:
       - { name: PCB_VER1, package_ball: P24, ast_gpio: GPIOS5, linux_chip: gpio0, line_offset: 149, value: bit1 }
       - { name: PCB_VER2, package_ball: P23, ast_gpio: GPIOS6, linux_chip: gpio0, line_offset: 150, value: bit2 }
       - { name: CFG_VER0, package_ball: T24, ast_gpio: GPIOS7, linux_chip: gpio0, line_offset: 151, status: not_used_for_pcb_revision }
-      - { name: CFG_VER1, gpio: pending, value: 0, status: exact_gpio_mapping_pending }
+      - { name: CFG_VER1, gpio: none, value: 0, status: hardware_reserved_not_used }
     hardware_revision_formula: "(PCB_VER2 << 2) | (PCB_VER1 << 1) | PCB_VER0"
     mc_info_encoding: "Get Device ID AUX byte 4 (the final byte), range 0x00-0x07; AUX bytes 1-3 are preserved"
 
@@ -209,7 +211,7 @@ interfaces:
     ssh_scp: dropbear and standard OpenBMC SCP support
     network:
       ports:
-        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: 192.168.1.200/24, default_gateway: 192.168.1.1 }
+        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii-rxid, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: 192.168.1.200/24, default_gateway: 192.168.1.1 }
         - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2, power_dependency: "BMC_CPU_PWRGD via xyz.openbmc_project.State.Chassis", behavior: "keep interface down while host is off; bring up on power-on; tear down on power-off" }
       address_modes: [static, dhcp]
       default_management_mode: static

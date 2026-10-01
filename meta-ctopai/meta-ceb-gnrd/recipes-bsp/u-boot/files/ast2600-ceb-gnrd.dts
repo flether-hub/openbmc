@@ -19,7 +19,7 @@
 
 /* Keep UART5 available from SPL through U-Boot for board bring-up logs. */
 &uart5 {
-	bootph-all;
+	u-boot,dm-pre-reloc;
 	status = "okay";
 };
 
@@ -31,7 +31,7 @@
 /* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
 &mac1 {
 	status = "okay";
-	phy-mode = "rgmii";
+	phy-mode = "rgmii-rxid";
 	phy-handle = <&ethphy1>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_rgmii2_default>;
@@ -50,8 +50,6 @@
 
 &mac3 { status = "disabled"; };
 
-&mdio2 { status = "disabled"; };
-
 /* GPIOM1/NDCD1 is reserved for the Linux BIOS-flash ownership GPIO. */
 &uart1 { status = "disabled"; };
 
@@ -61,8 +59,6 @@
 /* The BMC boot device is the 64 MiB W25Q512JV on Firmware SPI (FMC). */
 &fmc {
 	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_fwspid_default &pinctrl_fwqspi_default>;
 	/delete-node/ flash@0;
 
 	flash@0 {

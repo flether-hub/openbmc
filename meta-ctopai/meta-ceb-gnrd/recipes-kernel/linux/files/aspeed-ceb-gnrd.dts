@@ -169,7 +169,7 @@
 /* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
 &mac1 {
     status = "okay";
-    phy-mode = "rgmii";
+    phy-mode = "rgmii-rxid";
     phy-handle = <&ethphy1>;
     pinctrl-names = "default";
     pinctrl-0 = <&pinctrl_rgmii2_default>;
@@ -268,6 +268,7 @@
  * and pads ADC8-15 are &adc1 channels 0-7. */
 &adc0 {
     status = "okay";
+    aspeed,int-vref-microvolt = <2500000>;
     pinctrl-names = "default";
     pinctrl-0 = <&pinctrl_adc0_default &pinctrl_adc1_default
         &pinctrl_adc2_default &pinctrl_adc3_default
@@ -277,6 +278,7 @@
 
 &adc1 {
     status = "okay";
+    aspeed,int-vref-microvolt = <2500000>;
     pinctrl-names = "default";
     pinctrl-0 = <&pinctrl_adc8_default &pinctrl_adc9_default
         &pinctrl_adc10_default &pinctrl_adc11_default

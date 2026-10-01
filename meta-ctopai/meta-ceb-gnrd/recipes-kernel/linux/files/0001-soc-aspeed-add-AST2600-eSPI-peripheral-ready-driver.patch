@@ -7,9 +7,8 @@ accepted by that hardware path. Do not initialize Virtual Wire, OOB, or Flash.
 
 ---
  drivers/soc/aspeed/Kconfig                    |  8 ++++
- drivers/soc/aspeed/Makefile                   |  1 +
  drivers/soc/aspeed/aspeed-espi-peripheral.c   | 129 +++++++++++++++++++++++++++
- 3 files changed, 138 insertions(+)
+ 2 files changed, 137 insertions(+)
  create mode 100644 drivers/soc/aspeed/aspeed-espi-peripheral.c
 
 diff --git a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
@@ -30,12 +29,6 @@ index 000000000000..111111111111 100644
  config ASPEED_SBC
  	bool "ASPEED Secure Boot Controller driver"
  	default MACH_ASPEED_G6
-diff --git a/drivers/soc/aspeed/Makefile b/drivers/soc/aspeed/Makefile
-index 000000000000..111111111111 100644
---- a/drivers/soc/aspeed/Makefile
-+++ b/drivers/soc/aspeed/Makefile
-@@ -8,0 +9 @@
-+obj-$(CONFIG_ASPEED_ESPI)		+= aspeed-espi-peripheral.o
 diff --git a/drivers/soc/aspeed/aspeed-espi-peripheral.c b/drivers/soc/aspeed/aspeed-espi-peripheral.c
 new file mode 100644
 index 000000000000..111111111111
