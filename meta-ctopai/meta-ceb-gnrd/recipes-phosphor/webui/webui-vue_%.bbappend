@@ -4,6 +4,11 @@ SRC_URI:append:ceb-gnrd = " \
     file://0001-ceb-gnrd-limit-webui-languages.patch \
     file://0002-ceb-gnrd-add-simplified-chinese-locale.patch \
     file://0003-ceb-gnrd-add-fan-control-page.patch \
+    file://0004-ceb-gnrd-remove-resource-management-power.patch \
+    file://0005-ceb-gnrd-sol-read-only.patch \
+    file://0006-ceb-gnrd-kvm-full-screen.patch \
+    file://0007-ceb-gnrd-factory-reset-bmc-only.patch \
+    file://0008-ceb-gnrd-inventory-supported-tables-only.patch \
     file://zh-CN.json \
 "
 

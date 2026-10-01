@@ -35,6 +35,7 @@ SUMMARY:${PN}-fans = "CEB-GNRD fan management"
 RDEPENDS:${PN}-fans = " \
     ${VIRTUAL-RUNTIME_obmc-fan-control} \
     ceb-gnrd-fan-services \
+    ceb-gnrd-fan-settings \
     "
 
 SUMMARY:${PN}-flash = "CEB-GNRD firmware management"
@@ -48,4 +49,5 @@ RDEPENDS:${PN}-flash = " \
 SUMMARY:${PN}-system = "CEB-GNRD system management"
 RDEPENDS:${PN}-system = " \
     phosphor-dbus-monitor \
+    ceb-gnrd-psu-detect \
     "

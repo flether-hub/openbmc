@@ -1,0 +1,136 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] webui: keep only the inventory tables that have a backend
+
+The board publishes System, BMC manager and Chassis inventory only.  DIMM
+slots, fans, power supplies, processors and assemblies have no inventory
+objects behind them, so their tables and quick links are removed.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/views/HardwareStatus/Inventory/Inventory.vue
++++ b/src/views/HardwareStatus/Inventory/Inventory.vue
+@@ -30,23 +30,8 @@
+
+     <!-- Chassis table -->
+     <table-chassis ref="chassis" />
+-
+-    <!-- DIMM slot table -->
+-    <table-dimm-slot ref="dimms" />
+-
+-    <!-- Fans table -->
+-    <table-fans ref="fans" />
+-
+-    <!-- Power supplies table -->
+-    <table-power-supplies ref="powerSupply" />
+-
+-    <!-- Processors table -->
+-    <table-processors ref="processors" />
+-
+-    <!-- Assembly table -->
+-    <table-assembly ref="assembly" />
+   </b-container>
+ </template>
+
+@@ -54,14 +39,9 @@
+ import PageTitle from '@/components/Global/PageTitle';
+ import ServiceIndicator from './InventoryServiceIndicator';
+ import TableSystem from './InventoryTableSystem';
+-import TablePowerSupplies from './InventoryTablePowerSupplies';
+-import TableDimmSlot from './InventoryTableDimmSlot';
+-import TableFans from './InventoryTableFans';
+ import TableBmcManager from './InventoryTableBmcManager';
+ import TableChassis from './InventoryTableChassis';
+-import TableProcessors from './InventoryTableProcessors';
+-import TableAssembly from './InventoryTableAssembly';
+ import LoadingBarMixin from '@/components/Mixins/LoadingBarMixin';
+ import PageSection from '@/components/Global/PageSection';
+@@ -72,14 +52,9 @@
+     PageTitle,
+     ServiceIndicator,
+-    TableDimmSlot,
+-    TablePowerSupplies,
+     TableSystem,
+-    TableFans,
+     TableBmcManager,
+     TableChassis,
+-    TableProcessors,
+-    TableAssembly,
+     PageSection,
+     JumpLink: JumpLink16,
+   },
+@@ -110,36 +85,6 @@
+           href: '#chassis',
+           linkText: i18n.global.t('pageInventory.chassis'),
+         },
+-        {
+-          id: 'dimms',
+-          dataRef: 'dimms',
+-          href: '#dimms',
+-          linkText: i18n.global.t('pageInventory.dimmSlot'),
+-        },
+-        {
+-          id: 'fans',
+-          dataRef: 'fans',
+-          href: '#fans',
+-          linkText: i18n.global.t('pageInventory.fans'),
+-        },
+-        {
+-          id: 'powerSupply',
+-          dataRef: 'powerSupply',
+-          href: '#powerSupply',
+-          linkText: i18n.global.t('pageInventory.powerSupplies'),
+-        },
+-        {
+-          id: 'processors',
+-          dataRef: 'processors',
+-          href: '#processors',
+-          linkText: i18n.global.t('pageInventory.processors'),
+-        },
+-        {
+-          id: 'assembly',
+-          dataRef: 'assembly',
+-          href: '#assembly',
+-          linkText: i18n.global.t('pageInventory.assemblies'),
+-        },
+       ],
+     };
+   },
+@@ -157,18 +102,6 @@
+     const chassisTablePromise = new Promise((resolve) => {
+       eventBus.$once('hardware-status-chassis-complete', resolve);
+     });
+-    const dimmSlotTablePromise = new Promise((resolve) => {
+-      eventBus.$once('hardware-status-dimm-slot-complete', resolve);
+-    });
+-    const fansTablePromise = new Promise((resolve) => {
+-      eventBus.$once('hardware-status-fans-complete', resolve);
+-    });
+-    const powerSuppliesTablePromise = new Promise((resolve) => {
+-      eventBus.$once('hardware-status-power-supplies-complete', resolve);
+-    });
+-    const processorsTablePromise = new Promise((resolve) => {
+-      eventBus.$once('hardware-status-processors-complete', resolve);
+-    });
+     const serviceIndicatorPromise = new Promise((resolve) => {
+       eventBus.$once('hardware-status-service-complete', resolve);
+     });
+@@ -175,19 +108,11 @@
+     const systemTablePromise = new Promise((resolve) => {
+       eventBus.$once('hardware-status-system-complete', resolve);
+     });
+-    const assemblyTablePromise = new Promise((resolve) => {
+-      eventBus.$once('hardware-status-assembly-complete', resolve);
+-    });
+     // Combine all child component Promises to indicate
+     // when page data load complete
+     Promise.all([
+       bmcManagerTablePromise,
+       chassisTablePromise,
+-      dimmSlotTablePromise,
+-      fansTablePromise,
+-      powerSuppliesTablePromise,
+-      processorsTablePromise,
+       serviceIndicatorPromise,
+       systemTablePromise,
+-      assemblyTablePromise,
+     ]).finally(() => this.endLoader());

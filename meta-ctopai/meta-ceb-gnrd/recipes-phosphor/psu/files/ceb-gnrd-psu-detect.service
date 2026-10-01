@@ -1,0 +1,12 @@
+[Unit]
+Description=CEB-GNRD PSU presence monitor
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/ceb-gnrd-psu-detect.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

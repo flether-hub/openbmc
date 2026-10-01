@@ -1,0 +1,38 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] webui: factory reset page only offers the BMC reset
+
+The server (BIOS) only reset cannot reach the host BIOS on this board, so the
+option is removed and the BMC reset is the default.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/views/Operations/FactoryReset/FactoryReset.vue
++++ b/src/views/Operations/FactoryReset/FactoryReset.vue
+@@ -12,18 +12,6 @@
+               v-model="resetOption"
+               stacked
+             >
+-              <b-form-radio
+-                class="mb-1"
+-                value="resetBios"
+-                aria-describedby="reset-bios"
+-                data-test-id="factoryReset-radio-resetBios"
+-              >
+-                {{ $t('pageFactoryReset.form.resetBiosOptionLabel') }}
+-              </b-form-radio>
+-              <b-form-text id="reset-bios" class="ms-4 mb-3">
+-                {{ $t('pageFactoryReset.form.resetBiosOptionHelperText') }}
+-              </b-form-text>
+-
+               <b-form-radio
+                 class="mb-1"
+                 value="resetToDefaults"
+@@ -73,7 +61,7 @@
+   data() {
+     return {
+       showResetModal: false,
+-      resetOption: 'resetBios',
++      resetOption: 'resetToDefaults',
+     };
+   },
+   created() {

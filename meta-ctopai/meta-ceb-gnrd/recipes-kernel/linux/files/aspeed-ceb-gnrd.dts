@@ -425,11 +425,9 @@
     /delete-node/ temp@2e;
     /delete-node/ eeprom@50;
 
-    /* Generic PMBus CRPS modules. Missing addresses fail probe and do not
-     * create hwmon sensors; the populated slots are exposed independently. */
-    pmbus@58 { compatible = "pmbus"; reg = <0x58>; };
-    pmbus@59 { compatible = "pmbus"; reg = <0x59>; };
-    pmbus@5a { compatible = "pmbus"; reg = <0x5a>; };
+    /* CRPS PMBus modules (0, 1 or 2 present at 0x58/0x59/0x5a) are not declared
+     * here: ceb-gnrd-psu-detect creates a pmbus device for each installed
+     * module, so empty slots do not log probe failures. */
 };
 
 /* Schematic I2C9 connects to CPLD-reserved pins; no target is currently used. */

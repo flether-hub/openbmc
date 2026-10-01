@@ -1,0 +1,128 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] webui: remove SNMP Alerts, Key clear, LDAP and Resource management
+
+The CEB-GNRD has no SNMP trap destinations, no key-clear or LDAP support and
+no BMC-side power capping, so these navigation items are removed together
+with their routes.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/components/AppNavigation/AppNavigationMixin.js
++++ b/src/components/AppNavigation/AppNavigationMixin.js
+@@ -88,11 +88,6 @@ const AppNavigationMixin = {
+               label: i18n.global.t('appNavigation.kvm'),
+               route: '/operations/kvm',
+             },
+-            {
+-              id: 'key-clear',
+-              label: i18n.global.t('appNavigation.keyClear'),
+-              route: '/operations/key-clear',
+-            },
+             {
+               id: 'firmware',
+               label: i18n.global.t('appNavigation.firmware'),
+@@ -146,11 +141,6 @@ const AppNavigationMixin = {
+               label: i18n.global.t('appNavigation.powerRestorePolicy'),
+               route: '/settings/power-restore-policy',
+             },
+-            {
+-              id: 'snmp-alerts',
+-              label: i18n.global.t('appNavigation.snmpAlerts'),
+-              route: '/settings/snmp-alerts',
+-            },
+           ],
+         },
+         {
+@@ -163,11 +153,6 @@ const AppNavigationMixin = {
+               label: i18n.global.t('appNavigation.sessions'),
+               route: '/security-and-access/sessions',
+             },
+-            {
+-              id: 'ldap',
+-              label: i18n.global.t('appNavigation.ldap'),
+-              route: '/security-and-access/ldap',
+-            },
+             {
+               id: 'user-management',
+               label: i18n.global.t('appNavigation.userManagement'),
+@@ -185,18 +170,6 @@ const AppNavigationMixin = {
+             },
+           ],
+         },
+-        {
+-          id: 'resource-management',
+-          label: i18n.global.t('appNavigation.resourceManagement'),
+-          icon: 'iconResourceManagement',
+-          children: [
+-            {
+-              id: 'power',
+-              label: i18n.global.t('appNavigation.power'),
+-              route: '/resource-management/power',
+-            },
+-          ],
+-        },
+       ],
+     };
+   },
+--- a/src/router/routes.js
++++ b/src/router/routes.js
+@@ -161,14 +161,6 @@ const routes = [
+           title: i18n.global.t('appPageTitle.sessions'),
+         },
+       },
+-      {
+-        path: '/security-and-access/ldap',
+-        name: 'ldap',
+-        component: Ldap,
+-        meta: {
+-          title: i18n.global.t('appPageTitle.ldap'),
+-        },
+-      },
+       {
+         path: '/security-and-access/user-management',
+         name: 'user-management',
+@@ -209,14 +201,6 @@ const routes = [
+           title: i18n.global.t('appPageTitle.fanControl'),
+         },
+       },
+-      {
+-        path: '/settings/snmp-alerts',
+-        name: 'snmp-alerts',
+-        component: SnmpAlerts,
+-        meta: {
+-          title: i18n.global.t('appPageTitle.snmpAlerts'),
+-        },
+-      },
+       {
+         path: '/operations/factory-reset',
+         name: 'factory-reset',
+@@ -225,14 +209,6 @@ const routes = [
+           title: i18n.global.t('appPageTitle.factoryReset'),
+         },
+       },
+-      {
+-        path: '/operations/key-clear',
+-        name: 'key-clear',
+-        component: KeyClear,
+-        meta: {
+-          title: i18n.global.t('appPageTitle.keyClear'),
+-        },
+-      },
+       {
+         path: '/operations/kvm',
+         name: 'kvm',
+@@ -265,14 +241,6 @@ const routes = [
+           title: i18n.global.t('appPageTitle.powerRestorePolicy'),
+         },
+       },
+-      {
+-        path: '/resource-management/power',
+-        name: 'power',
+-        component: Power,
+-        meta: {
+-          title: i18n.global.t('appPageTitle.power'),
+-        },
+-      },
+       {
+         path: '/operations/reboot-bmc',
+         name: 'reboot-bmc',

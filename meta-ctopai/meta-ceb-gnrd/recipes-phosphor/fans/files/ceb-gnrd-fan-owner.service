@@ -1,8 +1,8 @@
 [Unit]
 Description=Select BMC ownership of CEB-GNRD fans
-BindsTo=phosphor-fan-control@0.service
-After=phosphor-fan-control@0.service
-PartOf=phosphor-fan-control@0.service
+BindsTo=phosphor-pid-control.service
+After=phosphor-pid-control.service
+PartOf=phosphor-pid-control.service
 
 [Service]
 Type=simple

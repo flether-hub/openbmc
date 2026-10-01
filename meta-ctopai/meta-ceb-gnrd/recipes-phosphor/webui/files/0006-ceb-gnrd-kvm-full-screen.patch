@@ -1,0 +1,68 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] webui: add a full screen button to the KVM console
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -492,5 +492,6 @@
+         "openNewTab": "Open in new tab",
+         "buttonCtrlAltDelete": "Send Ctrl+Alt+Delete",
++        "buttonFullScreen": "Full screen",
+         "captureScreenshot": "Capture Screenshot",
+         "status": "Status",
+         "connected": "Connected",
+--- a/src/views/Operations/Kvm/KvmConsole.vue
++++ b/src/views/Operations/Kvm/KvmConsole.vue
+@@ -31,6 +31,15 @@
+             <icon-camera />
+             {{ $t('pageKvm.captureScreenshot') }}
+           </b-button>
++          <b-button
++            v-if="isConnected"
++            variant="link"
++            type="button"
++            @click="toggleFullScreen"
++          >
++            <icon-maximize />
++            {{ $t('pageKvm.buttonFullScreen') }}
++          </b-button>
+           <b-button
+             v-if="!isFullWindow"
+             variant="link"
+@@ -53,5 +62,6 @@ import IconLaunch from '@carbon/icons-vue/es/launch/20';
+ import IconArrowDown from '@carbon/icons-vue/es/arrow--down/16';
+ import IconCamera from '@carbon/icons-vue/es/camera/20';
++import IconMaximize from '@carbon/icons-vue/es/maximize/20';
+ import { throttle } from 'lodash';
+ import i18n from '@/i18n';
+ 
+@@ -62,7 +72,13 @@ const Disconnected = 2;
+ 
+ export default {
+   name: 'KvmConsole',
+-  components: { StatusIcon, IconLaunch, IconArrowDown, IconCamera },
++  components: {
++    StatusIcon,
++    IconLaunch,
++    IconArrowDown,
++    IconCamera,
++    IconMaximize,
++  },
+   props: {
+     isFullWindow: {
+       type: Boolean,
+@@ -112,6 +129,13 @@ export default {
+     sendCtrlAltDel() {
+       this.rfb.sendCtrlAltDel();
+     },
++    toggleFullScreen() {
++      if (document.fullscreenElement) {
++        document.exitFullscreen();
++      } else {
++        this.$refs.panel.requestFullscreen?.();
++      }
++    },
+     captureScreenshot() {
+       const canvas = this.$refs.panel.querySelector('canvas');
+       if (canvas) {
