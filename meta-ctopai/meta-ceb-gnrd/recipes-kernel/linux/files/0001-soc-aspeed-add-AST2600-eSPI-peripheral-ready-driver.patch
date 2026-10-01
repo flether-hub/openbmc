@@ -34,7 +34,7 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/soc/aspeed/aspeed-espi-peripheral.c
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,131 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * AST2600 eSPI Peripheral channel initialization.
@@ -45,7 +45,9 @@ index 000000000000..111111111111
 +#include <linux/delay.h>
 +#include <linux/interrupt.h>
 +#include <linux/io.h>
++#include <linux/mod_devicetable.h>
 +#include <linux/module.h>
++#include <linux/of.h>
 +#include <linux/platform_device.h>
 +#include <linux/reset.h>
 +
