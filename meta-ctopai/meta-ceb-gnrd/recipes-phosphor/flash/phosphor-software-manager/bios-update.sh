@@ -5,6 +5,9 @@ set -euo pipefail
 readonly FLASH_SELECT_GPIO="BMC_BIOS_FLASH_SELECT"
 readonly MTD_PARTITION_NAME="host-bios"
 readonly EXPECTED_FLASH_SIZE=67108864
+readonly HOST_SHUTDOWN_TIMEOUT_S=1800
+readonly HOST_OFF_STABLE_S=3
+readonly FORCE_OFF_PULSE_S=16
 FLASH_SELECT_PID=""
 FLASH_OWNERSHIP_SELECTED=0
 
@@ -19,20 +22,59 @@ power_status() {
         /xyz/openbmc_project/state/chassis0 \
         xyz.openbmc_project.State.Chassis CurrentPowerState 2>/dev/null) || return 2
     case "$state" in
-        *"PowerState.On"*)  echo on ;;
-        *"PowerState.Off"*) echo off ;;
+        *"PowerState.On"*)                    echo on ;;
+        *"PowerState.Off"*)                   echo off ;;
+        *"PowerState.TransitioningToOff"*|*"PowerState.TransitioningToOn"*)
+            echo transitioning
+            ;;
         *) return 2 ;;
     esac
 }
 
-HOST_POWER=$(power_status) || {
-    echo "ERROR: Unable to determine host power state; BIOS update is blocked." >&2
-    exit 1
+wait_for_host_off() {
+    local elapsed=0 stable=0 state
+    state=$(power_status) || {
+        echo "ERROR: Unable to determine host power state; BIOS update is blocked." >&2
+        return 1
+    }
+
+    if [[ "$state" == on ]]; then
+        local message="BIOS update is waiting for the user to shut down the host."
+        echo "$message"
+        logger -p user.warning -t bios-update "$message" || true
+    fi
+
+    while (( elapsed < HOST_SHUTDOWN_TIMEOUT_S )); do
+        state=$(power_status) || {
+            echo "ERROR: Unable to determine host power state; BIOS update is blocked." >&2
+            return 1
+        }
+
+        if [[ "$state" == off ]]; then
+            ((stable += 1))
+            if (( stable >= HOST_OFF_STABLE_S )); then
+                echo "Host is confirmed off and stable."
+                return 0
+            fi
+        else
+            stable=0
+        fi
+
+        if (( elapsed > 0 && elapsed % 30 == 0 )); then
+            local message="BIOS update still waiting for host shutdown (${elapsed}s elapsed)."
+            echo "$message"
+            logger -p user.warning -t bios-update "$message" || true
+        fi
+        sleep 1
+        ((elapsed += 1))
+    done
+
+    echo "ERROR: Host did not reach stable Off state within ${HOST_SHUTDOWN_TIMEOUT_S}s; BIOS was not modified." >&2
+    logger -p user.err -t bios-update "Host shutdown timeout; BIOS was not modified." || true
+    return 1
 }
-if [[ "$HOST_POWER" != "off" ]]; then
-    echo "ERROR: Host is powered on. Shut it down from the Web UI or IPMI, verify it is off, then retry the BIOS update." >&2
-    exit 1
-fi
+
+wait_for_host_off
 
 IMAGE_FILE=$(find "$1" -type f \( -iname '*.fd' -o -iname '*.bin' \) -print -quit)
 if [[ -z "$IMAGE_FILE" ]]; then
@@ -143,7 +185,27 @@ flashrom -p "linux_mtd:dev=${MTD_DEV}" -w "$IMAGE_FILE"
 echo "BIOS flash completed; restoring BIOS ownership."
 set_flash_select 0
 sleep 1
-echo "Requesting host power-off, then power-on through the OpenBMC chassis state manager."
-request_power_transition Off off
+HOST_POWER=$(power_status) || {
+    echo "ERROR: Unable to determine host power state after BIOS flash." >&2
+    exit 1
+}
+if [[ "$HOST_POWER" == on ]]; then
+    echo "Requesting host ForceOff through the OpenBMC chassis power manager."
+    request_power_transition Off off
+else
+    if [[ "$HOST_POWER" != off ]]; then
+        wait_for_host_off
+    fi
+    echo "Issuing the required ForceOff power-button pulse while host is already in S5/Off."
+    busctl call xyz.openbmc_project.State.Chassis \
+        /xyz/openbmc_project/state/chassis0 \
+        xyz.openbmc_project.State.Chassis ForcePowerButtonOff
+    sleep "$FORCE_OFF_PULSE_S"
+    [[ "$(power_status)" == off ]] || {
+        echo "ERROR: Host left Off state during the ForceOff pulse; refusing automatic power-on." >&2
+        exit 1
+    }
+fi
+echo "Requesting host power-on through the OpenBMC chassis power manager."
 request_power_transition On on
 echo "BIOS update and host power cycle completed at $(date)."

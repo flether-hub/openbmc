@@ -1,0 +1,9 @@
+[Match]
+Name=eth1
+
+[Link]
+# NC-SI is powered by the host, so only the host-power monitor may raise it.
+ActivationPolicy=manual
+
+[Network]
+DHCP=no

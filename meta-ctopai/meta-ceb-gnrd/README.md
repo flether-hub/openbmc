@@ -28,13 +28,18 @@ Platform features
   not the eSPI Peripheral I/O-cycle completion path.
 * **phosphor-software-manager** with `flash_bios`: host BIOS update through
   the Macronix MX25U51245GMI00 (64 MiB) on AST2600 SPI1 in single-bit mode.
-  The updater refuses to start unless the host is already confirmed off,
-  selects BMC flash ownership with GPIOM1/NDCD1 as GPIO before locating the
-  MTD (and retries SPI-NOR probe if needed), waits five seconds, flashes the
-  full-chip `host-bios` MTD, restores BIOS ownership, requests chassis power-off, then
-  requests power-on through the OpenBMC power state manager (the normal host
-  Power button path). Confirm GPIO polarity and verify full power removal on
-  the assembled board. The BMC's own W25Q512JVFIQ (64 MiB) is on AST2600
+  If the host is on, the updater notifies through its service log and waits up
+  to 30 minutes for a stable Off state; it never takes BIOS flash ownership
+  while the host is running. It then selects BMC flash ownership with
+  GPIOM1/NDCD1 as GPIO before locating the MTD (and retries SPI-NOR probe if
+  needed), waits five seconds for the CPLD to place the CPU in S5, and flashes
+  the full-chip `host-bios` MTD. Afterward it restores BIOS ownership and
+  issues one ForceOff power-button pulse, then requests PowerOn. If the host is
+  still On, the normal chassis Off request generates the configured 15-second
+  override; if already Off/S5, a guarded board-specific method in
+  x86-power-control generates that pulse without taking GPIO ownership away
+  from the daemon. Confirm GPIO polarity and verify power sequencing on the
+  assembled board. The BMC's own W25Q512JVFIQ (64 MiB) is on AST2600
   Firmware SPI/FMC and retains the OpenBMC flash partition layout.
 * **phosphor-ipmi-flash**: IPMI in-band firmware update via BLOB protocol
   (host-bios targets enabled when `flash_bios` PACKAGECONFIG is active).
@@ -161,7 +166,11 @@ The product exposes two BMC network paths:
 * `eth0`: MAC2 with RTL8211FS-CG on the independent management RJ45. It boots
   with static IPv4 `192.168.1.200/24`, gateway and DNS `192.168.1.1`.
 * `eth1`: MAC3 NC-SI connection to the Intel E810, also represented as IPMI
-  LAN channel 2.
+  LAN channel 2. Since the E810 has no standby power, `ceb-gnrd-ncsi` keeps
+  this link administratively down while the host is off and raises it when
+  chassis power reports on, triggering NC-SI initialization. It lowers the
+  link again when host power goes off; systemd-networkd is configured not to
+  change the interface's administrative state on its own.
 
 The Linux and U-Boot device trees enforce this mapping: Linux/U-Boot phandle
 `mac1` is physical AST2600 MAC2 (1.8 V RGMII2 / RTL8211FS-CG), paired with the

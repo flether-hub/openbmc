@@ -5,6 +5,7 @@ After=mapper-wait@-xyz.openbmc_project-state-chassis0.service
 [Service]
 Type=oneshot
 RemainAfterExit=no
+TimeoutStartSec=1h
 ExecStart=/usr/sbin/bios-update.sh /tmp/images/%i
 
 [Install]

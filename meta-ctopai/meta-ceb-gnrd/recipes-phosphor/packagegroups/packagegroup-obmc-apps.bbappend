@@ -24,6 +24,7 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         phosphor-software-manager \
         phosphor-ipmi-flash \
         phosphor-state-manager-chassis \
+        ceb-gnrd-ncsi \
         obmc-phosphor-buttons-signals \
         obmc-phosphor-buttons-handler \
         phosphor-ipmi-host \

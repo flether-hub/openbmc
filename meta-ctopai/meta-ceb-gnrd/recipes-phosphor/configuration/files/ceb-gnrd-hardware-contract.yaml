@@ -107,7 +107,7 @@ interfaces:
       - { function: system_alert_LED_output, package_ball: E16, ast_gpio: GPIOI5, linux_chip: gpio0, line_offset: 69, line_name: BMC_SYS_ALERT_LED, direction: output, active_low: false, asserted_level: high, control_status: voltage-alarms-auto-clear; watchdog-timeout-and-bios-boot-timeout-latched-until-bmc-reboot }
       - { function: fan_BMC_takeover_select, package_ball: B16, ast_gpio: GPIOI6, linux_chip: gpio0, line_offset: 70, line_name: BMC_FAN_BMC_OVERRIDE_N, direction: output, active_low: false, bmc_owns_when_high: true, cpld_owns_when_low: true, cpld_owns_at_power_on: true, handoff_ready_condition: configured-fan-control-zone-and-six-pwm-tach-channels-available, release_on_fan_control_stop: true }
       - { function: BMC_heartbeat_output, ast_gpio: GPIOP7, linux_chip: gpio0, line_offset: 127, line_name: BMC_HBLED_N, direction: output, active_low: true, waveform: kernel-heartbeat-trigger-after-espi-peripheral-driver-probe, control_status: enabled-after-eSPI-SW_READY }
-      - { function: BIOS_flash_control_select, signal: GPIOM1_NDCD1_used_as_GPIO, package_ball: B13, ast_gpio: GPIOM1, linux_chip: gpio0, line_offset: 97, line_name: BMC_BIOS_FLASH_SELECT, direction: output, bmc_ownership_level: 1, bios_ownership_level: 0, control_status: bios-update-script }
+      - { function: BIOS_flash_control_select, signal: GPIOM1_NDCD1_used_as_GPIO, package_ball: B13, ast_gpio: GPIOM1, linux_chip: gpio0, line_offset: 97, line_name: BMC_BIOS_FLASH_SELECT, direction: output, bmc_ownership_level: 1, bios_ownership_level: 0, behavior: wait-for-host-off; select-BMC; CPLD-forces-S5; wait-5s; flash; restore-BIOS; force-power-button-off; power-on, control_status: bios-update-script }
       - { function: power_button_input, package_ball: A12, ast_gpio: GPIOM2, linux_chip: gpio0, line_offset: 98, line_name: BMC_POWER_BUTTON_INPUT, direction: input, active_low: true, press_level: low, edge: falling, behavior: x86-power-control PowerButton input and power-output passthrough, control_status: enabled }
       - { function: BIOS_boot_complete_input, package_ball: D13, ast_gpio: GPIOM7, linux_chip: gpio0, line_offset: 103, line_name: BMC_BIOS_BOOT_OK, direction: input, active_low: false, boot_ok_level: high, behavior: suppresses-current-boot-timeout-only, success_action: none, control_status: monitored-by-alert-led-service }
     straps:
@@ -210,7 +210,7 @@ interfaces:
     network:
       ports:
         - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: 192.168.1.200/24, default_gateway: 192.168.1.1 }
-        - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2 }
+        - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2, power_dependency: "BMC_CPU_PWRGD via xyz.openbmc_project.State.Chassis", behavior: "keep interface down while host is off; bring up on power-on; tear down on power-off" }
       address_modes: [static, dhcp]
       default_management_mode: static
       status: configured

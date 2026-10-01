@@ -1,6 +1,6 @@
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
-SRC_URI:append = " file://power-config-host0.json"
+SRC_URI:append = " file://power-config-host0.json file://0001-ceb-gnrd-add-force-power-button-off-method.patch"
 
 EXTRA_OEMESON:append = " \
     -Dbutton-passthrough=enabled \
