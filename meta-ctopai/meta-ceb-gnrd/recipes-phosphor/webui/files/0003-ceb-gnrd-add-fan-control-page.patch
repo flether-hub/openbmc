@@ -59,7 +59,7 @@ diff --git a/src/locales/en-US.json b/src/locales/en-US.json
 +        "fixed": "Fixed speed",
 +        "minimumSpeed": "Minimum fan speed",
 +        "fixedSpeed": "Fixed fan speed",
-+        "unavailable": "Fan control is unavailable until a board fan controller is configured.",
++        "unavailable": "No fan control configuration was found on the BMC, so fan speeds cannot be changed.",
 +        "loadError": "Unable to load fan control settings.",
 +        "saveSuccess": "Fan control settings saved successfully.",
 +        "saveError": "Unable to save fan control settings.",
