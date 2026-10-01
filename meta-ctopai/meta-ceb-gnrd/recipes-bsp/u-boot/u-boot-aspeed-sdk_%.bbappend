@@ -1,6 +1,6 @@
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 
-SRC_URI:append:ceb-gnrd = " file://ast2600-ceb-gnrd.dts"
+SRC_URI:append:ceb-gnrd = " file://ast2600-ceb-gnrd.dts file://ceb-gnrd-netboot.cfg"
 
 do_configure:append:ceb-gnrd() {
 	install -Dm 0644 ${UNPACKDIR}/ast2600-ceb-gnrd.dts \
