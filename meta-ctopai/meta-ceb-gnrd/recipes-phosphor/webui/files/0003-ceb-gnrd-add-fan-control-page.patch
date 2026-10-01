@@ -14,7 +14,7 @@ Upstream-Status: Inappropriate [CEB-GNRD product policy]
 diff --git a/src/components/AppNavigation/AppNavigationMixin.js b/src/components/AppNavigation/AppNavigationMixin.js
 --- a/src/components/AppNavigation/AppNavigationMixin.js
 +++ b/src/components/AppNavigation/AppNavigationMixin.js
-@@ -131,6 +131,11 @@ const AppNavigationMixin = {
+@@ -131,7 +131,12 @@ const AppNavigationMixin = {
                label: i18n.global.t('appNavigation.dateTime'),
                route: '/settings/date-time',
              },
@@ -78,7 +78,7 @@ diff --git a/src/router/routes.js b/src/router/routes.js
  import EventLogs from '@/views/Logs/EventLogs';
  import FactoryReset from '@/views/Operations/FactoryReset';
  import Firmware from '@/views/Operations/Firmware';
-@@ -201,6 +202,14 @@ const routes = [
+@@ -201,7 +202,15 @@ const routes = [
            title: i18n.global.t('appPageTitle.dateTime'),
          },
        },
@@ -99,7 +99,7 @@ new file mode 100644
 index 0000000..065091b
 --- /dev/null
 +++ b/src/views/Settings/FanControl/FanControl.vue
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,189 @@
 +<template>
 +  <b-container fluid="xl">
 +    <page-title :description="$t('pageFanControl.description')" />

@@ -46,7 +46,7 @@ new file mode 100644
 index 000000000000..000000000000
 --- /dev/null
 +++ b/drivers/hwmon/aspeed-chassis.c
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,165 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Copyright (C) 2021 ASPEED Technology Inc.
