@@ -1,0 +1,10 @@
+[Unit]
+Description=Enable BMC heartbeat after the AST2600 eSPI Peripheral driver is ready
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/wait-for-espi-driver.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

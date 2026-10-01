@@ -1,0 +1,24 @@
+{
+    "leds": [
+        {
+            "group": "bmc_booted",
+            "members": []
+        },
+        {
+            "group": "power_on",
+            "members": []
+        },
+        {
+            "group": "enclosure_identify",
+            "members": [
+                {
+                    "Name": "identify",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "Blink"
+                }
+            ]
+        }
+    ]
+}

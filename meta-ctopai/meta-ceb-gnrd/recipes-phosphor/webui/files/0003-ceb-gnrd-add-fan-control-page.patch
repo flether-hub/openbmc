@@ -48,12 +48,14 @@ index 99f4bd8..34172b8 100644
          "dumps": "Dumps",
          "eventLogs": "Event logs",
          "factoryReset": "Factory reset",
-@@ -198,6 +200,18 @@
+@@ -198,6 +200,20 @@
              "successDelete": "Successfully disconnected {count} session. | Successfully disconnected {count} sessions."
          }
      },
 +    "pageFanControl": {
 +        "description": "Configure adaptive or fixed fan speed control.",
++        "fan": "Fan",
++        "allFans": "All fans",
 +        "mode": "Control mode",
 +        "adaptive": "Adaptive",
 +        "fixed": "Fixed speed",
@@ -100,7 +102,7 @@ new file mode 100644
 index 0000000..065091b
 --- /dev/null
 +++ b/src/views/Settings/FanControl/FanControl.vue
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,179 @@
 +<template>
 +  <b-container fluid="xl">
 +    <page-title :description="$t('pageFanControl.description')" />
@@ -113,6 +115,15 @@ index 0000000..065091b
 +    </b-alert>
 +
 +    <b-form @submit.prevent="saveSettings">
++      <b-form-group :label="$t('pageFanControl.fan')">
++        <b-form-select
++          v-model="selectedFan"
++          :options="fanOptions"
++          :disabled="!hasControl"
++          @change="loadSelectedSettings"
++        />
++      </b-form-group>
++
 +      <b-form-group :label="$t('pageFanControl.mode')">
 +        <b-form-radio-group
 +          v-model="mode"
@@ -172,6 +183,7 @@ index 0000000..065091b
 +      mode: 'adaptive',
 +      minimumSpeed: 30,
 +      fixedSpeed: 60,
++      selectedFan: 'all',
 +      modeOptions: [
 +        { text: this.$t('pageFanControl.adaptive'), value: 'adaptive' },
 +        { text: this.$t('pageFanControl.fixed'), value: 'fixed' },
@@ -190,6 +202,13 @@ index 0000000..065091b
 +    hasControl() {
 +      return this.controllers.length > 0 || this.zones.length > 0;
 +    },
++    fanOptions() {
++      const entries = this.controllers.length ? this.controllers : this.zones;
++      return [
++        { text: this.$t('pageFanControl.allFans'), value: 'all' },
++        ...entries.map(([name]) => ({ text: name, value: name })),
++      ];
++    },
 +  },
 +  created() {
 +    this.loadSettings();
@@ -203,35 +222,51 @@ index 0000000..065091b
 +
 +        this.controllers = Object.entries(fan.FanControllers || {});
 +        this.zones = Object.entries(fan.FanZones || {});
-+        const first = this.controllers[0]?.[1];
-+        const configuredMinimum = Number(first?.OutLimitMin);
-+        if (Number.isFinite(configuredMinimum)) {
-+          this.minimumSpeed = Math.min(100, Math.max(10, configuredMinimum));
-+        }
-+        const configuredMaximum = Number(first?.OutLimitMax);
-+        if (
-+          Number.isFinite(configuredMaximum) &&
-+          configuredMaximum < 100 &&
-+          configuredMaximum >= this.minimumSpeed
-+        ) {
-+          this.mode = 'fixed';
-+          this.fixedSpeed = configuredMaximum;
-+        }
++        this.loadSelectedSettings();
 +      } catch {
 +        this.loadError = true;
 +      }
 +    },
++    loadSelectedSettings() {
++      const first = this.controllers.find(
++        ([name]) => this.selectedFan === 'all' || name === this.selectedFan,
++      )?.[1] || this.zones.find(
++        ([name]) => this.selectedFan === 'all' || name === this.selectedFan,
++      )?.[1] || this.controllers[0]?.[1] || this.zones[0]?.[1];
++      const configuredMinimum = Number(first?.OutLimitMin);
++      const configuredMaximum = Number(first?.OutLimitMax);
++      if (Number.isFinite(configuredMinimum)) {
++        this.minimumSpeed = Math.min(100, Math.max(10, configuredMinimum));
++      }
++      if (
++        Number.isFinite(configuredMinimum) &&
++        Number.isFinite(configuredMaximum) &&
++        configuredMinimum === configuredMaximum
++      ) {
++        this.mode = 'fixed';
++        this.fixedSpeed = configuredMaximum;
++      } else {
++        this.mode = 'adaptive';
++      }
++    },
 +    async saveSettings() {
-+      const minimum = Math.min(100, Math.max(10, Number(this.minimumSpeed)));
-+      const maximum = this.mode === 'fixed' ? this.fixedSpeed : 100;
++      const minimum = this.mode === 'fixed'
++        ? Number(this.fixedSpeed)
++        : Math.min(100, Math.max(10, Number(this.minimumSpeed)));
++      const maximum = this.mode === 'fixed' ? Number(this.fixedSpeed) : 100;
 +      const fanControllers = Object.fromEntries(
-+        this.controllers.map(([name]) => [name, {
-+          OutLimitMin: minimum,
-+          OutLimitMax: maximum,
-+        }]),
++        this.controllers.map(([name, config]) => [name,
++          this.selectedFan === 'all' || name === this.selectedFan
++            ? { ...config, OutLimitMin: minimum, OutLimitMax: maximum }
++            : config,
++        ]),
 +      );
 +      const fanZones = Object.fromEntries(
-+        this.zones.map(([name]) => [name, { MinThermalOutput: minimum }]),
++        this.zones.map(([name, config]) => [name,
++          this.selectedFan === 'all' || name === this.selectedFan
++            ? { ...config, MinThermalOutput: minimum }
++            : config,
++        ]),
 +      );
 +
 +      this.isSaving = true;
@@ -246,6 +281,7 @@ index 0000000..065091b
 +            },
 +          },
 +        });
++        await this.loadSettings();
 +        this.successToast(this.$t('pageFanControl.saveSuccess'));
 +      } catch {
 +        this.errorToast(this.$t('pageFanControl.saveError'));

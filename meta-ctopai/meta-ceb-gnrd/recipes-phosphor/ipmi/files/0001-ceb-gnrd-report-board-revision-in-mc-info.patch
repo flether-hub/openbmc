@@ -1,0 +1,128 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] apphandler: expose CEB-GNRD PCB revision in mc info AUX byte
+
+Sample the board revision straps by their device-tree GPIO line names. Keep
+the existing AUX firmware revision bytes intact and place the three-bit PCB
+revision in the final AUX byte.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific behavior]
+---
+ apphandler.cpp | 93 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 93 insertions(+)
+
+diff --git a/apphandler.cpp b/apphandler.cpp
+index 0000000..0000000 100644
+--- a/apphandler.cpp
++++ b/apphandler.cpp
+@@ -2,4 +2,5 @@
+ #include <arpa/inet.h>
+ #include <fcntl.h>
+ #include <limits.h>
++#include <gpiod.h>
+ #include <linux/i2c-dev.h>
+@@ -40,2 +41,3 @@
+ #include <memory>
++#include <optional>
+ #include <regex>
+@@ -65,0 +68,84 @@
++
++/* Return nullopt when the board straps cannot be sampled. This must not make
++ * the standard Get Device ID command unavailable. */
++static std::optional<uint8_t> getCebGnrdBoardRevision()
++{
++    constexpr std::array<const char*, 3> names = {
++        "PCB_VER0", "PCB_VER1", "PCB_VER2"};
++    std::error_code ec;
++    for (const auto& entry : fs::directory_iterator("/dev", ec))
++    {
++        if (ec)
++        {
++            return std::nullopt;
++        }
++        const std::string path = entry.path().string();
++        if (entry.path().filename().string().rfind("gpiochip", 0) != 0)
++        {
++            continue;
++        }
++
++        std::unique_ptr<gpiod_chip, decltype(&gpiod_chip_close)> chip(
++            gpiod_chip_open(path.c_str()), gpiod_chip_close);
++        if (!chip)
++        {
++            continue;
++        }
++
++        std::array<unsigned int, names.size()> offsets{};
++        bool foundAll = true;
++        for (size_t i = 0; i < names.size(); ++i)
++        {
++            const int offset =
++                gpiod_chip_get_line_offset_from_name(chip.get(), names[i]);
++            if (offset < 0)
++            {
++                foundAll = false;
++                break;
++            }
++            offsets[i] = static_cast<unsigned int>(offset);
++        }
++        if (!foundAll)
++        {
++            continue;
++        }
++
++        std::unique_ptr<gpiod_line_settings,
++                        decltype(&gpiod_line_settings_free)>
++            settings(gpiod_line_settings_new(), gpiod_line_settings_free);
++        std::unique_ptr<gpiod_line_config, decltype(&gpiod_line_config_free)>
++            config(gpiod_line_config_new(), gpiod_line_config_free);
++        if (!settings || !config ||
++            gpiod_line_settings_set_direction(
++                settings.get(), GPIOD_LINE_DIRECTION_INPUT) < 0 ||
++            gpiod_line_config_add_line_settings(config.get(), offsets.data(),
++                                                offsets.size(),
++                                                settings.get()) < 0)
++        {
++            return std::nullopt;
++        }
++
++        std::unique_ptr<gpiod_line_request,
++                        decltype(&gpiod_line_request_release)>
++            request(gpiod_chip_request_lines(chip.get(), nullptr, config.get()),
++                    gpiod_line_request_release);
++        if (!request)
++        {
++            return std::nullopt;
++        }
++
++        uint8_t revision = 0;
++        for (size_t bit = 0; bit < offsets.size(); ++bit)
++        {
++            const int value =
++                gpiod_line_request_get_value(request.get(), offsets[bit]);
++            if (value < 0)
++            {
++                return std::nullopt;
++            }
++            revision |= static_cast<uint8_t>(value) << bit;
++        }
++        return revision;
++    }
++    return std::nullopt;
++}
+@@ -729,9 +816,16 @@
+     // Set availability to the actual current BMC state
+     devId.fw[0] &= ipmiDevIdFw1Mask;
+     if (!getCurrentBmcStateWithFallback(ctx, defaultActivationSetting))
+     {
+         devId.fw[0] |= (1 << ipmiDevIdStateShift);
+     }
++
++    if (const auto revision = getCebGnrdBoardRevision())
++    {
++        // AUX is returned little-endian; bits 31:24 are its fourth byte.
++        devId.aux = (devId.aux & 0x00ffffffU) |
++                    (static_cast<uint32_t>(*revision) << 24);
++    }
+ 
+     return ipmi::responseSuccess(
+         devId.id, devId.revision, devId.fw[0], devId.fw[1], devId.ipmiVer,

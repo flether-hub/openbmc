@@ -1,0 +1,38 @@
+{
+    "gpio_configs": [
+        {
+            "Name": "PowerButton",
+            "LineName": "BMC_POWER_BUTTON_INPUT",
+            "Type": "GPIO",
+            "Polarity": "ActiveLow"
+        },
+        {
+            "Name": "PowerOk",
+            "LineName": "BMC_CPU_PWRGD",
+            "Type": "GPIO",
+            "Polarity": "ActiveHigh"
+        },
+        {
+            "Name": "PowerOut",
+            "LineName": "BMC_CPU_POWER_BUTTON",
+            "Type": "GPIO",
+            "Polarity": "ActiveLow"
+        },
+        {
+            "Name": "ResetOut",
+            "LineName": "BMC_CPU_RESET",
+            "Type": "GPIO",
+            "Polarity": "ActiveLow"
+        }
+    ],
+    "timing_configs": {
+        "PowerPulseMs": 200,
+        "ForceOffPulseMs": 15000,
+        "ResetPulseMs": 500,
+        "PowerCycleMs": 5000,
+        "PowerOKWatchdogMs": 8000,
+        "GracefulPowerOffS": 300,
+        "PowerOffSaveMs": 7000,
+        "DbusGetPropertyRetry": 1000
+    }
+}

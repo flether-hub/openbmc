@@ -21,7 +21,6 @@ RDEPENDS:${PN}-updater:append:ceb-gnrd = " \
     bash \
     flashrom \
     libgpiod-tools \
-    phosphor-ipmi-ipmb \
     "
 
 # Keep U-Boot environment variables, including board MAC addresses, managed

@@ -202,6 +202,8 @@
   },
   "pageFanControl": {
     "description": "配置自适应或固定风扇转速控制。",
+    "fan": "风扇",
+    "allFans": "全部风扇",
     "mode": "控制模式",
     "adaptive": "自适应",
     "fixed": "固定转速",

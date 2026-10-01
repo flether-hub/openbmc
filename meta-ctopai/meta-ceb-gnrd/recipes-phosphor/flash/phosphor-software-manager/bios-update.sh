@@ -1,184 +1,149 @@
 #!/bin/bash
-#
-# ceb-gnrd BIOS update script.
-# Adapted from meta-ibm/meta-sbp1 for the Intel Xeon 6 (Granite Rapids) platform.
-#
-# TODO: Verify and adjust the following hardware-specific values:
-#   - IPMB_BUS: IPMB channel number for ME/SPS communication
-#   - MTD_DEV: MTD device number for the host BIOS SPI region
-#   - FLASH_OVERRIDE_GPIO: GPIO name that enables flash security override
-#   - ME_IPMI_ADDR: IPMI slave address of the Management Engine
-#
-set -e
+# 通过 AST2600 SPI1 更新 BIOS NOR；BMC 启动 Flash 位于 Firmware SPI/FMC。
+set -euo pipefail
 
-IMAGE_FILE=$(find "$1" -name "*.FD" -o -name "*.fd" -o -name "*.bin" | head -n 1)
+readonly FLASH_SELECT_GPIO="BMC_BIOS_FLASH_SELECT"
+readonly MTD_PARTITION_NAME="host-bios"
+readonly EXPECTED_FLASH_SIZE=67108864
+FLASH_SELECT_PID=""
+FLASH_OWNERSHIP_SELECTED=0
 
-IPMB_OBJ="xyz.openbmc_project.Ipmi.Channel.Ipmb"
-IPMB_PATH="/xyz/openbmc_project/Ipmi/Channel/Ipmb"
-IPMB_INTF="org.openbmc.Ipmb"
-
-# TODO: Adjust IPMB bus/channel for your platform
-IPMB_BUS=1
-
-# TODO: Adjust MTD device number for the host BIOS SPI region
-MTD_DEV=12
-
-# TODO: Adjust GPIO name for flash security override
-FLASH_OVERRIDE_GPIO="FM_FLASH_SEC_OVRD"
-FLASH_OVERRIDE_PID=""
-
-# TODO: Adjust ME IPMI slave address (0x2e is typical for Intel SPS/ME)
-ME_IPMI_ADDR=0x2e
-
-# ME IPMI commands
-# Force recovery mode: NetFn=0x2e, Cmd=0xdf, data=0x57 0x01 0x00 0x01
-ME_CMD_RECOVER="${IPMB_BUS} ${ME_IPMI_ADDR} 0 0xdf 4 0x57 0x01 0x00 0x01"
-# Cold reset: NetFn=0x06, Cmd=0x02
-ME_CMD_RESET="${IPMB_BUS} 0x06 0 0x2 0"
-# Get Device ID: NetFn=0x06, Cmd=0x01
-ME_GET_DEVICE_ID="${IPMB_BUS} 0x06 0 0x1 0"
-
-echo "BIOS upgrade started at $(date)"
+if [[ $# -ne 1 || ! -d "$1" ]]; then
+    echo "Usage: $0 <directory-containing-BIOS-image>" >&2
+    exit 2
+fi
 
 power_status() {
-    st=$(busctl get-property xyz.openbmc_project.State.Chassis \
+    local state
+    state=$(busctl get-property xyz.openbmc_project.State.Chassis \
         /xyz/openbmc_project/state/chassis0 \
-        xyz.openbmc_project.State.Chassis CurrentPowerState 2>/dev/null \
-        | cut -d"." -f6)
-    if [ "$st" == "On\"" ]; then
-        echo "on"
-    else
-        echo "off"
-    fi
+        xyz.openbmc_project.State.Chassis CurrentPowerState 2>/dev/null) || return 2
+    case "$state" in
+        *"PowerState.On"*)  echo on ;;
+        *"PowerState.Off"*) echo off ;;
+        *) return 2 ;;
+    esac
 }
 
-power_off() {
-    echo "Shutting down host"
-    busctl set-property xyz.openbmc_project.State.Chassis \
-        /xyz/openbmc_project/state/chassis0 \
-        xyz.openbmc_project.State.Chassis RequestedPowerTransition \
-        s xyz.openbmc_project.State.Chassis.Transition.Off
-    for i in $(seq 1 30); do
-        if [ "$(power_status)" == "off" ]; then
-            break
-        fi
-        sleep 1
-    done
-    if [ "$(power_status)" != "off" ]; then
-        echo "Failed to power off host"
-        exit 1
-    fi
-}
-
-power_on() {
-    echo "Powering on host"
-    busctl set-property xyz.openbmc_project.State.Chassis \
-        /xyz/openbmc_project/state/chassis0 \
-        xyz.openbmc_project.State.Chassis RequestedPowerTransition \
-        s xyz.openbmc_project.State.Chassis.Transition.On
-    for i in $(seq 1 30); do
-        if [ "$(power_status)" == "on" ]; then
-            break
-        fi
-        sleep 1
-    done
-    if [ "$(power_status)" != "on" ]; then
-        echo "Failed to power on host"
-        exit 1
-    fi
-}
-
-power_cycle() {
-    echo "Power cycling host after BIOS update"
-    power_off
-    sleep 2
-    power_on
-}
-
-enable_flash_override() {
-    echo "Enabling flash security override (${FLASH_OVERRIDE_GPIO})"
-    # Keep the GPIO asserted for the complete flashrom transaction.
-    gpioset --mode=signal "$(gpiofind "${FLASH_OVERRIDE_GPIO}")=1" &
-    FLASH_OVERRIDE_PID=$!
-    sleep 0.1
-}
-
-disable_flash_override() {
-    if [ -n "${FLASH_OVERRIDE_PID}" ]; then
-        kill "${FLASH_OVERRIDE_PID}" 2>/dev/null || true
-        wait "${FLASH_OVERRIDE_PID}" 2>/dev/null || true
-        FLASH_OVERRIDE_PID=""
-    fi
-}
-
-trap disable_flash_override EXIT
-
-me_wait_poweron() {
-    echo "Waiting for ME/SPS firmware to start..."
-    for i in $(seq 1 30); do
-        # shellcheck disable=SC2086
-        if busctl call --timeout=1 "$IPMB_OBJ" "$IPMB_PATH" "$IPMB_INTF" \
-            sendRequest yyyyay $ME_GET_DEVICE_ID 2>/dev/null; then
-            return 0
-        fi
-        sleep 1
-    done
-    echo "Failed to communicate with ME/SPS firmware"
+HOST_POWER=$(power_status) || {
+    echo "ERROR: Unable to determine host power state; BIOS update is blocked." >&2
     exit 1
 }
-
-me_force_recovery_mode() {
-    echo "Setting ME to recovery mode"
-    # shellcheck disable=SC2086
-    busctl call "$IPMB_OBJ" "$IPMB_PATH" "$IPMB_INTF" \
-        sendRequest yyyyay $ME_CMD_RECOVER
-}
-
-me_reset() {
-    echo "Resetting ME to boot from new firmware"
-    # shellcheck disable=SC2086
-    busctl call "$IPMB_OBJ" "$IPMB_PATH" "$IPMB_INTF" \
-        sendRequest yyyyay $ME_CMD_RESET
-}
-
-# Step 1: Power off the host
-power_off
-
-# Step 2: Enable flash security override GPIO
-enable_flash_override
-
-# Step 3: Power on the host (ME boots but host stays in recovery)
-power_on
-
-# Step 4: Wait for ME/SPS to be ready
-me_wait_poweron
-
-# Step 5: Force ME into recovery mode
-me_force_recovery_mode
-
-# Step 6: Flash the BIOS image
-if [ -n "${IMAGE_FILE}" ] && [ -e "${IMAGE_FILE}" ]; then
-    echo "Flashing BIOS image: ${IMAGE_FILE}"
-    flashrom -p "linux_mtd:dev=${MTD_DEV}" -w "${IMAGE_FILE}"
-else
-    echo "ERROR: BIOS image not found in $1"
+if [[ "$HOST_POWER" != "off" ]]; then
+    echo "ERROR: Host is powered on. Shut it down from the Web UI or IPMI, verify it is off, then retry the BIOS update." >&2
     exit 1
 fi
 
-# Step 7: Reset ME to boot from new firmware
-me_reset
+IMAGE_FILE=$(find "$1" -type f \( -iname '*.fd' -o -iname '*.bin' \) -print -quit)
+if [[ -z "$IMAGE_FILE" ]]; then
+    echo "ERROR: BIOS image (.FD/.BIN) not found in $1" >&2
+    exit 1
+fi
 
+find_bios_mtd() {
+    local entry name size
+    for entry in /sys/class/mtd/mtd[0-9]*; do
+        [[ "$(basename "$entry")" =~ ^mtd[0-9]+$ ]] || continue
+        [[ -r "$entry/name" && -r "$entry/size" ]] || continue
+        IFS= read -r name < "$entry/name"
+        if [[ "$name" == "$MTD_PARTITION_NAME" ]]; then
+            IFS= read -r size < "$entry/size"
+            if (( size != EXPECTED_FLASH_SIZE )); then
+                echo "ERROR: $MTD_PARTITION_NAME has size $size, expected $EXPECTED_FLASH_SIZE bytes." >&2
+                return 1
+            fi
+            printf '/dev/%s\n' "$(basename "$entry")"
+            return 0
+        fi
+    done
+    echo "ERROR: SPI1 MTD partition '$MTD_PARTITION_NAME' not found" >&2
+    return 1
+}
+
+reprobe_bios_spi_nor() {
+    local driver_dir=/sys/bus/spi/drivers/spi-nor
+    local device
+    [[ -w "$driver_dir/bind" ]] || return 0
+
+    # The first probe can run before GPIOM1 switches the shared flash to BMC.
+    # Rebind the matching, unbound SPI-NOR device after ownership is selected.
+    for device in /sys/bus/spi/devices/spi*; do
+        [[ -r "$device/of_node/compatible" ]] || continue
+        grep -aq 'jedec,spi-nor' "$device/of_node/compatible" || continue
+        [[ -e "$device/driver" ]] && continue
+        printf '%s' "$(basename "$device")" > "$driver_dir/bind" 2>/dev/null || true
+    done
+}
+
+set_flash_select() {
+    local level=$1 gpiochip line
+    if [[ -n "$FLASH_SELECT_PID" ]]; then
+        kill "$FLASH_SELECT_PID" 2>/dev/null || true
+        wait "$FLASH_SELECT_PID" 2>/dev/null || true
+        FLASH_SELECT_PID=""
+    fi
+    read -r gpiochip line <<< "$(gpiofind "$FLASH_SELECT_GPIO")"
+    if [[ -z "${gpiochip:-}" || -z "${line:-}" ]]; then
+        echo "ERROR: GPIO line not found: $FLASH_SELECT_GPIO" >&2
+        return 1
+    fi
+    # Board GPIO table: high selects BMC ownership; low returns flash to BIOS.
+    gpioset --mode=signal "$gpiochip" "${line}=${level}" &
+    FLASH_SELECT_PID=$!
+    FLASH_OWNERSHIP_SELECTED=$level
+    sleep 1
+    if ! kill -0 "$FLASH_SELECT_PID" 2>/dev/null; then
+        echo "ERROR: Failed to hold $FLASH_SELECT_GPIO at level $level" >&2
+        FLASH_SELECT_PID=""
+        return 1
+    fi
+}
+
+request_power_transition() {
+    local transition=$1 wanted=$2
+    busctl set-property xyz.openbmc_project.State.Chassis \
+        /xyz/openbmc_project/state/chassis0 \
+        xyz.openbmc_project.State.Chassis RequestedPowerTransition \
+        s "xyz.openbmc_project.State.Chassis.Transition.${transition}"
+    for _ in {1..60}; do
+        [[ "$(power_status 2>/dev/null || true)" == "$wanted" ]] && return 0
+        sleep 1
+    done
+    echo "ERROR: Host did not reach power state $wanted after transition $transition" >&2
+    return 1
+}
+
+cleanup() {
+    local result=$?
+    trap - EXIT
+    if (( FLASH_OWNERSHIP_SELECTED )); then
+        if ! set_flash_select 0; then
+            echo "ERROR: Could not restore BIOS flash ownership to the host." >&2
+            result=1
+        fi
+    fi
+    if [[ -n "$FLASH_SELECT_PID" ]]; then
+        kill "$FLASH_SELECT_PID" 2>/dev/null || true
+        wait "$FLASH_SELECT_PID" 2>/dev/null || true
+    fi
+    exit "$result"
+}
+trap cleanup EXIT
+
+echo "BIOS update started at $(date); host is confirmed off."
+echo "Selecting BMC ownership of BIOS flash via $FLASH_SELECT_GPIO"
+set_flash_select 1
 sleep 5
+reprobe_bios_spi_nor
+sleep 1
+MTD_DEV=$(find_bios_mtd)
+echo "Writing $IMAGE_FILE to AST2600 SPI1 partition $MTD_DEV"
+flashrom -p "linux_mtd:dev=${MTD_DEV}" -w "$IMAGE_FILE"
 
-# Step 8: Power cycle the host so the ME reset cannot leave GNR-D partially
-# powered after the BIOS flash.
-power_cycle
-
-# Step 9: Disable flash security override GPIO
-echo "Disabling flash security override (${FLASH_OVERRIDE_GPIO})"
-disable_flash_override
-
-# Clean up cached BIOS version
-rm -f /var/cache/bios_version
-
-echo "BIOS upgrade completed at $(date)"
+echo "BIOS flash completed; restoring BIOS ownership."
+set_flash_select 0
+sleep 1
+echo "Requesting host power-off, then power-on through the OpenBMC chassis state manager."
+request_power_transition Off off
+request_power_transition On on
+echo "BIOS update and host power cycle completed at $(date)."

@@ -30,7 +30,12 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         phosphor-sel-logger \
         phosphor-time-manager \
         phosphor-watchdog \
+        ceb-gnrd-espi-heartbeat \
+        ceb-gnrd-alert-led \
         phosphor-u-boot-mgr \
         u-boot-fw-utils \
         ipmitool \
         "
+
+RDEPENDS:${PN}-extras:remove:ceb-gnrd = "phosphor-state-manager-chassis"
+RDEPENDS:${PN}-chassis-state-mgmt:remove:ceb-gnrd = "obmc-phosphor-power"

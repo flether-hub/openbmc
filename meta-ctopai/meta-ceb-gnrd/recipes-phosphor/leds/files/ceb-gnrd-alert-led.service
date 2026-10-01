@@ -1,0 +1,11 @@
+[Unit]
+Description=CEB-GNRD system alert LED policy
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/ceb-gnrd-alert-led.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

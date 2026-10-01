@@ -1,0 +1,15 @@
+[Unit]
+Description=Select BMC ownership of CEB-GNRD fans
+BindsTo=phosphor-fan-control@0.service
+After=phosphor-fan-control@0.service
+PartOf=phosphor-fan-control@0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/ceb-gnrd-fan-owner
+ExecStopPost=/usr/sbin/ceb-gnrd-fan-release
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

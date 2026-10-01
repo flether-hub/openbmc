@@ -26,9 +26,7 @@ RPROVIDES:${PN}-system += "virtual-obmc-system-mgmt"
 
 SUMMARY:${PN}-chassis = "CEB-GNRD chassis management"
 RDEPENDS:${PN}-chassis = " \
-    obmc-phosphor-power \
     ${VIRTUAL-RUNTIME_obmc-chassis-state-manager} \
-    phosphor-state-manager-chassis \
     obmc-phosphor-buttons-signals \
     obmc-phosphor-buttons-handler \
     "
@@ -36,7 +34,7 @@ RDEPENDS:${PN}-chassis = " \
 SUMMARY:${PN}-fans = "CEB-GNRD fan management"
 RDEPENDS:${PN}-fans = " \
     ${VIRTUAL-RUNTIME_obmc-fan-control} \
-    phosphor-fan-monitor \
+    ceb-gnrd-fan-services \
     "
 
 SUMMARY:${PN}-flash = "CEB-GNRD firmware management"

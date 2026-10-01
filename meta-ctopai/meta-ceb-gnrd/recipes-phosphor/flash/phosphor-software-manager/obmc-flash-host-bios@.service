@@ -1,5 +1,5 @@
 [Unit]
-Description=Flash Host BIOS image %I to Host
+Description=Flash CEB-GNRD host BIOS image %I via AST2600 SPI1
 After=mapper-wait@-xyz.openbmc_project-state-chassis0.service
 
 [Service]

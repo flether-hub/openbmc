@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /dts-v1/;
+#include <dt-bindings/gpio/gpio.h>
 
 /*
  * CEB-GNRD network topology:
  *   MAC2: independent management RJ45 through the RTL8211 RGMII PHY
- *   MAC3: host-side NC-SI through the RMII interface
+ *   MAC3: host-side NC-SI through the dedicated NCSI3 pin group
  *
- * MAC0 and MAC1 are AST2600 EVB interfaces and must not be exposed on this
- * board.  Keeping the board-specific mapping here prevents the EVB DT from
- * creating four Linux network devices.
+ * Physical MAC2 is the independent RGMII2/RTL8211 port; physical MAC3 is the
+ * E810 NC-SI port. Linux phandles are offset: &mac1 is physical MAC2 and
+ * &mac2 is physical MAC3. Disable physical MAC1 and MAC4.
  */
 #include "aspeed-ast2600-evb.dts"
 
@@ -17,8 +18,31 @@
     compatible = "ctopai,ceb-gnrd", "aspeed,ast2600";
 
     aliases {
-        ethernet0 = &mac2;
-        ethernet1 = &mac3;
+        ethernet0 = &mac1;
+        ethernet1 = &mac2;
+    };
+
+    leds {
+        compatible = "gpio-leds";
+
+        bmc-heartbeat {
+            label = "bmc-heartbeat";
+            gpios = <&gpio0 127 GPIO_ACTIVE_LOW>;
+            default-state = "off";
+        };
+
+        system-alert {
+            label = "bmc-system-alert";
+            gpios = <&gpio0 69 GPIO_ACTIVE_HIGH>;
+            default-state = "off";
+        };
+
+
+        identify {
+            label = "identify";
+            gpios = <&gpio0 169 GPIO_ACTIVE_HIGH>;
+            default-state = "off";
+        };
     };
 
     /* Publish all confirmed AST2600 ADC inputs to hwmon/dbus-sensors. */
@@ -31,31 +55,211 @@
 };
 };
 
+/* GPIO 名称及 offset 按 AST2600 GPIO A0 起始的 bank 顺序标注。 */
+&gpio0 {
+    gpio-line-names =
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "BMC_FRU_WP", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "BMC_SYS_ALERT_LED", "BMC_FAN_BMC_OVERRIDE_N", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "BMC_BIOS_FLASH_SELECT", "BMC_POWER_BUTTON_INPUT", "", "", "", "", "BMC_BIOS_BOOT_OK",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "BMC_HBLED_N",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "PCB_VER0", "PCB_VER1", "PCB_VER2", "CFG_VER0",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "BMC_UID_BUTTON_N", "BMC_UID_LED", "BMC_CPU_POWER_BUTTON", "BMC_CPU_RESET", "BMC_CPU_PWRGD";
+};
+
 &mac0 {
     status = "disabled";
 };
 
-&mac1 {
+/* phosphor-ipmi-kcs defaults to ipmi-kcs3; keep the kernel node enabled. */
+&kcs3 {
+    status = "okay";
+};
+
+/* Capture BIOS POST writes to I/O port 0x80. This snoop is separate from
+ * Peripheral I/O-cycle completion, which AST2600 handles in hardware. */
+&lpc_snoop {
+    status = "okay";
+    snoop-ports = <0x80>;
+};
+
+/* AST2600 dedicated CHASI# latch; publishes intrusion0_alarm via hwmon. */
+&chassis {
+    status = "okay";
+};
+
+/* WDT1 is reserved for systemd's hardware runtime watchdog. Reset the full
+ * AST2600 when userspace stops servicing /dev/watchdog. */
+&wdt1 {
+    status = "okay";
+    aspeed,reset-type = "system";
+};
+
+/* Reserve AST2600 GPIOW0-W7 for the Xeon 6 host eSPI connection.
+ * ESPI selects W0-W5/W7; W6/AD7 is the separate ESPIALT group, so both
+ * pinctrl groups are required. Virtual Wire and Flash Access stay disabled.
+ */
+&{/ahb} {
+    espi: espi@1e6ee000 {
+        compatible = "aspeed,ast2600-espi-peripheral";
+        reg = <0x1e6ee000 0x1000>;
+        interrupts = <GIC_SPI 42 IRQ_TYPE_LEVEL_HIGH>;
+        clocks = <&syscon ASPEED_CLK_GATE_ESPICLK>;
+        resets = <&syscon 57>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_espi_default &pinctrl_espialt_default>;
+        status = "okay";
+    };
+};
+
+/* Host CPU serial is routed to AST2600 UART3 on GPIOL4/TXD3 and
+ * GPIOL5/RXD3. UART5 remains the BMC debug console on ttyS4. */
+&uart3 {
+    status = "okay";
+};
+
+/* BMC debug console is wired to the dedicated AST2600 UART5 pads C8/D8.
+ * UART5 has no separate pinctrl group in the pinned AST2600 pinctrl driver.
+ */
+&uart5 {
+    status = "okay";
+};
+
+/* AST2600 GFX drives the board VGA display path. RGB DAC and DDC are fixed
+ * VGA signals; select the muxed horizontal/vertical sync pads explicitly.
+ */
+&gfx {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_vgahs_default &pinctrl_vgavs_default>;
+};
+
+/* Separate AST2600 capture engine used by BMC KVM for host video. */
+&video {
+    status = "okay";
+    memory-region = <&video_engine_memory>;
+};
+
+/* USB2A is wired to the host VL805 port 4 and must operate as a device. */
+&ehci0 {
     status = "disabled";
 };
 
-/* Independent BMC management port. */
-&mac2 {
+&vhub {
     status = "okay";
-    phy-mode = "rgmii";
-    phy-handle = <&ethphy2>;
     pinctrl-names = "default";
-    pinctrl-0 = <&pinctrl_rgmii3_default>;
+    pinctrl-0 = <&pinctrl_usb2ad_default>;
 };
 
-/* Host NIC sideband management port. */
-&mac3 {
+/* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
+&mac1 {
+    status = "okay";
+    phy-mode = "rgmii";
+    phy-handle = <&ethphy1>;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rgmii2_default>;
+};
+
+/* Physical MAC3: NC-SI connection to the Intel E810. */
+&mac2 {
     status = "okay";
     /delete-property/ phy-handle;
     /delete-property/ phy-mode;
     pinctrl-names = "default";
-    pinctrl-0 = <&pinctrl_rmii4_default>;
+    pinctrl-0 = <&pinctrl_ncsi3_default>;
     use-ncsi;
+};
+
+&mac0 { status = "disabled"; };
+&mac3 { status = "disabled"; };
+&mdio2 { status = "disabled"; };
+
+/* AST2600 Firmware SPI (FMC) hosts the 64 MiB Winbond W25Q512JVFIQ.
+ * Explicitly mux the dedicated FWSPID signals and quad DQ2/DQ3 pads.
+ */
+&fmc {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_fwspid_default &pinctrl_fwqspi_default>;
+    /delete-node/ flash@0;
+
+    flash@0 {
+        compatible = "jedec,spi-nor";
+        reg = <0>;
+        label = "bmc";
+        spi-max-frequency = <50000000>;
+        spi-rx-bus-width = <4>;
+        spi-tx-bus-width = <4>;
+
+        partitions {
+            compatible = "fixed-partitions";
+            #address-cells = <1>;
+            #size-cells = <1>;
+
+            u-boot@0 { reg = <0x00000000 0x000e0000>; label = "u-boot"; };
+            u-boot-env@e0000 { reg = <0x000e0000 0x00020000>; label = "u-boot-env"; };
+            kernel@100000 { reg = <0x00100000 0x00900000>; label = "kernel"; };
+            rofs@a00000 { reg = <0x00a00000 0x02000000>; label = "rofs"; };
+            rwfs@2a00000 { reg = <0x02a00000 0x01600000>; label = "rwfs"; };
+        };
+    };
+};
+
+/* Host BIOS NOR on AST2600 SPI1 CS0 (Macronix MX25U51245GMI00).
+ * SPI1 is used only by the BIOS updater and remains in single-bit mode.
+ */
+&spi1 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_spi1_default>;
+    /delete-node/ flash@0;
+
+    flash@0 {
+        compatible = "jedec,spi-nor";
+        reg = <0>;
+        label = "host-bios-chip";
+        spi-max-frequency = <50000000>;
+        spi-rx-bus-width = <1>;
+        spi-tx-bus-width = <1>;
+
+        partitions {
+            compatible = "fixed-partitions";
+            #address-cells = <1>;
+            #size-cells = <1>;
+
+            host-bios@0 {
+                label = "host-bios";
+                reg = <0x00000000 0x04000000>;
+            };
+        };
+    };
+};
+
+/* SPI2 is not connected to either system or BIOS flash on this board. */
+&spi2 {
+    status = "disabled";
+};
+
+/* GPIOM1/NDCD1 is requested as GPIO by the BIOS updater; do not mux it as
+ * UART1 modem control.
+ */
+&uart1 {
+    status = "disabled";
 };
 
 /* The schematic labels these as ADC0..ADC15 and uses the 10K/1K or
@@ -115,26 +319,81 @@
     };
 };
 
-/* Required by IntelCPUSensor/DIMMSensor for CPU and memory temperatures. */
+/* PECI on AT29 / BMC_CPU_PECI connects to the Xeon 6 CPU.
+ * CPU and DIMM temperatures are read over PECI, not the DIMM I3C buses.
+ */
 &peci0 {
     status = "okay";
 };
 
+/* CPU management uses AST2600 I3C3 on I3C3SCL_FSI1CLK/I3C3SDA_FSI1DATA.
+ * DIMM temperatures are obtained over PECI; BMC I3C1/2 and I3C4 are unused.
+ */
+&i3c0 { status = "disabled"; };
+&i3c1 { status = "disabled"; };
+&i3c2 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i3c3_default>;
+};
+&i3c3 { status = "disabled"; };
+&i3c4 { status = "disabled"; };
+&i3c5 { status = "disabled"; };
+
 /*
  * AST2600 DT labels are zero-based: schematic I2C7 is &i2c6.  The EVB
- * include enables its own I2C8 demo devices, so remove those before enabling
- * the board's actual I2C8/9 functions below.
+ * include enables demo devices on Linux i2c-7 and i2c-8; remove those before
+ * assigning the board's actual temperature, CRPS and CPLD bus functions.
  */
+/* PCIe slot I2C access: schematic AST I2C1..6 map to Linux &i2c0..&i2c5. */
+&i2c0 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c1_default>;
+};
+
+&i2c1 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c2_default>;
+};
+
+&i2c2 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c3_default>;
+};
+
+&i2c3 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c4_default>;
+};
+
+&i2c4 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c5_default>;
+};
+
+&i2c5 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c6_default>;
+};
+
 &i2c6 {
     status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c7_default>;
 
-    /* NST175H is LM75 register compatible. */
-    outlet-temp@48 {
+    /* Four NST175H-QSPR sensors; strap code is the low address bits. */
+    inlet-temp@48 {
         compatible = "national,lm75";
         reg = <0x48>;
     };
 
-    inlet-temp@49 {
+    outlet-temp@49 {
         compatible = "national,lm75";
         reg = <0x49>;
     };
@@ -152,31 +411,81 @@
 
 &i2c7 {
     status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c8_default>;
     /delete-node/ temp@2e;
     /delete-node/ eeprom@50;
+
+    /* Generic PMBus CRPS modules. Missing addresses fail probe and do not
+     * create hwmon sensors; the populated slots are exposed independently. */
+    pmbus@58 { compatible = "pmbus"; reg = <0x58>; };
+    pmbus@59 { compatible = "pmbus"; reg = <0x59>; };
+    pmbus@5a { compatible = "pmbus"; reg = <0x5a>; };
 };
 
-/* CPRS/ATX power monitor bus; device address is intentionally left to the
- * runtime PMBus/CPRS configuration because the schematic does not identify
- * a standard Linux-compatible part number. */
+/* Schematic I2C9 connects to CPLD-reserved pins; no target is currently used. */
+&i2c8 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c9_default>;
+    /delete-node/ lm75@4d;
+};
+/* Schematic RTC bus 10 is AST2600 I2C10 (Linux i2c9), on SDA2/SCL2
+ * of the NCT3015Y-R; its first I2C port is connected to the host CPU. */
+&i2c9 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c10_default>;
 
-&i2c8 { status = "okay"; };
-&i2c9 { status = "okay"; };
+    rtc@6f {
+        compatible = "nuvoton,nct3018y";
+        reg = <0x6f>;
+    };
+};
 
-/* Schematic I2C11 carries the FM24C08D board FRU. */
+/* Schematic I2C11 carries the FM24C08D motherboard FRU at address 0x50. */
 &i2c10 {
     status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c11_default>;
 
     eeprom@50 {
         compatible = "atmel,24c08";
         reg = <0x50>;
         pagesize = <16>;
+        size = <1024>;
+        num-addresses = <4>;
+        wp-gpios = <&gpio0 54 GPIO_ACTIVE_HIGH>;
     };
 };
 
-/* Schematic I2C12 is the TCA9546 branch bus.  Its address is strap-defined. */
-&i2c11 { status = "okay"; };
-&i2c12 { status = "okay"; };
-&i2c13 { status = "okay"; };
-&i2c14 { status = "okay"; };
-&i2c15 { status = "okay"; };
+/* I2C12 TCA9546 and I2C13/14 MCIO are reserved board interfaces. */
+&i2c11 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c12_default>;
+};
+
+&i2c12 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c13_default>;
+};
+
+&i2c13 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c14_default>;
+};
+/* CPU SMBUS_HOST PROM path: BMC_PROM_SCL/SDA use AST2600 I2C15 on
+ * GPIOH4/SCL15 and GPIOH5/SDA15 (Linux adapter i2c-14). */
+&i2c14 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c15_default>;
+};
+&i2c15 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_i2c16_default>;
+};

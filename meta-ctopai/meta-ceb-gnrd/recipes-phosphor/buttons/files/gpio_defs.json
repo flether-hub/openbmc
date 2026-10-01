@@ -1,0 +1,9 @@
+{
+    "gpio_definitions": [
+        {
+            "name": "ID_BUTTON",
+            "pin": "V0",
+            "direction": "both"
+        }
+    ]
+}

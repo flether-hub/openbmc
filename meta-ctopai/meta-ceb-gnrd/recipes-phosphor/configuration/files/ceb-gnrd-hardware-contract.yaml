@@ -14,52 +14,67 @@ board:
 interfaces:
   buses:
     i2c:
-      - { bus: 1, signal: BMC_SLOT1_I2C1, device: PCIE_X8, address: not-applicable }
-      - { bus: 2, signal: BMC_SLOT3_I2C2, device: PCIE_X16, address: not-applicable }
-      - { bus: 3, signal: BMC_SLOT4_I2C3, device: PCIE_X8, address: not-applicable }
-      - { bus: 4, signal: BMC_SLOT5_I2C4, device: PCIE_X8, address: not-applicable }
-      - { bus: 5, signal: BMC_SLOT6_I2C5, device: PCIE_X16, address: not-applicable }
-      - { bus: 6, signal: BMC_SLOT7_I2C6, device: PCIE_X8, address: not-applicable }
-      - { bus: 7, linux_controller: i2c6, signal: BMC_SENSOR_I2C7, device: NST175H-QSPR, address: [0x48, 0x49, 0x4a, 0x4b] }
-      - { bus: 8, linux_controller: i2c7, signal: BMC_CPRS_I2C8, device: CPRS, address: pending, max_speed_hz: 100000 }
-      - { bus: 9, linux_controller: i2c8, signal: BMC_CPLD_I2C9, device: M2_CPLD, address: not-applicable }
-      - { bus: 10, linux_controller: i2c9, signal: BMC_RTC_I2C10, device: NCT3015Y, address: pending }
-      - { bus: 11, linux_controller: i2c10, signal: BMC_FRU_I2C11, device: FM24C08D, address: 0x50 }
-      - { bus: 12, linux_controller: i2c11, signal: BMC_TCA9546_I2C12, device: TCA9546A, address: pending }
-      - { bus: 13, linux_controller: i2c12, signal: BMC_MCIO_I2C13, device: MCIO_X8, address: not-applicable }
-      - { bus: 14, linux_controller: i2c13, signal: BMC_MCIO_I2C14, device: reserved, address: pending }
-      - { bus: 15, linux_controller: i2c14, signal: BMC_PROM_SMBUS, device: CPU_SMBUS_HOST, address: pending }
-      - { bus: 16, linux_controller: i2c15, signal: MIPI60_I2C, device: MIPI60_CONNECTOR, address: pending }
+      - { bus: 1, linux_controller: i2c0, pins: [GPIOJ0_SCL1, GPIOJ1_SDA1], signal: BMC_SLOT1_I2C1, device: PCIE_SLOT1, address: per_card }
+      - { bus: 2, linux_controller: i2c1, pins: [GPIOJ2_SCL2, GPIOJ3_SDA2], signal: BMC_SLOT3_I2C2, device: PCIE_SLOT3, address: per_card }
+      - { bus: 3, linux_controller: i2c2, pins: [GPIOJ4_SCL3, GPIOJ5_SDA3], signal: BMC_SLOT4_I2C3, device: PCIE_SLOT4, address: per_card }
+      - { bus: 4, linux_controller: i2c3, pins: [GPIOJ6_SCL4, GPIOJ7_SDA4], signal: BMC_SLOT5_I2C4, device: PCIE_SLOT5, address: per_card }
+      - { bus: 5, linux_controller: i2c4, pins: [GPIOK0_SCL5, GPIOK1_SDA5], signal: BMC_SLOT6_I2C5, device: PCIE_SLOT6, address: per_card }
+      - { bus: 6, linux_controller: i2c5, pins: [GPIOK2_SCL6, GPIOK3_SDA6], signal: BMC_SLOT7_I2C6, device: PCIE_SLOT7, address: per_card }
+      - { bus: 7, linux_controller: i2c6, signal: BMC_SENSOR_I2C7, device: NST175H-QSPR, address: [0x48, 0x49, 0x4a, 0x4b], temperature_only: true, thresholds: none }
+      - { bus: 8, linux_controller: i2c7, signal: BMC_CPRS_I2C8, device: CRPS_PMBus, addresses: [0x58, 0x59, 0x5a], sensors: [input_voltage, output_voltage, input_power, output_power], optional_modules: true, missing_module_alarm: false }
+      - { bus: 9, linux_controller: i2c8, pins: [GPIOL0_SCL9, GPIOL1_SDA9], signal: BMC_CPLD_I2C9, device: CPLD_reserved, address: pending }
+      - { bus: 10, linux_controller: i2c9, signal: BMC_RTC_I2C10, device: NCT3015Y-R, address: 0x6f, rtc_device: rtc0, purpose: BMC_system_clock }
+      - { bus: 11, linux_controller: i2c10, pins: [GPIOA0_SCL11, GPIOA1_SDA11], signal: BMC_FRU_I2C11, device: FM24C08D, package_outline: 24C02, address: 0x50, num_addresses: 4, size_bytes: 1024, page_size_bytes: 16, wp_signal: BMC_FRU_WP, board_default_wp: pulldown_low_write_enabled, wp_gpio_function: GPIOG6_TXD9_SD2CD#_SALT15, wp_linux_offset: 54, nvmem_wp_gpio: configured }
+      - { bus: 12, linux_controller: i2c11, pins: [GPIOA2_SCL12, GPIOA3_SDA12], signal: BMC_TCA9546_I2C12, device: TCA9546A_reserved, address: pending }
+      - { bus: 13, linux_controller: i2c12, pins: [GPIOA4_SCL13, GPIOA5_SDA13], signal: BMC_MCIO_I2C13, device: MCIO_reserved, address: pending }
+      - { bus: 14, linux_controller: i2c13, pins: [GPIOA6_SCL14, GPIOA7_SDA14], signal: BMC_MCIO_I2C14, device: MCIO_reserved, address: pending }
+      - { bus: 15, ast2600_controller: I2C15, linux_controller: i2c14, signals: [BMC_PROM_SCL, BMC_PROM_SDA], pins: [GPIOH4_SCL15, GPIOH5_SDA15], device: CPU_PROM_EEPROM_reserved, connection: CPU_SMBUS_HOST, address: pending, model: pending }
+      - { bus: 16, linux_controller: i2c15, pins: [GPIOH6_SCL16, GPIOH7_SDA16], signal: MIPI60_I2C, device: MIPI60_DEBUG_reserved, address: pending }
     i3c:
-      - { bus: 1, signal: I3C_BMC_SPD_SCL1_SDA1, device: DIMM0-3_SPD_TEMPERATURE, status: pending-device-tree-map }
-      - { bus: 2, signal: I3C_BMC_SPD_SCL2_SDA2, device: DIMM4-7_SPD_TEMPERATURE, status: pending-device-tree-map }
-      - { bus: 3, signal: BMC_I3C_SCL3_SDA3, device: CPU_I3C_MNG, status: pending-device-tree-map }
+      - { bus: 1, ast2600_node: i3c0, signal: I3C_BMC_SCL1_SDA1, device: DIMM0-3, status: disabled, purpose: unused, temperature_source: PECI }
+      - { bus: 2, ast2600_node: i3c1, signal: I3C_BMC_SCL2_SDA2, device: DIMM4-7, status: disabled, purpose: unused, temperature_source: PECI }
+      - { bus: 3, ast2600_node: i3c2, pins: [I3C3SCL_FSI1CLK, I3C3SDA_FSI1DATA], signal: CPU_I3C_MNG_SCL_SDA, device: Xeon6_CPU, status: enabled, purpose: cpu_management, temperature_source: none }
+      - { bus: 4, ast2600_node: i3c3, pins: [I3C4SCL_FSI2CLK, I3C4SDA_FSI2DATA], signal: I3C4, device: unused, status: disabled, purpose: unused, temperature_source: none }
     pmbus:
+      - { bus_signal: BMC_CPRS_I2C8, linux_controller: i2c7, device: CRPS, addresses: [0x58, 0x59, 0x5a], telemetry: [input_voltage, output_voltage, input_power, output_power], optional_modules: true, absent_module_alarm: false }
       - { bus_signal: JW6375_PMBCLK0_PMBDATA0, svid_addresses: [0x00, 0x02], pmbus_address_low_nibble: 0x1 }
       - { bus_signal: JW6375_PMBCLK0_PMBDATA0, svid_addresses: [0x01, 0x03], pmbus_address_low_nibble: 0x3 }
       - { bus_signal: JW6375_PMBCLK1_PMBDATA1, svid_addresses: [0x02, 0x00], pmbus_address_low_nibble: 0x1 }
       - { bus_signal: JW6375_PMBCLK1_PMBDATA1, svid_addresses: [0x00, 0x01], pmbus_address_low_nibble: 0x3 }
+    spi:
+      - { controller: AST2600_SPI1, chip_select: 0, signal: FLASH_SPI1, device: Macronix_MX25U51245GMI00, capacity_bytes: 67108864, bus_width: 1, use: BIOS_update_only, mtd_label: host-bios, pins: { CS0: AD13, CLK: AB11, MOSI: AC11, MISO: AA11 } }
+      - { controller: AST2600_FMC_FIRMWARE_SPI, chip_select: 0, signal: BMC_FIRMWARE_SPI, device: Winbond_W25Q512JVFIQ, capacity_bytes: 67108864, bus_width: 4, mtd_layout: OpenBMC_64MiB, pinctrl: [FWSPID, FWQSPI], pins: { CS0: AB14, CLK: AF13, MOSI: AC14, MISO: AB13, DQ2: AE12_GPIOY4, DQ3: AF12_GPIOY5 }, reset_signal: BMC_SRST_N }
+
+  espi:
+    host: Intel_Xeon_6_CPU
+    ast2600_pads: [GPIOW0_AB7_ESPID0, GPIOW1_AB8_ESPID1, GPIOW2_AC8_ESPID2, GPIOW3_AC7_ESPID3, GPIOW4_AE7_ESPICK, GPIOW5_AF7_ESPICS, GPIOW6_AD7_ESPIALT, GPIOW7_AD8_ESPIRST]
+    pinctrl: [ESPI, ESPIALT]
+    pad_policy: dedicate_GPIOW0_W7_to_host_eSPI
+    enabled_channel: peripheral
+    disabled_channels: [virtual_wire, flash_access]
 
   adc:
     source: AST2600 ADC0 channels 0-15
-    scaling: confirmed-by-page-49-resistor-dividers
+    scaling: ADC sensor reading = measured pin voltage multiplied by ScaleFactor
+    sampling_power_state: chassis-on-only
+    thresholds: only-lower-and-upper-non-recoverable-at-nominal-minus-plus-15-percent
     channels:
-      - { channel: 0, name: P12V_SYS, net: P12V_SYS_ADC0, nominal: 12.0 }
-      - { channel: 1, name: P5V0_SYS, net: P5V0_SYS_ADC1, nominal: 5.0 }
-      - { channel: 2, name: P3V3_SYS, net: P3V3_SYS_ADC2, nominal: 3.3 }
-      - { channel: 3, name: PVCCIN_CPU, net: PVCCIN_CPU_ADC3, nominal: 1.8 }
-      - { channel: 4, name: PVNN_NAC_CPU, net: PVNN_NAC_CPU_ADC4, nominal: 1.0 }
-      - { channel: 5, name: PVCCD0_HV_CPU, net: PVCCD0_HV_CPU_ADC5, nominal: 1.13 }
-      - { channel: 6, name: PVCCINF_CPU, net: PVCCINF_CPU_ADC6, nominal: 0.85 }
-      - { channel: 7, name: PVNN_MAIN_CPU, net: PVNN_MAIN_CPU_ADC7, nominal: 1.0 }
-      - { channel: 8, name: PVCCFA_EHV_CPU, net: PVCCFA_EHV_CPU_ADC8, nominal: 1.8 }
-      - { channel: 9, name: PVCCD1_HV_CPU, net: PVCCD1_HV_CPU_ADC9, nominal: 1.13 }
-      - { channel: 10, name: PVCCINF_EHV_FIVRA_CPU, net: PVCCINF_EHV_FIVRA_CPU_ADC10, nominal: 1.8 }
-      - { channel: 11, name: P3V3_STBY, net: P3V3_STBY_ADC11, nominal: 3.3 }
-      - { channel: 12, name: P1V8_STBY, net: P1V8_STBY_ADC12, nominal: 1.8 }
-      - { channel: 13, name: P1V2_STBY, net: P1V2_STBY_ADC13, nominal: 1.2 }
-      - { channel: 14, name: P1V0_STBY, net: P1V0_STBY_ADC14, nominal: 1.0 }
-      - { channel: 15, name: D3V0_BAT0, net: D3V0_BAT0_ADC15, nominal: 3.0 }
+      - { channel: 0, name: P12V_SYS, net: P12V_SYS_ADC0, package_ball: AD20, nominal: 12.0, divider_ratio: 11.0, lnr: 10.2, unr: 13.8 }
+      - { channel: 1, name: P5V0_SYS, net: P5V0_SYS_ADC1, package_ball: AC18, nominal: 5.0, divider_ratio: 11.0, lnr: 4.25, unr: 5.75 }
+      - { channel: 2, name: P3V3_SYS, net: P3V3_SYS_ADC2, package_ball: AE19, nominal: 3.3, divider_ratio: 2.0, lnr: 2.805, unr: 3.795 }
+      - { channel: 3, name: PVCCIN_CPU, net: PVCCIN_CPU_ADC3, package_ball: AD19, nominal: 1.8, divider_ratio: 1.0, lnr: 1.53, unr: 2.07 }
+      - { channel: 4, name: PVNN_NAC_CPU, net: PVNN_NAC_CPU_ADC4, package_ball: AC19, nominal: 0.9, divider_ratio: 1.0, lnr: 0.765, unr: 1.035 }
+      - { channel: 5, name: PVCCD0_HV_CPU, net: PVCCD0_HV_CPU_ADC5, package_ball: AB19, nominal: 1.13, divider_ratio: 1.0, lnr: 0.9605, unr: 1.2995 }
+      - { channel: 6, name: PVCCINF_CPU, net: PVCCINF_CPU_ADC6, package_ball: AB18, nominal: 0.85, divider_ratio: 1.0, lnr: 0.7225, unr: 0.9775 }
+      - { channel: 7, name: PVNN_MAIN_CPU, net: PVNN_MAIN_CPU_ADC7, package_ball: AE18, nominal: 1.0, divider_ratio: 1.0, lnr: 0.85, unr: 1.15 }
+      - { channel: 8, name: PVCCFA_EHV_CPU, net: PVCCFA_EHV_CPU_ADC8, package_ball: AB16, nominal: 1.8, divider_ratio: 1.0, lnr: 1.53, unr: 2.07 }
+      - { channel: 9, name: PVCCD1_HV_CPU, net: PVCCD1_HV_CPU_ADC9, package_ball: AA17, nominal: 1.13, divider_ratio: 1.0, lnr: 0.9605, unr: 1.2995 }
+      - { channel: 10, name: PVCCINF_EHV_FIVRA_CPU, net: PVCCINF_EHV_FIVRA_CPU_ADC10, package_ball: AB17, nominal: 1.8, divider_ratio: 1.0, lnr: 1.53, unr: 2.07 }
+      - { channel: 11, name: P3V3_STBY, net: P3V3_STBY_ADC11, package_ball: AE16, nominal: 3.3, divider_ratio: 2.0, lnr: 2.805, unr: 3.795 }
+      - { channel: 12, name: P1V8_STBY, net: P1V8_STBY_ADC12, package_ball: AC16, nominal: 1.8, divider_ratio: 1.0, lnr: 1.53, unr: 2.07 }
+      - { channel: 13, name: P1V2_STBY, net: P1V2_STBY_ADC13, package_ball: AA16, nominal: 1.2, divider_ratio: 1.0, lnr: 1.02, unr: 1.38 }
+      - { channel: 14, name: P1V0_STBY, net: P1V0_STBY_ADC14, package_ball: AD16, nominal: 1.0, divider_ratio: 1.0, lnr: 0.85, unr: 1.15 }
+      - { channel: 15, name: D3V0_BAT0, net: D3V0_BAT0_ADC15, package_ball: AC17, nominal: 3.0, divider_ratio: 1.0, lnr: 2.55, unr: 3.45, divider: none }
 
   fans:
     source: AST2600 G6 PWM/TACH
@@ -70,7 +85,9 @@ interfaces:
       - { index: 3, tach: SYS_FAN3_TACH, pwm: BMC_FAN3_PWM, tach_channel: 3, pwm_channel: 3 }
       - { index: 4, tach: SYS_FAN4_TACH, pwm: BMC_FAN4_PWM, tach_channel: 4, pwm_channel: 4 }
       - { index: 5, tach: SYS_FAN5_TACH, pwm: BMC_FAN5_PWM, tach_channel: 5, pwm_channel: 5 }
-    policy: adaptive-from-CPU-temperature-with-web-manual-override
+    policy: adaptive-from-CPU-temperature-with-web-manual-override; installed-fan-count-is-variable; zero-or-abnormal-tach-does-not-generate-journal-or-alarm
+    tach_fault_logging: disabled
+    tach_presence_monitor: disabled
     web_control:
       modes: [adaptive, fixed]
       minimum_pwm_percent: { min: 10, default: 30, max: 100 }
@@ -79,66 +96,62 @@ interfaces:
     status: confirmed-schematic-and-device-tree
 
   gpio:
-    active_low_inputs:
-      - THERMAL_ALERT_N
-      - FPGA_THERMAL_ALERT_N
-      - VR_BOARD_PIN_ALERT_N
-      - CPU_THERMTRIP_CPLD_N
-      - SMB_PECI_BMC_ALRT_N
-      - CPU_PVCCIN_PWR_FAULT_N
-      - FPGA_PVCC_FPGA_PWR_FAULT_N
-      - CHASSIS_INTRUSION_BMC_N
-      - SYS_RST_BTN_RC_N
-    controls:
-      - { name: BMC_FRU_WP, gpio: GPIOA0, direction: output, active_high: true }
-      - { name: BMC_HEARTBEAT_LED, gpio: GPIOB1, direction: output, active_high: false }
-      - { name: PWR_BTN_BMC_OUT_N, gpio: GPIOM4, direction: output, active_high: false }
-      - { name: BMC_ASSERT_RSTBTN_LOCK_N, gpio: GPIOM5, direction: output, active_high: false }
-      - { name: RST_BTN_BMC_OUT_N, gpio: GPIOY2, direction: output, active_high: false }
-      - { name: BMC_XDP_PREQ_N, gpio: GPIOAA4, direction: output, active_high: false }
+    line_numbering: AST2600 GPIO A0=0, bank size=8
+    confirmed_lines:
+      - { function: UID_button_input, package_ball: AB15, ast_gpio: GPIOV0, linux_chip: gpio0, line_offset: 168, line_name: BMC_UID_BUTTON_N, direction: input, active_low: true, button_name: ID_BUTTON, behavior: toggles-enclosure-identify-group }
+      - { function: UID_LED_output, package_ball: AF14, ast_gpio: GPIOV1, linux_chip: gpio0, line_offset: 169, line_name: BMC_UID_LED, direction: output, active_low: false, asserted_level: high, led_name: identify, control_status: phosphor-led-manager-enclosure-identify-group }
+      - { function: CPU_power_button_output, package_ball: AD14, ast_gpio: GPIOV2, linux_chip: gpio0, line_offset: 170, line_name: BMC_CPU_POWER_BUTTON, direction: output, active_low: true, pulse_level: low, idle_level: high, behavior: x86-power-control PowerOut; 200ms normal pulse, 15s force-off, direct physical-button passthrough, control_status: enabled-for-standard-host-and-chassis-transitions }
+      - { function: CPU_reset_output, package_ball: AC15, ast_gpio: GPIOV3, linux_chip: gpio0, line_offset: 171, line_name: BMC_CPU_RESET, direction: output, active_low: true, pulse_level: low, idle_level: high, behavior: x86-power-control ResetOut; 500ms reset pulse, control_status: enabled-for-host-reset-and-chassis-system-reset }
+      - { function: CPU_power_good_input, package_ball: AE15, ast_gpio: GPIOV4, linux_chip: gpio0, line_offset: 172, line_name: BMC_CPU_PWRGD, direction: input, active_low: false, asserted_level: high, behavior: x86-power-control PowerOk state feedback, control_status: monitored }
+      - { function: FRU_EEPROM_write_protect, ast_gpio: GPIOG6_TXD9_SD2CD#_SALT15, linux_chip: gpio0, line_offset: 54, line_name: BMC_FRU_WP, direction: output, active_high: true, board_default: pulldown_low_write_enabled, behavior: nvmem_wp-gpios-controls-write-cycles, control_status: device-tree-mapped }
+      - { function: system_alert_LED_output, package_ball: E16, ast_gpio: GPIOI5, linux_chip: gpio0, line_offset: 69, line_name: BMC_SYS_ALERT_LED, direction: output, active_low: false, asserted_level: high, control_status: voltage-alarms-auto-clear; watchdog-timeout-and-bios-boot-timeout-latched-until-bmc-reboot }
+      - { function: fan_BMC_takeover_select, package_ball: B16, ast_gpio: GPIOI6, linux_chip: gpio0, line_offset: 70, line_name: BMC_FAN_BMC_OVERRIDE_N, direction: output, active_low: false, bmc_owns_when_high: true, cpld_owns_when_low: true, cpld_owns_at_power_on: true, handoff_ready_condition: configured-fan-control-zone-and-six-pwm-tach-channels-available, release_on_fan_control_stop: true }
+      - { function: BMC_heartbeat_output, ast_gpio: GPIOP7, linux_chip: gpio0, line_offset: 127, line_name: BMC_HBLED_N, direction: output, active_low: true, waveform: kernel-heartbeat-trigger-after-espi-peripheral-driver-probe, control_status: enabled-after-eSPI-SW_READY }
+      - { function: BIOS_flash_control_select, signal: GPIOM1_NDCD1_used_as_GPIO, package_ball: B13, ast_gpio: GPIOM1, linux_chip: gpio0, line_offset: 97, line_name: BMC_BIOS_FLASH_SELECT, direction: output, bmc_ownership_level: 1, bios_ownership_level: 0, control_status: bios-update-script }
+      - { function: power_button_input, package_ball: A12, ast_gpio: GPIOM2, linux_chip: gpio0, line_offset: 98, line_name: BMC_POWER_BUTTON_INPUT, direction: input, active_low: true, press_level: low, edge: falling, behavior: x86-power-control PowerButton input and power-output passthrough, control_status: enabled }
+      - { function: BIOS_boot_complete_input, package_ball: D13, ast_gpio: GPIOM7, linux_chip: gpio0, line_offset: 103, line_name: BMC_BIOS_BOOT_OK, direction: input, active_low: false, boot_ok_level: high, behavior: suppresses-current-boot-timeout-only, success_action: none, control_status: monitored-by-alert-led-service }
     straps:
-      - { name: PCB_VER0, gpio: pending, value: 1, status: exact_gpio_mapping_pending }
-      - { name: PCB_VER1, gpio: pending, value: 0, status: exact_gpio_mapping_pending }
-      - { name: CFG_VER0, gpio: pending, value: 1, status: exact_gpio_mapping_pending }
+      - { name: PCB_VER0, package_ball: R26, ast_gpio: GPIOS4, linux_chip: gpio0, line_offset: 148, value: bit0 }
+      - { name: PCB_VER1, package_ball: P24, ast_gpio: GPIOS5, linux_chip: gpio0, line_offset: 149, value: bit1 }
+      - { name: PCB_VER2, package_ball: P23, ast_gpio: GPIOS6, linux_chip: gpio0, line_offset: 150, value: bit2 }
+      - { name: CFG_VER0, package_ball: T24, ast_gpio: GPIOS7, linux_chip: gpio0, line_offset: 151, status: not_used_for_pcb_revision }
       - { name: CFG_VER1, gpio: pending, value: 0, status: exact_gpio_mapping_pending }
+    hardware_revision_formula: "(PCB_VER2 << 2) | (PCB_VER1 << 1) | PCB_VER0"
+    mc_info_encoding: "Get Device ID AUX byte 4 (the final byte), range 0x00-0x07; AUX bytes 1-3 are preserved"
 
   temperatures:
-    - name: EnvTemp1
-      source: dbus-sensors ExitAirTempSensor or hwmon
-      accuracy_celsius: 2
-      status: confirmed-i2c7-address-map
-    - name: EnvTemp2
-      source: dbus-sensors ExitAirTempSensor or hwmon
-      accuracy_celsius: 2
-      status: confirmed-i2c7-address-map
+    - name: EnvTemp_Inlet
+      source: U30 NST175H-QSPR at schematic I2C7 address 0x48, address strap 000
+      status: configured-measurement-only-no-thresholds
+    - name: EnvTemp_Outlet
+      source: U33 NST175H-QSPR at schematic I2C7 address 0x49, address strap 001
+      status: configured-measurement-only-no-thresholds
     - name: BoardTemp_PCIe
-      source: NST175H at schematic I2C7 address 0x4a
-      accuracy_celsius: 2
-      status: confirmed-i2c7-address-map
+      source: U32 NST175H-QSPR at schematic I2C7 address 0x4a, address strap 010
+      status: configured-measurement-only-no-thresholds
     - name: BoardTemp_M2
-      source: NST175H at schematic I2C7 address 0x4b
-      accuracy_celsius: 2
-      status: confirmed-i2c7-address-map
+      source: U31 NST175H-QSPR at schematic I2C7 address 0x4b, address strap 011
+      status: configured-measurement-only-no-thresholds
     - name: CPU_Temp
-      source: PECI CPU temperature through dbus-sensors IntelCPUSensor
-      status: kernel-and-host-dependent
-    - name: DIMM_Temp
-      source: PECI DIMM temperature through dbus-sensors IntelCPUSensor
-      status: kernel-and-host-dependent
+      source: AST2600 PECI0 via BMC_CPU_PECI (package ball AT29), XeonCPU CPU0
+      status: configured-kernel-and-host-dependent
+    - name: DIMM_Temp_Max
+      source: PECI DIMM temperature channels only; publish maximum across present DIMMs; I3C is not used for DIMM temperatures
+      status: aggregation-required
     - name: PSU_Internal_Temp
       source: PMBus PSU sensor
       status: pending-pmbus-map
 
   voltages:
     - name: CPU_Core_Voltage
-      source: AST2600 ADC channels 3/6/8/9/10 and JW6375 PMBus telemetry
-      status: adc-confirmed-pmbus-channel-map-pending
+      source: AST2600 ADC channels 3-10 as individually named in adc.channels
+      status: adc-sensors-configured
     - name: DIMM_Voltage
-      source: AST2600 ADC channel 7 (PVNN_MAIN_CPU) and PMBus telemetry
-      status: adc-confirmed-pmbus-channel-map-pending
+      source: no dedicated DIMM rail is identified in the supplied ADC tables
+      status: no-dedicated-adc-channel-identified
     - name: PCIe_12V
       source: AST2600 ADC channel 0 P12V_SYS
-      status: confirmed-adc-channel
+      status: adc-sensor-configured
     - name: PSU_Input_Voltage
       source: PMBus PSU sensor
       status: pending-pmbus-map
@@ -158,47 +171,78 @@ interfaces:
       status: pending-pmbus-map
 
   events:
-    sel_time: phosphor-time-manager synchronized with host/BIOS RTC
+    system_time: NCT3015Y-R on BMC I2C10 seeds system UTC at boot; kernel RTC_SYSTOHC writes synchronized system time back to rtc0
+    sel_time: SEL and journal timestamps use system CLOCK_REALTIME; phosphor-time-manager/NTP synchronization updates rtc0
     sel_policy: rollover oldest entries when full
     cpu0_status:
-      source: GPIOM7
-      meaning: BIOS POST complete when asserted
-      failure_action: FRB2 Watchdog 2 SEL plus alert LED
-      status: board-gpio-event-path-required
+      source: BMC_BIOS_BOOT_OK (GPIOM7, package ball D13, gpio0 line 103)
+      meaning: BIOS boot succeeded when asserted high during a host power-good cycle
+      success_action: none; suppress BIOS boot timeout for the current host power cycle
+      failure_action: if not asserted within 300 seconds after CPU PWRGD, latch the BIOS boot timeout and assert the system alert LED
+      recovery: power-good low rearms boot monitoring; a latched timeout remains until BMC reboot
+      polarity: high-active-from-schematic
+      status: monitored-by-ceb-gnrd-alert-led-service
     bios_reset_reasons: power-on, power-button, BIOS/OS initiated
     threshold_events: phosphor-sel-logger sensor threshold events
     power_button: GPIO or host event source
+    power_button_input: BMC_POWER_BUTTON_INPUT (GPIOM2, package ball A12, gpio0 line 98)
     psu_fault: PMBus status register
-    chassis_open: GPIO intrusion sensor
+    chassis_open:
+      source: AST2600 dedicated intrusion input CHASI#
+      package_ball: AB21
+      interface: AST2600 hwmon intrusion latch (intrusion0_alarm)
+      driver: CONFIG_SENSORS_ASPEED_CHASSIS
+      device_tree: backported aspeed,ast2600-chassis node enabled (SoC CHASI IRQ 149)
+      status: enabled-hwmon-latch-and-dbus-sensor
     bios_post_fail: host-postd/post-code-manager
     status: pending-event-source-map
 
   management:
     web: bmcweb user, sensor, event log, FRU, network, power, fan and update APIs
     sol: obmc-console with SSH console access
-    kvm: obmc-ikvm and bmcweb KVM endpoint
+    debug_console: AST2600 UART5 TXD5/RXD5 on package balls C8/D8, BMC_UART5_DEBUG_TXD/RXD; U-Boot stdout-path and SPL bootph-all use UART5; Linux SERIAL_CONSOLES ttyS4 at 115200 baud
+    vga_display: AST2600 GFX DAC provides the CPU display output through BMC_VGA_B/G/R, HSYNC and VSYNC; schematic DDC clock/data are fixed-function VGA pins
+    kvm: obmc-ikvm/bmcweb video capture via AST2600 VGA-video path and USB HID
+      via AST2600 USB2A vHub device mode to host VL805 port 4
     virtual_media: provider-layer-specific virtual media component
     firmware_update: phosphor-software-manager for BMC/BIOS/CPLD providers
     ssh_scp: dropbear and standard OpenBMC SCP support
     network:
       ports:
-        - { name: management, interface: eth0, connection: independent-RJ45, ipmi_channel: 1 }
-        - { name: host_ncsi, interface: eth1, connection: NC-SI-to-host, ipmi_channel: 2 }
+        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: 192.168.1.200/24, default_gateway: 192.168.1.1 }
+        - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2 }
       address_modes: [static, dhcp]
-      status: pending-device-tree-ethernet-aliases
-    watchdog: phosphor-watchdog plus AST2600 hardware watchdog
-    espi_ready_gpio:
-      trigger: AST eSPI platform device or driver appears in sysfs
-      gpiochip: gpiochip0
-      line: 0
-      active_level: 1
-      status: placeholder-until-schematic-is-available
+      default_management_mode: static
+      status: configured
+    watchdog:
+      ipmi_standard:
+        implementation: phosphor-watchdog host0
+        commands: [Set_Watchdog_Timer_0x06_0x24, Get_Watchdog_Timer_0x06_0x25, Reset_Watchdog_Timer_0x06_0x22]
+        ipmi_command_allowlist: enabled
+        timeout_sel: phosphor-sel-logger log-watchdog; suppressed when IPMI dont-log bit is set
+        timeout_action_target: obmc-host-timeout@0.target
+        status: configured; target-board-command-and-expiry-test-required
+      bmc_hardware_runtime:
+        controller: AST2600_WDT1
+        device_tree: enabled-as-system-reset
+        kernel: CONFIG_ASPEED_WATCHDOG
+        systemd_runtime_timeout: 120s
+        systemd_pretimeout: 30s-panic
+        purpose: reset-BMC-if-systemd-stops-servicing-hardware-watchdog
+        timeout_sel: not-guaranteed-after-BMC-hang; persistent-reset-cause-logging-not-configured
+        limitation: systemd-runtime-watchdog-detects-manager-or-kernel-stall-not-every-individual-service-failure
+    bmc_heartbeat:
+      source: BMC_HBLED_N (GPIOP7, gpio0 line 127)
+      line_name: BMC_HBLED_N
+      implementation: gpio-leds starts off; gate service enables Linux heartbeat trigger after the AST2600 eSPI Peripheral driver binds and sets SW_READY
+      eSPI_dependency: observed-host-I/O-traffic-through-eSPI-peripheral-and-LPC-snoop
+      status: configured; driver readiness indicates eSPI initialization, not that host traffic was observed; verify waveform polarity on board
     status: common-services-plus-pending-provider
 
   inventory:
-    fru: phosphor-ipmi-fru and fru-device
+    fru: FM24C08D 8-Kbit EEPROM (1 KiB, 16-byte pages; 24C02 package outline) on schematic I2C11 / Linux i2c-10, four address blocks from 0x50; phosphor-ipmi-fru and fru-device configured; BMC_FRU_WP on GPIOG6 (gpio0 offset 54) uses nvmem wp-gpios and board pulldown defaults low/write-enabled
     board_info: EEPROM-backed board and product information
     mutable_fields: serial number, product name, part number and version
-    uid: chassis identify command plus board UID button/LED GPIO
-    alert_led: critical temperature, voltage, fan-stop and POST-fail policy
-    status: pending-eeprom-and-gpio-map
+    uid: IPMI Chassis Identify, Web identify control, and physical ID_BUTTON share phosphor-led-manager enclosure_identify group; physical button toggles the group
+    alert_led: voltage warning/critical threshold alarms clear automatically; host watchdog timeout or 300-second BIOS boot timeout latches until BMC reboot
+    status: eeprom-and-fru-services-configured-wp-gpio-map-pending

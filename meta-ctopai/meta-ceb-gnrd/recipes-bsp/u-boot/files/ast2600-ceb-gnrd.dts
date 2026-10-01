@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+#include "ast2600-evb.dts"
+
+/ {
+	model = "CEB-GNRD AST2600 BMC";
+	compatible = "ctopai,ceb-gnrd", "aspeed,ast2600";
+
+	chosen {
+		stdout-path = &uart5;
+	};
+
+	aliases {
+		ethernet0 = &mac1;
+		ethernet1 = &mac2;
+	};
+};
+
+/* Keep UART5 available from SPL through U-Boot for board bring-up logs. */
+&uart5 {
+	bootph-all;
+	status = "okay";
+};
+
+/* Physical MAC1 and MAC4 are not routed on this board. */
+&mac0 {
+	status = "disabled";
+};
+
+/* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
+&mac1 {
+	status = "okay";
+	phy-mode = "rgmii";
+	phy-handle = <&ethphy1>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_rgmii2_default>;
+};
+
+/* Physical MAC3: NC-SI to the Intel E810. */
+&mac2 {
+	status = "okay";
+	/delete-property/ phy-handle;
+	/delete-property/ phy-mode;
+	pinctrl-names = "default";
+	/* U-Boot pinctrl uses RMII3 pads for physical MAC3 NC-SI. */
+	pinctrl-0 = <&pinctrl_rmii3_default>;
+	use-ncsi;
+};
+
+&mac3 { status = "disabled"; };
+
+&mdio2 { status = "disabled"; };
+
+/* GPIOM1/NDCD1 is reserved for the Linux BIOS-flash ownership GPIO. */
+&uart1 { status = "disabled"; };
+
+/* BIOS SPI1 is updated only from OpenBMC Linux, in single-bit mode. */
+&spi1 { status = "disabled"; };
+
+/* The BMC boot device is the 64 MiB W25Q512JV on Firmware SPI (FMC). */
+&fmc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_fwspid_default &pinctrl_fwqspi_default>;
+	/delete-node/ flash@0;
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <50000000>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <4>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			u-boot@0 { reg = <0x00000000 0x000e0000>; label = "u-boot"; };
+			u-boot-env@e0000 { reg = <0x000e0000 0x00020000>; label = "u-boot-env"; };
+			kernel@100000 { reg = <0x00100000 0x00900000>; label = "kernel"; };
+			rofs@a00000 { reg = <0x00a00000 0x02000000>; label = "rofs"; };
+			rwfs@2a00000 { reg = <0x02a00000 0x01600000>; label = "rwfs"; };
+		};
+	};
+};

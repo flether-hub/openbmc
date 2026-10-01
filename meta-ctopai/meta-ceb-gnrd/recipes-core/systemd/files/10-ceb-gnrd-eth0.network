@@ -2,11 +2,7 @@
 Name=eth0
 
 [Network]
-Address=10.0.2.15/24
-Gateway=10.0.2.2
-DNS=10.0.2.3
-DHCP=yes
-
-[DHCP]
-UseMTU=yes
-RouteMetric=10
+Address=192.168.1.200/24
+Gateway=192.168.1.1
+DNS=192.168.1.1
+DHCP=no

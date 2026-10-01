@@ -1,8 +1,0 @@
-# Placeholder GPIO: replace these two values after the board schematic is
-# available.  gpioset holds the line while the service is running.
-CEB_GNRD_ESPI_READY_GPIOCHIP="gpiochip0"
-CEB_GNRD_ESPI_READY_GPIOLINE="0"
-
-# The platform driver name can vary with the kernel branch.  The service
-# considers eSPI ready when one matching platform device or driver is present.
-CEB_GNRD_ESPI_READY_SYSFS="/sys/bus/platform/devices/*espi* /sys/bus/platform/drivers/*espi*"

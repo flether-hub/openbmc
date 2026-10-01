@@ -1,116 +1,227 @@
 {
     "Exposes": [
         {
+            "Address": "0x30",
+            "Bus": 0,
+            "CpuID": 0,
+            "Name": "Xeon 6 CPU",
+            "PowerState": "On",
+            "Type": "XeonCPU"
+        },
+        {
+            "Class": "Aspeed2600_Hwmon",
+            "Name": "Chassis Intrusion",
+            "Rearm": "Automatic",
+            "Type": "ChassisIntrusionSensor"
+        },
+        {
             "Index": 0,
             "Name": "P12V_SYS",
-            "PowerState": "Always",
+            "PowerState": "ChassisOn",
             "ScaleFactor": 11.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 10.2 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 13.8 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 1,
             "Name": "P5V0_SYS",
-            "PowerState": "Always",
+            "PowerState": "ChassisOn",
             "ScaleFactor": 11.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 4.25 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 5.75 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 2,
             "Name": "P3V3_SYS",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 2.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 2.805 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 3.795 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 3,
             "Name": "PVCCIN_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 4,
             "Name": "PVNN_NAC_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.765 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.035 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 5,
             "Name": "PVCCD0_HV_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.9605 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.2995 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 6,
             "Name": "PVCCINF_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.7225 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 0.9775 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 7,
             "Name": "PVNN_MAIN_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.85 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.15 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 8,
             "Name": "PVCCFA_EHV_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 9,
             "Name": "PVCCD1_HV_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.9605 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.2995 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 10,
             "Name": "PVCCINF_EHV_FIVRA_CPU",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 11,
             "Name": "P3V3_STBY",
-            "PowerState": "Always",
+            "PowerState": "ChassisOn",
             "ScaleFactor": 2.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 2.805 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 3.795 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 12,
             "Name": "P1V8_STBY",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 13,
             "Name": "P1V2_STBY",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.02 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.38 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 14,
             "Name": "P1V0_STBY",
-            "PowerState": "Always",
-            "ScaleFactor": 11.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.85 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.15 }
+            ],
             "Type": "ADC"
         },
         {
             "Index": 15,
             "Name": "D3V0_BAT0",
-            "PowerState": "Always",
-            "ScaleFactor": 2.0,
+            "PowerState": "ChassisOn",
+            "ScaleFactor": 1.0,
+            "Thresholds": [
+                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 2.55 },
+                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 3.45 }
+            ],
             "Type": "ADC"
+        },
+        {
+            "Address": "0x58",
+            "Bus": 7,
+            "Labels": ["vin", "vout1", "pin", "pout1"],
+            "Name": "CRPS0",
+            "Type": "pmbus",
+            "vin_Name": "PSU0_InputVoltage",
+            "vout1_Name": "PSU0_OutputVoltage",
+            "pin_Name": "PSU0_InputPower",
+            "pout1_Name": "PSU0_OutputPower"
+        },
+        {
+            "Address": "0x59",
+            "Bus": 7,
+            "Labels": ["vin", "vout1", "pin", "pout1"],
+            "Name": "CRPS1",
+            "Type": "pmbus",
+            "vin_Name": "PSU1_InputVoltage",
+            "vout1_Name": "PSU1_OutputVoltage",
+            "pin_Name": "PSU1_InputPower",
+            "pout1_Name": "PSU1_OutputPower"
+        },
+        {
+            "Address": "0x5a",
+            "Bus": 7,
+            "Labels": ["vin", "vout1", "pin", "pout1"],
+            "Name": "CRPS2",
+            "Type": "pmbus",
+            "vin_Name": "PSU2_InputVoltage",
+            "vout1_Name": "PSU2_OutputVoltage",
+            "pin_Name": "PSU2_InputPower",
+            "pout1_Name": "PSU2_OutputPower"
         },
         {
             "Connector": {
@@ -193,14 +304,14 @@
         {
             "Address": "0x48",
             "Bus": 6,
-            "Name": "EnvTemp1_Outlet",
+            "Name": "EnvTemp_Inlet",
             "PowerState": "Always",
             "Type": "LM75A"
         },
         {
             "Address": "0x49",
             "Bus": 6,
-            "Name": "EnvTemp1_Inlet",
+            "Name": "EnvTemp_Outlet",
             "PowerState": "Always",
             "Type": "LM75A"
         },
