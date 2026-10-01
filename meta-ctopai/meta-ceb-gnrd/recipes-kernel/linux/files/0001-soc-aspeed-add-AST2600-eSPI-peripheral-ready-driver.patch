@@ -8,8 +8,8 @@ accepted by that hardware path. Do not initialize Virtual Wire, OOB, or Flash.
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
  drivers/soc/aspeed/Kconfig                    |  8 ++++
- drivers/soc/aspeed/aspeed-espi-peripheral.c   | 129 +++++++++++++++++++++++++++
- 2 files changed, 137 insertions(+)
+
+ 2 files changed, 291 insertions(+)
  create mode 100644 drivers/soc/aspeed/aspeed-espi-peripheral.c
 
 diff --git a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
@@ -34,14 +34,20 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/soc/aspeed/aspeed-espi-peripheral.c
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,283 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * AST2600 eSPI Peripheral channel initialization.
 + * Peripheral I/O cycles are routed by the AST2600 hardware to its I/O blocks.
++ *
++ * Besides marking the Peripheral channel ready, this driver reports what the
++ * eSPI controller sees: every reset, every Peripheral transfer abort/error and
++ * a register/counter dump in debugfs (aspeed-espi-peripheral/<dev>/regs).
 + */
-+#include <linux/clk.h>
++#include <linux/atomic.h>
 +#include <linux/bits.h>
++#include <linux/clk.h>
++#include <linux/debugfs.h>
 +#include <linux/delay.h>
 +#include <linux/interrupt.h>
 +#include <linux/io.h>
@@ -50,32 +56,96 @@ index 000000000000..111111111111
 +#include <linux/of.h>
 +#include <linux/platform_device.h>
 +#include <linux/reset.h>
++#include <linux/seq_file.h>
 +
 +#define ESPI_CTRL			0x000
++#define  ESPI_CTRL_PERIF_NP_TX_SW_RST	BIT(27)
++#define  ESPI_CTRL_PERIF_NP_RX_SW_RST	BIT(26)
++#define  ESPI_CTRL_PERIF_PC_TX_SW_RST	BIT(25)
++#define  ESPI_CTRL_PERIF_PC_RX_SW_RST	BIT(24)
 +#define  ESPI_CTRL_PERIF_NP_TX_DMA_EN	BIT(19)
 +#define  ESPI_CTRL_PERIF_PC_TX_DMA_EN	BIT(17)
 +#define  ESPI_CTRL_PERIF_PC_RX_DMA_EN	BIT(16)
 +#define  ESPI_CTRL_PERIF_SW_RDY		BIT(1)
++#define ESPI_STS			0x004
 +#define ESPI_INT_STS			0x008
 +#define ESPI_INT_EN			0x00c
 +#define ESPI_INT_EN_CLR			0x0fc
 +#define  ESPI_INT_RST_DEASSERT		BIT(31)
-+#define  ESPI_INT_PERIF			(BIT(17) | BIT(16) | BIT(13) | BIT(12) | BIT(11) | BIT(10) | BIT(3) | BIT(1) | BIT(0))
++#define  ESPI_INT_PERIF_NP_TX_ABT	BIT(17)
++#define  ESPI_INT_PERIF_PC_TX_ABT	BIT(16)
++#define  ESPI_INT_PERIF_NP_RX_ABT	BIT(13)
++#define  ESPI_INT_PERIF_PC_RX_ABT	BIT(12)
++#define  ESPI_INT_PERIF_NP_TX_ERR	BIT(11)
++#define  ESPI_INT_PERIF_PC_TX_ERR	BIT(10)
++#define  ESPI_INT_PERIF_ERR		(ESPI_INT_PERIF_NP_TX_ABT | \
++					 ESPI_INT_PERIF_PC_TX_ABT | \
++					 ESPI_INT_PERIF_NP_RX_ABT | \
++					 ESPI_INT_PERIF_PC_RX_ABT | \
++					 ESPI_INT_PERIF_NP_TX_ERR | \
++					 ESPI_INT_PERIF_PC_TX_ERR)
++#define  ESPI_INT_PERIF			(ESPI_INT_PERIF_ERR | BIT(3) | BIT(1) | BIT(0))
 +#define ESPI_CTRL2			0x080
++#define  ESPI_CTRL2_MCYC_RD_DIS_WDT	BIT(11)
++#define  ESPI_CTRL2_MCYC_WR_DIS_WDT	BIT(10)
 +#define  ESPI_CTRL2_MCYC_RD_DIS		BIT(6)
 +#define  ESPI_CTRL2_MCYC_WR_DIS		BIT(4)
++#define ESPI_GEN_CAP_N_CONF		0x0a0
++#define ESPI_CH0_CAP_N_CONF		0x0a4
++
++struct aspeed_espi_error {
++	const char *name;
++	u32 mask;
++};
++
++static const struct aspeed_espi_error aspeed_espi_errors[] = {
++	{ "PERIF_NP_TX_ABT", ESPI_INT_PERIF_NP_TX_ABT },
++	{ "PERIF_PC_TX_ABT", ESPI_INT_PERIF_PC_TX_ABT },
++	{ "PERIF_NP_RX_ABT", ESPI_INT_PERIF_NP_RX_ABT },
++	{ "PERIF_PC_RX_ABT", ESPI_INT_PERIF_PC_RX_ABT },
++	{ "PERIF_NP_TX_ERR", ESPI_INT_PERIF_NP_TX_ERR },
++	{ "PERIF_PC_TX_ERR", ESPI_INT_PERIF_PC_TX_ERR },
++};
 +
 +struct aspeed_espi_peripheral {
++	struct device *dev;
 +	void __iomem *regs;
 +	struct reset_control *reset;
++	struct dentry *debugfs;
++	atomic_t resets;
++	atomic_t ready_count;
++	atomic_t errors[ARRAY_SIZE(aspeed_espi_errors)];
 +};
++
++static void aspeed_espi_peripheral_enable_irq(struct aspeed_espi_peripheral *espi)
++{
++	writel(ESPI_INT_RST_DEASSERT | ESPI_INT_PERIF_ERR,
++	       espi->regs + ESPI_INT_EN);
++}
++
++static void aspeed_espi_peripheral_sw_reset(struct aspeed_espi_peripheral *espi)
++{
++	u32 rst = ESPI_CTRL_PERIF_NP_TX_SW_RST | ESPI_CTRL_PERIF_NP_RX_SW_RST |
++		  ESPI_CTRL_PERIF_PC_TX_SW_RST | ESPI_CTRL_PERIF_PC_RX_SW_RST;
++	u32 reg;
++
++	reg = readl(espi->regs + ESPI_CTRL);
++	writel(reg | rst, espi->regs + ESPI_CTRL);
++	udelay(1);
++	writel(reg & ~rst, espi->regs + ESPI_CTRL);
++}
 +
 +static void aspeed_espi_peripheral_ready(struct aspeed_espi_peripheral *espi)
 +{
 +	u32 reg;
 +
-+	/* Leave memory cycles disabled; enable only the hardware PIO path. */
++	/*
++	 * Clear the watchdog-set memory cycle disable flags (as the vendor driver
++	 * does), then leave memory cycles disabled; only the hardware PIO path
++	 * is used.
++	 */
 +	reg = readl(espi->regs + ESPI_CTRL2);
++	reg &= ~(ESPI_CTRL2_MCYC_RD_DIS_WDT | ESPI_CTRL2_MCYC_WR_DIS_WDT);
 +	reg |= ESPI_CTRL2_MCYC_RD_DIS | ESPI_CTRL2_MCYC_WR_DIS;
 +	writel(reg, espi->regs + ESPI_CTRL2);
 +
@@ -85,24 +155,94 @@ index 000000000000..111111111111
 +	reg = readl(espi->regs + ESPI_CTRL);
 +	reg &= ~(ESPI_CTRL_PERIF_NP_TX_DMA_EN |
 +		 ESPI_CTRL_PERIF_PC_TX_DMA_EN |
-+		 ESPI_CTRL_PERIF_PC_RX_DMA_EN);
-+	reg |= ESPI_CTRL_PERIF_SW_RDY;
++		 ESPI_CTRL_PERIF_PC_RX_DMA_EN |
++		 ESPI_CTRL_PERIF_SW_RDY);
 +	writel(reg, espi->regs + ESPI_CTRL);
++
++	aspeed_espi_peripheral_enable_irq(espi);
++
++	reg = readl(espi->regs + ESPI_CTRL) | ESPI_CTRL_PERIF_SW_RDY;
++	writel(reg, espi->regs + ESPI_CTRL);
++
++	atomic_inc(&espi->ready_count);
++	dev_info(espi->dev,
++		 "Peripheral channel SW_READY set (#%d): CTRL=0x%08x CTRL2=0x%08x STS=0x%08x GEN_CAP=0x%08x CH0_CAP=0x%08x\n",
++		 atomic_read(&espi->ready_count),
++		 readl(espi->regs + ESPI_CTRL), readl(espi->regs + ESPI_CTRL2),
++		 readl(espi->regs + ESPI_STS),
++		 readl(espi->regs + ESPI_GEN_CAP_N_CONF),
++		 readl(espi->regs + ESPI_CH0_CAP_N_CONF));
 +}
 +
 +static irqreturn_t aspeed_espi_peripheral_irq(int irq, void *data)
 +{
 +	struct aspeed_espi_peripheral *espi = data;
 +	u32 status = readl(espi->regs + ESPI_INT_STS);
++	u32 errors = status & ESPI_INT_PERIF_ERR;
++	int i;
 +
-+	if (!(status & ESPI_INT_RST_DEASSERT))
++	if (!(status & ESPI_INT_RST_DEASSERT) && !errors)
 +		return IRQ_NONE;
 +
-+	writel(ESPI_INT_RST_DEASSERT, espi->regs + ESPI_INT_STS);
-+	aspeed_espi_peripheral_ready(espi);
-+	writel(ESPI_INT_RST_DEASSERT, espi->regs + ESPI_INT_EN);
++	if (errors) {
++		for (i = 0; i < ARRAY_SIZE(aspeed_espi_errors); i++) {
++			if (!(errors & aspeed_espi_errors[i].mask))
++				continue;
++			atomic_inc(&espi->errors[i]);
++			dev_warn_ratelimited(espi->dev,
++					     "%s (total %d): INT_STS=0x%08x CTRL=0x%08x STS=0x%08x\n",
++					     aspeed_espi_errors[i].name,
++					     atomic_read(&espi->errors[i]),
++					     status,
++					     readl(espi->regs + ESPI_CTRL),
++					     readl(espi->regs + ESPI_STS));
++		}
++		writel(errors, espi->regs + ESPI_INT_STS);
++	}
++
++	if (status & ESPI_INT_RST_DEASSERT) {
++		atomic_inc(&espi->resets);
++		dev_info(espi->dev,
++			 "eSPI_RESET# deasserted (#%d): INT_STS=0x%08x STS=0x%08x, restarting Peripheral channel\n",
++			 atomic_read(&espi->resets), status,
++			 readl(espi->regs + ESPI_STS));
++
++		/* Clears all interrupt enables and status, as the vendor driver does. */
++		reset_control_assert(espi->reset);
++		reset_control_deassert(espi->reset);
++
++		aspeed_espi_peripheral_sw_reset(espi);
++		aspeed_espi_peripheral_ready(espi);
++	}
 +
 +	return IRQ_HANDLED;
++}
++
++static int aspeed_espi_peripheral_regs_show(struct seq_file *m, void *unused)
++{
++	struct aspeed_espi_peripheral *espi = m->private;
++	int i;
++
++	seq_printf(m, "ESPI_CTRL     0x%08x\n", readl(espi->regs + ESPI_CTRL));
++	seq_printf(m, "ESPI_STS      0x%08x\n", readl(espi->regs + ESPI_STS));
++	seq_printf(m, "ESPI_INT_STS  0x%08x\n", readl(espi->regs + ESPI_INT_STS));
++	seq_printf(m, "ESPI_INT_EN   0x%08x\n", readl(espi->regs + ESPI_INT_EN));
++	seq_printf(m, "ESPI_CTRL2    0x%08x\n", readl(espi->regs + ESPI_CTRL2));
++	seq_printf(m, "GEN_CAP       0x%08x\n", readl(espi->regs + ESPI_GEN_CAP_N_CONF));
++	seq_printf(m, "CH0_CAP       0x%08x\n", readl(espi->regs + ESPI_CH0_CAP_N_CONF));
++	seq_printf(m, "eSPI resets   %d\n", atomic_read(&espi->resets));
++	seq_printf(m, "SW_READY sets %d\n", atomic_read(&espi->ready_count));
++	for (i = 0; i < ARRAY_SIZE(aspeed_espi_errors); i++)
++		seq_printf(m, "%-16s %d\n", aspeed_espi_errors[i].name,
++			   atomic_read(&espi->errors[i]));
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(aspeed_espi_peripheral_regs);
++
++static void aspeed_espi_peripheral_debugfs_remove(void *data)
++{
++	debugfs_remove_recursive(data);
 +}
 +
 +static int aspeed_espi_peripheral_probe(struct platform_device *pdev)
@@ -115,10 +255,12 @@ index 000000000000..111111111111
 +	espi = devm_kzalloc(dev, sizeof(*espi), GFP_KERNEL);
 +	if (!espi)
 +		return -ENOMEM;
++	espi->dev = dev;
 +
 +	espi->regs = devm_platform_ioremap_resource(pdev, 0);
 +	if (IS_ERR(espi->regs))
-+		return PTR_ERR(espi->regs);
++		return dev_err_probe(dev, PTR_ERR(espi->regs),
++				     "failed to map registers\n");
 +
 +	clk = devm_clk_get_enabled(dev, NULL);
 +	if (IS_ERR(clk))
@@ -134,18 +276,28 @@ index 000000000000..111111111111
 +
 +	irq = platform_get_irq(pdev, 0);
 +	if (irq < 0)
-+		return irq;
++		return dev_err_probe(dev, irq, "failed to get IRQ\n");
 +
 +	platform_set_drvdata(pdev, espi);
-+	ret = devm_request_irq(dev, irq, aspeed_espi_peripheral_irq, 0,
++
++	espi->debugfs = debugfs_create_dir(dev_name(dev), NULL);
++	debugfs_create_file("regs", 0444, espi->debugfs, espi,
++			    &aspeed_espi_peripheral_regs_fops);
++	ret = devm_add_action_or_reset(dev, aspeed_espi_peripheral_debugfs_remove,
++				       espi->debugfs);
++	if (ret)
++		return ret;
++
++	dev_info(dev, "probe: irq=%d CTRL=0x%08x STS=0x%08x\n", irq,
++		 readl(espi->regs + ESPI_CTRL), readl(espi->regs + ESPI_STS));
++
++	ret = devm_request_irq(dev, irq, aspeed_espi_peripheral_irq, IRQF_SHARED,
 +			       dev_name(dev), espi);
 +	if (ret)
-+		return dev_err_probe(dev, ret, "failed to request IRQ\n");
++		return dev_err_probe(dev, ret, "failed to request IRQ %d\n", irq);
 +
 +	/* Arm reset recovery before allowing the host to use the channel. */
-+	writel(ESPI_INT_RST_DEASSERT, espi->regs + ESPI_INT_EN);
 +	aspeed_espi_peripheral_ready(espi);
-+	dev_info(dev, "AST2600 eSPI Peripheral channel marked SW_READY\n");
 +	return 0;
 +}
 +
