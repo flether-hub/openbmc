@@ -19,3 +19,8 @@ addtask ceb_gnrd_aux after do_patch before do_configure
 
 DEPENDS:append = " libgpiod"
 LDFLAGS:append = " -lgpiod"
+
+# Publish every D-Bus sensor (ADC voltages, temperatures, fans, CPU_MAX_TEMP and
+# DIMM_MAX_TEMP) through IPMI.  hybrid-sensors keeps the static host-state
+# sensors (boot progress, OS status, ...) next to the dynamic ones.
+PACKAGECONFIG:append = " dynamic-sensors hybrid-sensors"

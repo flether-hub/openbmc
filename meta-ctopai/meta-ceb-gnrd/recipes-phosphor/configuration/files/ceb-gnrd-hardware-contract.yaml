@@ -46,6 +46,8 @@ interfaces:
       - { controller: AST2600_SPI1, chip_select: 0, signal: FLASH_SPI1, device: Macronix_MX25U51245GMI00, capacity_bytes: 67108864, bus_width: 1, use: BIOS_update_only, mtd_label: host-bios, pins: { CS0: AD13, CLK: AB11, MOSI: AC11, MISO: AA11 } }
       - { controller: AST2600_FMC_FIRMWARE_SPI, chip_select: 0, signal: BMC_FIRMWARE_SPI, device: Winbond_W25Q512JVFIQ, capacity_bytes: 67108864, bus_width: 4, mtd_layout: OpenBMC_64MiB, pinctrl: [FWSPID, FWQSPI], pins: { CS0: AB14, CLK: AF13, MOSI: AC14, MISO: AB13, DQ2: AE12_GPIOY4, DQ3: AF12_GPIOY5 }, reset_signal: BMC_SRST_N }
 
+      - { controller: AST2600_SPI2, signal: FLASH_SPI2, status: reserved_unused, note: reserved interface only; not connected to any flash on this board, pins: { CS0: AE8, CLK: AF8, MOSI: AB9, MISO: AD9, DQ2: AF9, DQ3: AB10 } }
+
   espi:
     host: Intel_Xeon_6_CPU
     ast2600_pads: [GPIOW0_AB7_ESPID0, GPIOW1_AB8_ESPID1, GPIOW2_AC8_ESPID2, GPIOW3_AC7_ESPID3, GPIOW4_AE7_ESPICK, GPIOW5_AF7_ESPICS, GPIOW6_AD7_ESPIALT, GPIOW7_AD8_ESPIRST]
@@ -102,15 +104,15 @@ interfaces:
     confirmed_lines:
       - { function: UID_button_input, package_ball: AB15, ast_gpio: GPIOV0, linux_chip: gpio0, line_offset: 168, line_name: BMC_UID_BUTTON_N, direction: input, active_low: true, button_name: ID_BUTTON, behavior: toggles-enclosure-identify-group }
       - { function: UID_LED_output, package_ball: AF14, ast_gpio: GPIOV1, linux_chip: gpio0, line_offset: 169, line_name: BMC_UID_LED, direction: output, active_low: false, asserted_level: high, led_name: identify, control_status: phosphor-led-manager-enclosure-identify-group }
-      - { function: CPU_power_button_output, package_ball: AD14, ast_gpio: GPIOV2, linux_chip: gpio0, line_offset: 170, line_name: BMC_CPU_POWER_BUTTON, direction: output, active_low: true, pulse_level: low, idle_level: high, behavior: x86-power-control PowerOut; 200ms normal pulse, 15s force-off, direct physical-button passthrough, control_status: enabled-for-standard-host-and-chassis-transitions }
+      - { function: CPU_power_button_output, package_ball: AD14, ast_gpio: GPIOV2, linux_chip: gpio0, line_offset: 170, line_name: BMC_CPU_POWER_BUTTON, direction: output, active_low: true, pulse_level: low, idle_level: high, behavior: x86-power-control PowerOut; 200ms normal pulse, 15s force-off, physical-button passthrough disabled, control_status: enabled-for-standard-host-and-chassis-transitions }
       - { function: CPU_reset_output, package_ball: AC15, ast_gpio: GPIOV3, linux_chip: gpio0, line_offset: 171, line_name: BMC_CPU_RESET, direction: output, active_low: true, pulse_level: low, idle_level: high, behavior: x86-power-control ResetOut; 500ms reset pulse, control_status: enabled-for-host-reset-and-chassis-system-reset }
       - { function: CPU_power_good_input, package_ball: AE15, ast_gpio: GPIOV4, linux_chip: gpio0, line_offset: 172, line_name: BMC_CPU_PWRGD, direction: input, active_low: false, asserted_level: high, behavior: x86-power-control PowerOk state feedback, control_status: monitored }
-      - { function: FRU_EEPROM_write_protect, ast_gpio: GPIOG6_TXD9_SD2CD#_SALT15, linux_chip: gpio0, line_offset: 54, line_name: BMC_FRU_WP, direction: output, active_high: true, board_default: pulldown_low_write_enabled, behavior: nvmem_wp-gpios-controls-write-cycles, control_status: device-tree-mapped }
+      - { function: FRU_EEPROM_write_protect, package_ball: D21, ast_gpio: GPIOG6_TXD9_SD2CD#_SALT15, linux_chip: gpio0, line_offset: 54, line_name: BMC_FRU_WP, direction: output, active_high: true, board_default: pulldown_low_write_enabled, behavior: nvmem_wp-gpios-controls-write-cycles, control_status: device-tree-mapped }
       - { function: system_alert_LED_output, package_ball: E16, ast_gpio: GPIOI5, linux_chip: gpio0, line_offset: 69, line_name: BMC_SYS_ALERT_LED, direction: output, active_low: false, asserted_level: high, control_status: voltage-alarms-auto-clear; watchdog-timeout-and-bios-boot-timeout-latched-until-bmc-reboot }
       - { function: fan_BMC_takeover_select, package_ball: B16, ast_gpio: GPIOI6, linux_chip: gpio0, line_offset: 70, line_name: BMC_FAN_BMC_OVERRIDE_N, direction: output, active_low: false, bmc_owns_when_high: true, cpld_owns_when_low: true, cpld_owns_at_power_on: true, handoff_ready_condition: configured-fan-control-zone-and-six-pwm-tach-channels-available, release_on_fan_control_stop: true }
       - { function: BMC_heartbeat_output, ast_gpio: GPIOP7, linux_chip: gpio0, line_offset: 127, line_name: BMC_HBLED_N, direction: output, active_low: true, waveform: kernel-heartbeat-trigger-after-espi-peripheral-driver-probe, control_status: enabled-after-eSPI-SW_READY }
       - { function: BIOS_flash_control_select, signal: GPIOM1_NDCD1_used_as_GPIO, package_ball: B13, ast_gpio: GPIOM1, linux_chip: gpio0, line_offset: 97, line_name: BMC_BIOS_FLASH_SELECT, direction: output, bmc_ownership_level: 1, bios_ownership_level: 0, behavior: wait-for-host-off; select-BMC; CPLD-forces-S5; wait-5s; flash; restore-BIOS; force-power-button-off; power-on, control_status: bios-update-script }
-      - { function: power_button_input, package_ball: A12, ast_gpio: GPIOM2, linux_chip: gpio0, line_offset: 98, line_name: BMC_POWER_BUTTON_INPUT, direction: input, active_low: true, press_level: low, edge: falling, behavior: x86-power-control PowerButton input and power-output passthrough, control_status: enabled }
+      - { function: power_button_input, package_ball: A12, ast_gpio: GPIOM2, linux_chip: gpio0, line_offset: 98, line_name: BMC_POWER_BUTTON_INPUT, direction: input, active_low: true, press_level: low, edge: falling, behavior: detection only; ceb-gnrd-power-button-log records each press in the IPMI SEL and journal, no host power action and no passthrough to the CPU power button output, control_status: enabled }
       - { function: BIOS_boot_complete_input, package_ball: D13, ast_gpio: GPIOM7, linux_chip: gpio0, line_offset: 103, line_name: BMC_BIOS_BOOT_OK, direction: input, active_low: false, boot_ok_level: high, behavior: suppresses-current-boot-timeout-only, success_action: none, control_status: monitored-by-alert-led-service }
     straps:
       - { name: PCB_VER0, package_ball: R26, ast_gpio: GPIOS4, linux_chip: gpio0, line_offset: 148, value: bit0 }
@@ -180,7 +182,7 @@ interfaces:
       source: BMC_BIOS_BOOT_OK (GPIOM7, package ball D13, gpio0 line 103)
       meaning: BIOS boot succeeded when asserted high during a host power-good cycle
       success_action: none; suppress BIOS boot timeout for the current host power cycle
-      failure_action: if not asserted within 300 seconds after CPU PWRGD, latch the BIOS boot timeout and assert the system alert LED
+      failure_action: if not asserted within 600 seconds after CPU PWRGD, latch the BIOS boot timeout and assert the system alert LED
       recovery: power-good low rearms boot monitoring; a latched timeout remains until BMC reboot
       polarity: high-active-from-schematic
       status: monitored-by-ceb-gnrd-alert-led-service
@@ -211,7 +213,7 @@ interfaces:
     ssh_scp: dropbear and standard OpenBMC SCP support
     network:
       ports:
-        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii-rxid, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: 192.168.185.200/24, default_gateway: 192.168.185.1, default_dns: [192.168.185.1, 223.5.5.5, 223.6.6.6] }
+        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii, phy_address: 2, phy_reset: CPLD-drives-RTL8211_SYS_RSTN-not-a-BMC-gpio, phy_strap_note: PHYAD=002-per-schematic-note RXDLY=off CFG_MODE=000 no-RGMII-delay-in-PHY, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: 192.168.185.200/24, default_gateway: 192.168.185.1, default_dns: [192.168.185.1, 223.5.5.5, 223.6.6.6] }
         - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2, default_ipv4: dhcp, power_dependency: "BMC_CPU_PWRGD via xyz.openbmc_project.State.Chassis", behavior: "keep interface down while host is off; bring up on power-on; tear down on power-off" }
       address_modes: [static, dhcp]
       default_management_mode: static
@@ -246,5 +248,5 @@ interfaces:
     board_info: EEPROM-backed board and product information
     mutable_fields: serial number, product name, part number and version
     uid: IPMI Chassis Identify, Web identify control, and physical ID_BUTTON share phosphor-led-manager enclosure_identify group; physical button toggles the group
-    alert_led: voltage warning/critical threshold alarms clear automatically; host watchdog timeout or 300-second BIOS boot timeout latches until BMC reboot
+    alert_led: voltage warning/critical threshold alarms clear automatically; host watchdog timeout or 600-second BIOS boot timeout latches until BMC reboot
     status: eeprom-and-fru-services-configured-wp-gpio-map-pending

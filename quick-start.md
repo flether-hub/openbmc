@@ -150,35 +150,28 @@ source oe-init-build-env build/ceb-gnrd
 
 ### 1. 启动 QEMU 虚拟机
 
-由于 CEB-GNRD 设备树将 MAC0/MAC1 禁用，并将 MAC2 映射为第一网口（`eth0`），启动时使用 `-net nic -net nic -net nic,netdev=net0` 将端口转发准确挂载到 MAC2：
+CEB-GNRD 设备树禁用了 MAC0 和 MAC3，管理口 `eth0` 使用 **MAC2（设备树标签 `&mac1`，对应 QEMU 的第 2 个网卡）**，`eth1`（NC-SI）使用 MAC3（`&mac2`）。所以 QEMU 需要建两个网卡：第 1 个只是占位，第 2 个才是 `eth0`，并让 QEMU 的用户网络与 `eth0` 的静态地址 `192.168.185.200/24` 同一网段，端口转发才能找到它：
 
 ```bash
-ROOTFS=$(readlink -f tmp/deploy/images/ceb-gnrd/obmc-phosphor-image-ceb-gnrd-*.static.mtd | head -1)
-qemu-system-arm -machine ast2600-evb -m 1G -nographic -drive file="$ROOTFS",if=mtd,format=raw -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8443-:443,hostfwd=tcp:127.0.0.1:2222-:22 -net nic -net nic -net nic,netdev=net0 -serial mon:stdio -serial null
+cd ~/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd
+qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
+  -drive file=obmc-phosphor-image-ceb-gnrd.static.mtd,format=raw,if=mtd \
+  -nic user \
+  -nic user,net=192.168.185.0/24,hostfwd=tcp:127.0.0.1:8443-192.168.185.200:443,hostfwd=tcp:127.0.0.1:2222-192.168.185.200:22,hostfwd=udp:127.0.0.1:2623-192.168.185.200:623
 ```
 
-*多行展开格式：*
-```bash
-cd ~/openbmc
-source oe-init-build-env build/ceb-gnrd
-ROOTFS=$(readlink -f tmp/deploy/images/ceb-gnrd/obmc-phosphor-image-ceb-gnrd-*.static.mtd | head -1)
+* 串口控制台就是调试口 UART5（`ttyS4`），日志直接显示在当前终端；退出 QEMU：先按 `Ctrl-A`，再按 `X`。
+* 想后台运行可放进 `tmux`：`Ctrl-B` 再按 `D` 暂离，`tmux attach` 回来。
+* 把命令保存成脚本更方便：`~/run-bmc.sh`。
 
-qemu-system-arm \
-    -machine ast2600-evb \
-    -m 1G \
-    -nographic \
-    -drive file="$ROOTFS",if=mtd,format=raw \
-    -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8443-:443,hostfwd=tcp:127.0.0.1:2222-:22 \
-    -net nic -net nic -net nic,netdev=net0 \
-    -serial mon:stdio \
-    -serial null
-```
-
+> ⚠️ **待验证**：上面的网卡对应关系按 QEMU 的网卡分配规则推断，网页打不开时先在 BMC 控制台里看 `ip addr show eth0` 是否有 `192.168.185.200`。如果你之前用的是旧版三网卡写法（`-net nic -net nic -net nic,netdev=net0`），那条命令对应的是旧的 MAC 映射，请改用本节的写法。
 ### 2. 访问 OpenBMC 服务
 
 * **Web 管理界面 (HTTPS)**：
   浏览器打开：`https://127.0.0.1:8443/#/`
   > **浏览器证书警告绕过**：Chrome/Edge 提示“您的连接不是私密连接”时，在键盘上直接盲打输入 `thisisunsafe` 即可进入登录页面。
+
+* **登录账号**：用户名 `root`，密码 `0penBmc`（`allow-root-login` 已启用）。
 
 * **SSH 登录**：
   ```bash
@@ -395,3 +388,111 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | **构建包含工作区代码的完整镜像** | `devtool build-image obmc-phosphor-image` |
 | **放弃修改/重置工作区** | `devtool reset <recipe>`（强制放弃加 `-f`） |
 | **查看当前处于工作区的配方列表** | `devtool status` |
+
+---
+
+## 六、当前功能与实现状态
+
+> 下表只描述代码里已经实现的内容；标 ⚠️ 的项还没有上板验证或存在疑问，详见 `port_guide.xlsx` 底部红字的“待澄清”区块。
+
+### 1. 板级硬件与固件布局
+
+| 项目 | 现状 |
+| :--- | :--- |
+| BMC Flash | W25Q512JV 64 MiB；布局：U-Boot / 环境变量 / 内核 9 MiB / **ROFS 40 MiB** / **RWFS 14 MiB**（`FLASH_RWFS_OFFSET:flash-65536 = "51200"`，设备树分区与之对应） |
+| 管理网口 `eth0` | MAC2 + RTL8211FS（`rgmii`，PHY 地址 2 ⚠️，复位由 CPLD 控制），静态 `192.168.185.200/24`，网关 `192.168.185.1`，DNS `192.168.185.1 / 223.5.5.5 / 223.6.6.6` |
+| NC-SI 网口 `eth1` | MAC3，默认 DHCP；仅在主机上电后由 `ceb-gnrd-ncsi` 拉起 |
+| MAC 地址 | 保存在 U-Boot 环境变量 `ethaddr` / `eth1addr`，固件升级不会擦除 `u-boot-env` 分区 |
+| ADC | 内部 2.5 V 参考电压；`D3V0_BAT0` 因 R542/Q39 未焊会饱和 ⚠️ |
+| eSPI | 仅 Peripheral 通道；驱动带复位恢复、错误计数和 debugfs 日志 ⚠️（见下） |
+| PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备 ⚠️ |
+
+### 2. GPIO 行为
+
+| GPIO | 行为 |
+| :--- | :--- |
+| UID 按键 `BMC_UID_BUTTON_N`（GPIOV0） | 低有效，按下切换 identify 灯组；UID 灯 `BMC_UID_LED`（GPIOV1）高有效 |
+| CPU 开关机 `BMC_CPU_POWER_BUTTON`（V2）、复位 `BMC_CPU_RESET`（V3） | 低脉冲，由 `x86-power-control` 输出（200 ms / 强制关机 15 s / 复位 500 ms） |
+| `BMC_CPU_PWRGD`（V4） | 高有效输入，供状态机判断上电 |
+| 电源按键输入 `BMC_POWER_BUTTON_INPUT`（GPIOM2） | **只检测**：按下时写 SEL 和日志，不触发开关机，也不直通到 CPU 电源按键输出 |
+| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 电压越限点亮（恢复后熄灭）；watchdog 超时、BIOS 启动超时（**600 秒**）锁存点亮，BMC 重启后清除 |
+| `BMC_FAN_BMC_OVERRIDE_N`（GPIOI6） | 风扇控制就绪后拉高，BMC 接管风扇；服务停止时拉低交还 CPLD |
+| `BMC_HBLED_N`（GPIOP7） | eSPI 驱动就绪后启用内核 heartbeat 触发器 |
+| `BMC_BIOS_FLASH_SELECT`（GPIOM1） | BIOS 升级时拉高切给 BMC，等 5 秒后烧写，结束后拉低 |
+| `BMC_BIOS_BOOT_OK`（GPIOM7） | 只用于取消 BIOS 启动超时告警，不更新主机启动状态 |
+
+### 3. Web 界面
+
+* **已保留**：概要、事件日志、POST Code、转储、清单与 LED（系统/BMC/机箱三张表）、传感器、恢复出厂设置（仅 BMC）、KVM（含全屏）、固件、重启 BMC、SOL（只读）、服务器电源操作、虚拟媒体、日期与时间、风扇控制、网络、电源恢复策略、会话、用户管理、策略、证书。
+* **已移除**（无后台支持）：SNMP Alerts、清除密钥、LDAP、资源管理/电源、“仅重置服务器选项”、清单页的 DIMM/风扇/电源/处理器/组件表。
+* **SOL**：页面提示为只读模式，终端禁用输入。
+* **风扇控制**：6 个风扇可单独或统一设置；可选“BMC 重启后保留这些设置”（保存到 `/var/lib/ceb-gnrd`，重启和断电重启后恢复），不勾选则 BMC 重启后回到自适应。该功能依赖 bmcweb 的 `dbus-rest`。
+* **升级后保留**：普通固件升级不会清读写分区；需要清读写分区的升级会按白名单保存时区、主机名、SSH 主机密钥、网站证书和风扇设置。恢复出厂则全部清除（MAC 不受影响）。
+
+### 4. IPMI
+
+* `mc info`：Device ID 32，Device Revision 2，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。
+* 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常。
+* 白名单：`Master Write-Read` 仅限 PCIe 槽位总线 i2c-0 至 i2c-5（本板没有 slot 2 的总线）。
+
+---
+
+## 七、验证清单
+
+### 1. 构建后先在 QEMU 里检查
+
+```bash
+systemctl --failed --no-pager                 # QEMU 缺少 KCS、eSPI、PECI 等硬件，对应服务失败属预期
+journalctl -b -p err --no-pager | tail -40
+ip addr show eth0                              # 应有 192.168.185.200
+cat /etc/os-release | head                     # VERSION_ID 应为 1.0.0
+ipmitool mc info                               # Manufacturer Name CTOPAI，Product Name CEB-GNR-D
+```
+
+网页逐项点开：菜单里不应再有 SNMP / 清除密钥 / LDAP / 资源管理；风扇页应列出 6 个风扇；SOL 页应有只读提示；KVM 页应有“全屏”按钮。
+
+### 2. 上板后重点验证（对应端口指南红字项）
+
+| 项目 | 命令 / 方法 |
+| :--- | :--- |
+| eSPI | `dmesg \| grep -i espi`；`cat /sys/kernel/debug/*espi*/regs`；对照分析仪抓包 |
+| PHY | U-Boot：`mdio list`；Linux：`dmesg \| grep -i -E "phy\|mdio"`、`ethtool -S eth0`、`iperf3` |
+| PSU | 插 1 个和 2 个模块各验证：`journalctl -u ceb-gnrd-psu-detect` |
+| 电源按键 | `journalctl -u ceb-gnrd-power-button-log -f`；`ipmitool sel list \| tail -3` |
+| 告警灯 | 电压越限、watchdog 超时、BIOS 启动超过 600 秒各验证一次 |
+| 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings` |
+| BMC 状态 | `obmcutil state`（`Device Available` 取决于 BMC 是否为 Ready） |
+
+---
+
+## 八、构建加速与常见问题
+
+### 1. 缩短编译时间
+
+* 不要随意 `cleansstate`，bitbake 会按内容判断哪些包要重编。
+* 只改了一个包就单独构建，补丁问题可以只跑 `bitbake -c patch <包>`（几秒）。
+* 把下载目录和共享缓存放在构建目录之外，删掉 `build/` 重来也不必重新下载、重新编译，在 `build/ceb-gnrd/conf/local.conf` 末尾加：
+
+```bash
+DL_DIR = "/home/test/yocto-cache/downloads"
+SSTATE_DIR = "/home/test/yocto-cache/sstate"
+```
+
+### 2. 本项目遇到过的典型错误
+
+| 现象 | 原因与处理 |
+| :--- | :--- |
+| `patch-fuzz` QA 错误 | 补丁上下文与源码不完全一致；`webui-vue` 补丁必须前后各 3 行完整上下文，用工具按实际文件生成，不要手写 hunk 头 |
+| `malformed patch at line N` | hunk 头里的行数写错 |
+| `Missing Upstream-Status` | 补丁说明里要有 `Upstream-Status:` 行 |
+| `do_patch` 里的 shell 追加报 `SyntaxError` | `do_patch` 是 Python 任务，shell 逻辑要写成独立任务并用 `addtask` |
+| 镜像大小超限 | `FLASH_RWFS_OFFSET` 必须写成带 override 的 `FLASH_RWFS_OFFSET:flash-65536`，普通赋值会被盖掉 |
+| 打包阶段文件冲突 | 两个包安装了同一个文件（如 `ipmitool` 自带的 IANA 企业编号表），改为在原包安装后追加 |
+| U-Boot 找不到 `.dtb` | 2019.04 需要把 `ast2600-ceb-gnrd.dtb` 登记进 `arch/arm/dts/Makefile`（bbappend 里已处理） |
+| 网页编译 `Unexpected token` | 模板字符串反引号丢失，补丁里的 JS 要逐字核对 |
+
+### 3. 修改网页补丁的建议流程
+
+1. 从 GitHub 下载对应版本的网页源码文件，生成改动后的文件。
+2. 用工具生成带 3 行上下文的标准补丁（不要手写 hunk 头）。
+3. 在构建机上先 `bitbake -c patch webui-vue`，通过后再完整构建。

@@ -13,7 +13,7 @@ LED_BRIGHTNESS = "/sys/class/leds/bmc-system-alert/brightness"
 STATE_DIR = "/run/ceb-gnrd-alert-led"
 WATCHDOG_LATCH = os.path.join(STATE_DIR, "watchdog-timeout")
 BOOT_LATCH = os.path.join(STATE_DIR, "bios-boot-timeout")
-BOOT_TIMEOUT_SECONDS = 300
+BOOT_TIMEOUT_SECONDS = 600
 
 MAPPER = "xyz.openbmc_project.ObjectMapper"
 MAPPER_PATH = "/xyz/openbmc_project/object_mapper"
@@ -229,7 +229,7 @@ def main():
                     latch.write("BIOS boot timeout\n")
                 boot_failed = True
                 boot_deadline = None
-                LOG.error("BIOS did not assert BOOT_OK within 300 seconds")
+                LOG.error("BIOS did not assert BOOT_OK within %d seconds", BOOT_TIMEOUT_SECONDS)
 
         watchdog_failed = watchdog_failed or os.path.exists(WATCHDOG_LATCH)
         voltage_state = any_voltage_alarm()

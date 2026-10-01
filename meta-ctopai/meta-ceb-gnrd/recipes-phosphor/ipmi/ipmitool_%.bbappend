@@ -6,8 +6,8 @@
 ceb_gnrd_enterprise_name() {
     f=${D}${datadir}/misc/enterprise-numbers
     install -d ${D}${datadir}/misc
-    if ! grep -q '^16776960$' $f 2>/dev/null; then
-        printf '16776960\n  CTOPAI\n    -\n      -\n' >> $f
+    if ! grep -q '^6659$' $f 2>/dev/null; then
+        printf '6659\n  CTOPAI\n    -\n      -\n' >> $f
     fi
 }
 do_install[postfuncs] += "ceb_gnrd_enterprise_name"
@@ -15,12 +15,12 @@ do_install[postfuncs] += "ceb_gnrd_enterprise_name"
 FILES:${PN}:append = " ${datadir}/misc"
 
 # "mc info" prints the Product Name from a built-in table; add the CEB-GNR-D
-# entry (manufacturer 16776960, product 3346 = 0x0d12) as the first row.
+# entry (manufacturer 6659, product 3346 = 0x0d12) as the first row.
 do_ceb_gnrd_product_name() {
     f=${S}/lib/ipmi_strings.c
     grep -q 'ipmi_oem_product_info\[\]' $f || bbfatal "ipmi_oem_product_info table not found in $f"
     if ! grep -q 'CEB-GNR-D' $f; then
-        sed -i '/ipmi_oem_product_info\[\][[:space:]]*=[[:space:]]*{/a\    { 16776960, 3346, "CEB-GNR-D" },' $f
+        sed -i '/ipmi_oem_product_info\[\][[:space:]]*=[[:space:]]*{/a\    { 6659, 3346, "CEB-GNR-D" },' $f
     fi
     grep -q 'CEB-GNR-D' $f || bbfatal "could not add the CEB-GNR-D product name to $f"
 }

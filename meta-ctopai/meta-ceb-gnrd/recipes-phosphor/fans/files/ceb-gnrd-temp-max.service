@@ -1,0 +1,14 @@
+[Unit]
+Description=CEB-GNRD CPU and DIMM maximum temperature sensors
+After=xyz.openbmc_project.EntityManager.service
+Wants=xyz.openbmc_project.EntityManager.service
+Before=phosphor-pid-control.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/ceb-gnrd-temp-max.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

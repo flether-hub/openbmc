@@ -29,6 +29,7 @@ RDEPENDS:${PN}-chassis = " \
     ${VIRTUAL-RUNTIME_obmc-chassis-state-manager} \
     obmc-phosphor-buttons-signals \
     obmc-phosphor-buttons-handler \
+    ceb-gnrd-power-button-log \
     "
 
 SUMMARY:${PN}-fans = "CEB-GNRD fan management"
@@ -36,6 +37,7 @@ RDEPENDS:${PN}-fans = " \
     ${VIRTUAL-RUNTIME_obmc-fan-control} \
     ceb-gnrd-fan-services \
     ceb-gnrd-fan-settings \
+    ceb-gnrd-temp-max \
     "
 
 SUMMARY:${PN}-flash = "CEB-GNRD firmware management"

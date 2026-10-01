@@ -1,12 +1,6 @@
 {
     "gpio_configs": [
         {
-            "Name": "PowerButton",
-            "LineName": "BMC_POWER_BUTTON_INPUT",
-            "Type": "GPIO",
-            "Polarity": "ActiveLow"
-        },
-        {
             "Name": "PowerOk",
             "LineName": "BMC_CPU_PWRGD",
             "Type": "GPIO",

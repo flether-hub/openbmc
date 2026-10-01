@@ -8,7 +8,6 @@ ERROR_QA:remove = "patch-fuzz"
 WARN_QA:append = " patch-fuzz"
 
 EXTRA_OEMESON:append = " \
-    -Dbutton-passthrough=enabled \
     -Dchassis-system-reset=enabled \
     "
 

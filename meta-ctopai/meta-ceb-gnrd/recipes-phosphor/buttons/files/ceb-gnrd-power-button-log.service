@@ -1,0 +1,12 @@
+[Unit]
+Description=Record chassis power button presses in the SEL
+After=xyz.openbmc_project.Logging.IPMI.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/ceb-gnrd-power-button-log.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

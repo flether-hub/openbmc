@@ -28,10 +28,15 @@
 	status = "disabled";
 };
 
+/* RTL8211FS-CG straps (schematic): PHYAD = 002 (MDIO address 2, per the schematic note), no RGMII delay. */
+&ethphy1 {
+	reg = <2>;
+};
+
 /* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
 &mac1 {
 	status = "okay";
-	phy-mode = "rgmii-rxid";
+	phy-mode = "rgmii";
 	phy-handle = <&ethphy1>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_rgmii2_default>;
