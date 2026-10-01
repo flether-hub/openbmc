@@ -31,7 +31,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
    </b-container>
  </template>
  
-@@ -54,12 +39,7 @@
+@@ -53,13 +38,8 @@
  import PageTitle from '@/components/Global/PageTitle';
  import ServiceIndicator from './InventoryServiceIndicator';
  import TableSystem from './InventoryTableSystem';
@@ -44,7 +44,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 -import TableAssembly from './InventoryTableAssembly';
  import LoadingBarMixin from '@/components/Mixins/LoadingBarMixin';
  import PageSection from '@/components/Global/PageSection';
-@@ -72,13 +52,8 @@
+ import JumpLink16 from '@carbon/icons-vue/es/jump-link/16';
+@@ -71,14 +51,9 @@
+   components: {
      PageTitle,
      ServiceIndicator,
 -    TableDimmSlot,
@@ -95,7 +97,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
        ],
      };
    },
-@@ -157,18 +102,6 @@
+@@ -157,39 +102,19 @@
      const chassisTablePromise = new Promise((resolve) => {
        eventBus.$once('hardware-status-chassis-complete', resolve);
      });
@@ -114,7 +116,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
      const serviceIndicatorPromise = new Promise((resolve) => {
        eventBus.$once('hardware-status-service-complete', resolve);
      });
-@@ -175,19 +108,11 @@
      const systemTablePromise = new Promise((resolve) => {
        eventBus.$once('hardware-status-system-complete', resolve);
      });
@@ -134,3 +135,5 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
        systemTablePromise,
 -      assemblyTablePromise,
      ]).finally(() => this.endLoader());
+   },
+ };
