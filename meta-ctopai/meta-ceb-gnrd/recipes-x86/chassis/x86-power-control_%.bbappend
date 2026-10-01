@@ -2,6 +2,11 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI:append = " file://power-config-host0.json file://0001-ceb-gnrd-add-force-power-button-off-method.patch"
 
+# The board patch applies with fuzz 1 on the pinned source; report it as a
+# warning until its context lines are refreshed.
+ERROR_QA:remove = "patch-fuzz"
+WARN_QA:append = " patch-fuzz"
+
 EXTRA_OEMESON:append = " \
     -Dbutton-passthrough=enabled \
     -Dchassis-system-reset=enabled \

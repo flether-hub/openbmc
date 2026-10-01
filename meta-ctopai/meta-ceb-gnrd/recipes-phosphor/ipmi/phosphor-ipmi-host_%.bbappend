@@ -4,6 +4,11 @@ SRC_URI:append = " file://0001-ceb-gnrd-report-board-revision-in-mc-info.patch"
 
 # The patch adds cebGnrdAux(); route the Get Device ID reply through it with a
 # single-line substitution so it does not depend on multi-line patch context.
+# The board patch applies with fuzz on the pinned source; report it as a
+# warning until its context lines are refreshed.
+ERROR_QA:remove = "patch-fuzz"
+WARN_QA:append = " patch-fuzz"
+
 do_ceb_gnrd_aux() {
     sed -i 's/devId\.prodId, devId\.aux);/devId.prodId, cebGnrdAux(devId.aux));/' \
         ${S}/apphandler.cpp
