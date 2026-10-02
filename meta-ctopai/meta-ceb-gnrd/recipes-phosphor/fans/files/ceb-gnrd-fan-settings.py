@@ -62,6 +62,9 @@ ZONE_IFACE = "xyz.openbmc_project.Configuration.Pid.Zone"
 # Property names persisted for each configuration type.
 FAN_COUNT = 6
 FAN_NAMES = ["SYS_FAN%d" % i for i in range(FAN_COUNT)]
+# Entity-Manager Pid objects.  They must not be called SYS_FAN<n>: the AspeedFan
+# object has that name, and both would share one D-Bus path (writes then fail).
+PID_NAMES = ["Fan%d Control" % i for i in range(FAN_COUNT)]
 FAN_TACH_ROOT = "/xyz/openbmc_project/sensors/fan_tach"
 PWM_ROOT = "/xyz/openbmc_project/control/fanpwm"
 VALUE_IFACE = "xyz.openbmc_project.Sensor.Value"
@@ -276,7 +279,7 @@ class FanSettings(ServiceInterface):
         rpms = await read_fan_rpms(self.bus)
         out = [1 if self.persist else 0]
         for index, name in enumerate(FAN_NAMES):
-            limits = pids.get(name, {})
+            limits = pids.get(PID_NAMES[index], {})
             low = limits.get("OutLimitMin")
             high = limits.get("OutLimitMax")
             fixed = low is not None and high is not None and low == high
@@ -302,7 +305,7 @@ class FanSettings(ServiceInterface):
         if mode == 1 and not (FIXED_MIN_DUTY <= duty <= 100):
             LOG.warning("SetFan: invalid duty %d (valid %d..100)", duty, FIXED_MIN_DUTY)
             return False
-        names = FAN_NAMES if fan == 0xFF else [FAN_NAMES[fan]]
+        names = PID_NAMES if fan == 0xFF else [PID_NAMES[fan]]
         low, high = (float(duty), float(duty)) if mode == 1 else (ADAPTIVE_MIN, ADAPTIVE_MAX)
         try:
             changed = await write_config(

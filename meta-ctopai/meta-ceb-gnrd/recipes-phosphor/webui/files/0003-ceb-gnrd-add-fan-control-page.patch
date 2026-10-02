@@ -252,8 +252,8 @@ index 0000000..065091b
 +      ];
 +    },
 +    fanIndex() {
-+      // fan number: the digits at the end of the name (SYS_FAN3 -> 3), 0xFF = all
-+      const match = /(\d+)$/.exec(this.selectedFan);
++      // fan number: the digits in the name (Fan3 Control -> 3), 0xFF = all
++      const match = /(\d+)/.exec(this.selectedFan);
 +      return this.selectedFan === 'all' || !match ? 255 : Number(match[1]);
 +    },
 +    setCommand() {
