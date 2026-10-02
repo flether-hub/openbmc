@@ -1,7 +1,7 @@
 #!/bin/sh
 # CEB-GNRD functional check + log collection.  Run it ON THE BMC (QEMU or board):
 #
-#   sh /tmp/ceb-gnrd-check.sh            # prints PASS / FAIL per item, writes the files below
+#   ceb-gnrd-check                       # prints PASS / FAIL per item, writes the files below
 #
 # Output:
 #   /tmp/ceb-gnrd-check/report.txt       full command output of every check

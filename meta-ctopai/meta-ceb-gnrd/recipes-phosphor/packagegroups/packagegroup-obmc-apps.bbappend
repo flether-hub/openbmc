@@ -14,6 +14,7 @@
 #  - phosphor-ipmi-flash: IPMI in-band firmware update (BLOB protocol)
 #  - phosphor-state-manager-chassis: chassis power state management
 #  - ipmitool: on-BMC IPMI client for FRU/sensor debugging
+#  - ceb-gnrd-check: board functional check and log collection (/usr/bin/ceb-gnrd-check)
 RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         entity-manager \
         fru-device \
@@ -38,6 +39,7 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         ipmitool \
         curl \
         openssh-scp \
+        ceb-gnrd-check \
         "
 
 RDEPENDS:${PN}-extras:remove:ceb-gnrd = "phosphor-state-manager-chassis"
