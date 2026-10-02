@@ -284,7 +284,7 @@ reset
 
 #### 4.4 U-Boot 里的 NC-SI 口
 
-NC-SI 口（`&mac2`）在 U-Boot 里**不启动**（设备树里禁用）：U-Boot 只用 eth0 取镜像。不要给它加 `phy-mode` 再启用，那样 NC-SI 探测会让 U-Boot 崩溃（`data abort`，不断复位）；不加则只会打印 `Invalid PHY interface '<NULL>'`。Linux 里 NC-SI 口 `eth1` 自动使能并用 DHCP 取地址：主机上电后由 `ceb-gnrd-ncsi` 服务把 `eth1` 拉起（E810 没有待机供电，主机关机时 NC-SI 不可用，拉起后内核 NC-SI 栈自动选择通道；E810 上电后不一定立刻就绪，服务会在 30 秒内没有链路时对 `eth1` 做 down/up 重试，最多 40 次，日志见 `journalctl -t ceb-gnrd-ncsi`），`systemd-networkd` 按 `DHCP=ipv4` 获取地址。
+NC-SI 口（`&mac2`）在 U-Boot 里**不启动**（设备树里禁用）：U-Boot 只用 eth0 取镜像。不要给它加 `phy-mode` 再启用，那样 NC-SI 探测会让 U-Boot 崩溃（`data abort`，不断复位）；不加则只会打印 `Invalid PHY interface '<NULL>'`。Linux 里 NC-SI 口 `eth1` 自动使能并用 DHCP 取地址：主机上电后由 `ceb-gnrd-ncsi` 服务把 `eth1` 拉起（E810 没有待机供电，主机关机时 NC-SI 不可用，拉起后内核 NC-SI 栈自动选择通道；E810 上电后不一定立刻就绪，服务会在 30 秒内没有链路时对 `eth1` 做 down/up 重试，每 30 秒一次，最多 3 次，日志见 `journalctl -t ceb-gnrd-ncsi`），`systemd-networkd` 按 `DHCP=ipv4` 获取地址。
 ---
 
 ## 五、Devtool 常用操作与板级开发全流程

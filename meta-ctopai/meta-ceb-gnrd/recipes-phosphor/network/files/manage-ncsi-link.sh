@@ -15,7 +15,7 @@ readonly CHASSIS_SERVICE=xyz.openbmc_project.State.Chassis
 readonly CHASSIS_PATH=/xyz/openbmc_project/state/chassis0
 readonly CHASSIS_INTERFACE=xyz.openbmc_project.State.Chassis
 readonly RETRY_INTERVAL=30   # seconds without carrier before the link is cycled
-readonly MAX_RETRIES=40      # about 20 minutes, then keep the last attempt up
+readonly MAX_RETRIES=3       # after that the last attempt is left up
 
 set_link_state() {
     desired=$1
