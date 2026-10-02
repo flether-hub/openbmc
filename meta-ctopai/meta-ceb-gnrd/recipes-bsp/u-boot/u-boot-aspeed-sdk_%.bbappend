@@ -14,4 +14,16 @@ do_configure:append:ceb-gnrd() {
 	fi
 	grep -q 'ast2600-ceb-gnrd.dtb' ${S}/arch/arm/dts/Makefile || \
 		bbfatal "arch/arm/dts/Makefile: could not register ast2600-ceb-gnrd.dtb"
+
+	# Default network settings: same address as eth0 in Linux
+	# (192.168.185.200/24, gateway 192.168.185.1); the TFTP server is
+	# 192.168.185.84.  These are plain macros in the common header.
+	sed -i \
+		-e 's/^\(#define CONFIG_GATEWAYIP[[:space:]]\+\).*/\1192.168.185.1/' \
+		-e 's/^\(#define CONFIG_NETMASK[[:space:]]\+\).*/\1255.255.255.0/' \
+		-e 's/^\(#define CONFIG_IPADDR[[:space:]]\+\).*/\1192.168.185.200/' \
+		-e 's/^\(#define CONFIG_SERVERIP[[:space:]]\+\).*/\1192.168.185.84/' \
+		${S}/include/configs/aspeed-common.h
+	grep -q 'CONFIG_IPADDR[[:space:]]\+192.168.185.200' ${S}/include/configs/aspeed-common.h || \
+		bbfatal "include/configs/aspeed-common.h: could not set the default IP address"
 }
