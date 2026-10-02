@@ -56,13 +56,14 @@ for u in bmcweb phosphor-ipmi-host phosphor-ipmi-net@eth0 xyz.openbmc_project.En
         check "unit $u is active" "systemctl is-active $u" '^(active|listening)$'
     fi
 done
-check "SSH port 22 listening" "ss -ltn | grep -E ':22 '" ':22'
-check "HTTPS port 443 listening" "ss -ltn | grep -E ':443 '" ':443'
+check "SSH port 22 listening" "grep -E ':0016 [0-9A-F:]+ 0A' /proc/net/tcp /proc/net/tcp6" ':0016'
+check "HTTPS port 443 listening" "grep -E ':01BB [0-9A-F:]+ 0A' /proc/net/tcp /proc/net/tcp6" ':01BB'
 
 sec "2. Sensors (ipmitool sensor)"
 check "at least 18 sensors" "ipmitool sensor | wc -l" '^ *(1[89]|[2-9][0-9]|[1-9][0-9][0-9])$'
 check "CPU_MAX_TEMP and DIMM_MAX_TEMP present" "ipmitool sensor | grep -c -E 'CPU_MAX_TEMP|DIMM_MAX_TEMP'" '^ *2$'
-check "voltage sensor shows upper critical" "ipmitool sensor get P12V_SYS" 'Upper Critical'
+# P12V_SYS and the other *_SYS rails are only read with the chassis on, so they are unavailable in QEMU.
+check "STBY voltage sensor shows upper critical" "ipmitool sensor get P1V8_STBY" 'Upper Critical'
 check "CPU_MAX_TEMP upper non-recoverable 105 (needs ipmid patch 0002)" \
       "ipmitool sensor get CPU_MAX_TEMP" 'Upper Non-Recoverable *: *105'
 check "DIMM_MAX_TEMP upper non-recoverable 95" \
@@ -89,7 +90,7 @@ check "OEM set all fans fixed 60 %, no keep" "ipmitool raw 0x30 0x02 0xFF 0x01 0
 check "OEM read-back shows mode 01 duty 3c" "ipmitool raw 0x30 0x01" '01 3c'
 check "OEM set fan 2 adaptive" "ipmitool raw 0x30 0x02 0x02 0x00 0x00 0x00; echo rc=\$?" 'rc=0'
 check "OEM read-back fan 2 is mode 00 and fan 1 still 01" \
-      "ipmitool raw 0x30 0x01 | tr -s ' \n' ' ' | cut -d' ' -f2-25" '^ ?01 3c [0-9a-f]{2} [0-9a-f]{2} 01 3c [0-9a-f]{2} [0-9a-f]{2} 00 '
+      "ipmitool raw 0x30 0x01 | tr -s ' \n' ' '" '^ ?[0-9a-f]{2} 01 3c [0-9a-f]{2} [0-9a-f]{2} 01 3c [0-9a-f]{2} [0-9a-f]{2} 00 '
 check "OEM keep flag set to 1" "ipmitool raw 0x30 0x02 0xFF 0x01 0x28 0x01; ipmitool raw 0x30 0x01 | tr -s ' \n' ' ' | cut -d' ' -f2" '^ ?01$'
 check "kept settings file written" "cat /var/lib/ceb-gnrd/fan-settings.json" '"persist": true'
 check "OEM keep flag cleared and file removed" \
@@ -97,19 +98,20 @@ check "OEM keep flag cleared and file removed" \
 check "OEM rejects an invalid fan" "ipmitool raw 0x30 0x02 0x09 0x00 0x00 0x00 2>&1" 'Invalid data field'
 check "Pid objects are named Fan<n> Control" \
       "busctl tree xyz.openbmc_project.EntityManager --list | grep -c -E 'Fan[0-5]_Control'" '^ *6$'
+info  "BMC software version objects" "busctl tree xyz.openbmc_project.Software.BMC.Updater --list; busctl tree xyz.openbmc_project.Software.Version --list; busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias /xyz/openbmc_project/software 0 1 xyz.openbmc_project.Software.Version"
 info  "fan tach / PWM objects" "busctl tree xyz.openbmc_project.fansensor --list; ls /xyz 2>/dev/null; ls /sys/class/hwmon"
 info  "fan-settings journal" "journalctl -u ceb-gnrd-fan-settings -b --no-pager | tail -n 20"
 
 sec "5. Redfish / web"
 check "Redfish root" "curl -sk -u root:$PW https://127.0.0.1/redfish/v1/" 'RedfishVersion'
-check "Manager firmware version" "curl -sk -u root:$PW https://127.0.0.1/redfish/v1/Managers/bmc" 'FirmwareVersion'
+check "Manager reports the BMC firmware version (empty here means the BMC version object is missing)" "curl -sk -u root:$PW https://127.0.0.1/redfish/v1/Managers/bmc | grep FirmwareVersion" 'FirmwareVersion"?: *"[^"]+'
 check "BMC dump collection answers" \
       "curl -sk -u root:$PW https://127.0.0.1/redfish/v1/Managers/bmc/LogServices/Dump/Entries" 'Members'
 check "event log answers" \
       "curl -sk -u root:$PW https://127.0.0.1/redfish/v1/Systems/system/LogServices/EventLog/Entries" 'Members'
 check "fan-settings D-Bus method reachable through bmcweb" \
       "curl -sk -u root:$PW -X POST -H 'Content-Type: application/json' -d '{\"data\":[]}' https://127.0.0.1/xyz/openbmc_project/ceb_gnrd/fan_settings/action/GetFans" '"status": *"ok"'
-check "web UI is served" "curl -sk https://127.0.0.1/ | head -c 300" '(html|HTML)'
+check "web UI is served" "curl -sk https://127.0.0.1/ | head -n 5" '(html|HTML)'
 
 sec "6. Time, RTC, flash layout"
 check "RTC sync unit ran" "systemctl is-active ceb-gnrd-rtc-sync" 'active'
