@@ -142,15 +142,25 @@ async def write_config(bus, interface, stored):
             # rejects a different one with InvalidArgs).
             signature = signatures[key]
             send = float(value) if signature == "d" else int(value)
-            await call(
-                bus,
-                service,
-                path,
-                PROPS,
-                "Set",
-                "ssv",
-                [interface, key, Variant(signature, send)],
-            )
+            try:
+                await call(
+                    bus,
+                    service,
+                    path,
+                    PROPS,
+                    "Set",
+                    "ssv",
+                    [interface, key, Variant(signature, send)],
+                )
+            except RuntimeError as exc:
+                # Entity-Manager stores the new value and then reports InvalidArgs
+                # when it cannot save its own JSON copy.  The value is what
+                # phosphor-pid-control uses, so read it back before giving up.
+                now = await call(bus, service, path, PROPS, "Get", "ss", [interface, key])
+                if now[0].value != send:
+                    raise
+                LOG.warning("Set %s.%s reported an error but the value is applied: %s",
+                            props["Name"], key, exc)
             LOG.info("applied %s %s.%s = %s (was %s)", interface.rsplit(".", 1)[-1],
                      props["Name"], key, value, props[key])
             changed += 1
