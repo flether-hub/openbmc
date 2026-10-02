@@ -512,10 +512,13 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | :--- | :--- |
 | BMC Flash | W25Q512JV 64 MiB；布局：U-Boot / 环境变量 / 内核 9 MiB / **ROFS 40 MiB** / **RWFS 14 MiB**（`FLASH_RWFS_OFFSET:flash-65536 = "51200"`，设备树分区与之对应） |
 | 管理网口 `eth0` | MAC2 + RTL8211FS（`rgmii`，PHY 地址 2 ⚠️，复位由 CPLD 控制），静态 `192.168.185.200/24`，网关 `192.168.185.1`，DNS `192.168.185.1 / 223.5.5.5 / 223.6.6.6` |
-| NC-SI 网口 `eth1` | MAC3，默认 DHCP；仅在主机上电后由 `ceb-gnrd-ncsi` 拉起 |
+| NC-SI 网口 `eth1` | MAC3，Linux 里默认 DHCP；E810 没有待机供电，主机上电后由 `ceb-gnrd-ncsi` 自动拉起（30 秒内没有链路就 down/up 重试，每 30 秒一次，最多 3 次），主机关机时关闭；U-Boot 里不启动该口 |
 | MAC 地址 | 保存在 U-Boot 环境变量 `ethaddr` / `eth1addr`，固件升级不会擦除 `u-boot-env` 分区 |
 | ADC | 内部 2.5 V 参考电压；`D3V0_BAT0` 因 R542/Q39 未焊会饱和 ⚠️ |
 | eSPI | 仅 Peripheral 通道；驱动带复位恢复、错误计数和 debugfs 日志 ⚠️（见下） |
+| RTC / 时间 | AST2600 内部 RTC（无电池）已关闭，板上 NCT3015Y 是 `rtc0`；内核开机校时，`ceb-gnrd-rtc-sync` 兜底（最多等 `/dev/rtc0` 30 秒，QEMU 里没有 RTC 会等满）；BMC 系统时间和 SEL 时间默认来自 RTC |
+| 主机 KCS | 设备树 `&kcs3` 带 `aspeed,lpc-io-reg = <0xca2>`（驱动必需），未配 SerIRQ；需要 eSPI 外设通道就绪、BIOS 把 KCS 端口设为 0xCA2 才通 ⚠️ |
+| U-Boot | 默认先 TFTP（192.168.185.84）取 `fitImage`，失败回退本地 flash；默认网络参数与 Linux eth0 一致；`run netupdate` 通过 TFTP 更新闪存里的内核和 rofs（见第四章 4.5）；NC-SI 口在 U-Boot 里禁用 |
 | PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备；传感器有输入/输出电压、输入/输出功率和 PSUn_Temp（取 pmbus 的 temp2）⚠️ |
 
 ### 2. GPIO 行为
@@ -536,6 +539,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 
 * **已保留**：概要、事件日志、POST Code、转储、清单与 LED（系统/BMC/机箱三张表）、传感器、恢复出厂设置（仅 BMC）、KVM（含全屏）、固件、重启 BMC、SOL（只读）、服务器电源操作、虚拟媒体、日期与时间、风扇控制、网络、电源恢复策略、会话、用户管理、策略、证书。
 * **已移除**（无后台支持）：转储页的“System dump”选项（只保留 BMC dump）、固件页的“备份镜像”卡片和“切换为运行”（BMC 只有一个镜像区）、概览页“电源信息”卡片（功耗读数和功率上限依赖 DCMI 电源支持，本板不提供）、SNMP Alerts、清除密钥、LDAP、资源管理/电源、“仅重置服务器选项”、清单页的 DIMM/风扇/电源/处理器/组件表。
+* **转储**：只有 BMC dump（`phosphor-debug-collector`）；转储页走 bmcweb 的 Redfish Dump 服务，需要编译选项 `redfish-dump-log`（已在 `bmcweb_%.bbappend` 里启用，缺了这个选项转储页没有后端）。
 * **虚拟媒体**：网页只提供“从浏览器读取镜像文件”（走 bmcweb 的 /vm/0/0 WebSocket → jsnbd → nbd → USB mass storage → 主机 VL805 USB 口）；“从外部服务器读取镜像文件”（CIFS/HTTPS）需要已停止维护的 virtual-media 服务，镜像里没有，网页默认也不显示。上板验证：网页选一个 ISO 点开始，主机里应出现一个 USB 光盘/U 盘；BMC 上 `ls /sys/kernel/config/usb_gadget/`、`ls /dev/nbd0`。
 * **U-Boot 启动顺序**：先从 TFTP 服务器 192.168.185.84 取 `fitImage`，取不到或启动失败再从本地 SPI 闪存启动；U-Boot 默认网络参数与 Linux 的 eth0 一致（192.168.185.200/24，网关 192.168.185.1）。虚拟机与物理主板的区别、环境重置、排查步骤详见第四章 “4. U-Boot 通过 TFTP 加载镜像”。
 * **时间和 SEL**：BMC 系统时间默认从板上 RTC（NCT3015Y）读取，SEL 时间戳用系统时间。AST2600 内部 RTC 已关闭，NCT3015Y 是 `rtc0`。
@@ -549,6 +553,9 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 
 * `mc info`：Device ID 32，Device Revision 2，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。
 * 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常；温度读不到时全速（temp-max 发布 127 ℃），风扇读到几个都不影响（FailSafePercent=30）。
+* 主机侧 IPMI 走 KCS3（见上）；LAN 通道 1 是 eth0（RMCP+ 只绑 eth0），通道 2 是 NC-SI 的 eth1。
+* SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-rollover` 保持 rollover，sel-logger 加了补丁，把“不可恢复”（HardShutdown）级别也记成 SEL 事件；告警灯的四种告警都有 SEL 记录。
+* DCMI（`ipmitool dcmi power reading`、`dcmi get_temp_reading`）：**未配置**，`power_reading.json` 的路径为空，`dcmi_sensors.json` 为空数组，命令会报不支持或没有内容。
 * 白名单：`Master Write-Read` 仅限 PCIe 槽位总线 i2c-0 至 i2c-5（本板没有 slot 2 的总线）。
 
 ---
@@ -577,6 +584,10 @@ ipmitool mc info                               # Manufacturer Name CTOPAI，Prod
 | 电源按键 | `journalctl -u ceb-gnrd-power-button-log -f`；`ipmitool sel list \| tail -3` |
 | 告警灯 | 电压越限、温度超 Upper Critical、watchdog 超时、BIOS 启动超过 600 秒各验证一次（四种共用一个灯，前两种恢复后灭，后两种重启 BMC 才灭） |
 | 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings` |
+| KCS | BMC：`ls /dev/ipmi-kcs3`、`journalctl -u phosphor-ipmi-kcs@ipmi-kcs3`；主机侧：`ipmitool -I open mc info` |
+| NC-SI | 主机上电后 `ip -br addr show eth1`、`journalctl -t ceb-gnrd-ncsi`（看有没有重试）；主机关机后接口应被关闭 |
+| SEL / 时间 | 制造电压和温度越限，`ipmitool sel list` 里应有事件和解除事件；SEL 超过 2100 条后确认最老的被删；断电重启后 `date`、`ipmitool sel time get` 应保持 RTC 的时间 |
+| U-Boot 网络启动 | 第一次要 `env default -a; setenv ethaddr ...; saveenv`；日志里看 `TFTP from server 192.168.185.84`；`run netupdate` 后 `reset` |
 | BMC 状态 | `obmcutil state`（`Device Available` 取决于 BMC 是否为 Ready） |
 
 ---
