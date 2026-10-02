@@ -110,6 +110,19 @@ machine() {
                     fi
                 fi
 
+                # The ctopai-openbmc distro file lives in the meta-ctopai layer, which
+                # must be in BBLAYERS next to meta-ceb-gnrd.  Older generated
+                # bblayers.conf files only list meta-ceb-gnrd; without meta-ctopai the
+                # distro file is silently not found and the build stops with
+                # "wrong LCONF_VERSION (has 8, expecting 7)".
+                if [ "${target}" = "ceb-gnrd" ] && [ -f conf/bblayers.conf ]; then
+                    if grep -q '/meta-ctopai/meta-ceb-gnrd' conf/bblayers.conf &&
+                       ! grep -Eq '/meta-ctopai[[:space:]]*\\?$' conf/bblayers.conf; then
+                        sed -i -E 's#^([[:space:]]*)(.*)/meta-ctopai/meta-ceb-gnrd([[:space:]]*\\?)$#\1\2/meta-ctopai \\\n\1\2/meta-ctopai/meta-ceb-gnrd\3#' conf/bblayers.conf
+                        echo "Added the meta-ctopai layer to ${build_dir}/conf/bblayers.conf"
+                    fi
+                fi
+
                 if [ "$(cat conf/templateconf.cfg)" = "${tmpl}/templates/default" ]; then
                     sed "s/^\(MACHINE\s*[?:]*\s*=\s*\).*$/\1\"${target}\"/" \
                         -i conf/local.conf
