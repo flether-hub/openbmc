@@ -350,6 +350,14 @@ should appear after flashing the updated image.
 * rsyslog loads `imjournal` (`recipes-extended/rsyslog/rsyslog_%.bbappend`): without
   it rsyslog never sees the `IPMI_SEL_*` journal fields and `/var/log/ipmi_sel`
   stays empty (the SEL then reads "no entries" although sel-logger logs events).
+* The web "Event logs" page is the Redfish event log, which is a different file
+  from the IPMI SEL: bmcweb reads `/var/log/redfish` (lines `<timestamp>
+  <MessageId>,<MessageArgs>`, only message IDs known to its registry), and rsyslog
+  writes it from journal entries that carry a `REDFISH_MESSAGE_ID`
+  (`ceb-gnrd-redfish.conf`, same rule as the Intel reference platform;
+  sel-logger's threshold events and the power-button message have one).  Without
+  that rule the page stays empty although `ipmitool sel list` has records.
+  `redfish` is rotated by the same logrotate run as the SEL (64k, one old file).
 * The SEL is a rollover log kept with the standard logrotate
   (`ceb-gnrd-sel-logrotate`): phosphor-sel-logger reads `/var/log/ipmi_sel*` (all
   rotated files) and keeps the next record ID in a file of its own, so IDs are

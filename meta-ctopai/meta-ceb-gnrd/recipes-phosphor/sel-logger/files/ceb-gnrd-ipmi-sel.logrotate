@@ -15,3 +15,17 @@
         /bin/systemctl kill --signal=HUP rsyslog.service >/dev/null 2>&1 || true
     endscript
 }
+
+# The Redfish event log (web "Event logs"), written by rsyslog from journal entries
+# with a REDFISH_MESSAGE_ID; bmcweb reads redfish and redfish.1.
+/var/log/redfish {
+    size 64k
+    rotate 1
+    nodateext
+    nocompress
+    missingok
+    notifempty
+    postrotate
+        /bin/systemctl kill --signal=HUP rsyslog.service >/dev/null 2>&1 || true
+    endscript
+}
