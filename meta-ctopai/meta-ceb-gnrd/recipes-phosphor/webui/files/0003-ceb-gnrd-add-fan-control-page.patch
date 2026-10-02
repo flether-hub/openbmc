@@ -106,7 +106,7 @@ new file mode 100644
 index 0000000..065091b
 --- /dev/null
 +++ b/src/views/Settings/FanControl/FanControl.vue
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,256 @@
 +<template>
 +  <b-container fluid="xl">
 +    <page-title :description="$t('pageFanControl.description')" />
@@ -201,6 +201,9 @@ index 0000000..065091b
 +import PageTitle from '@/components/Global/PageTitle';
 +
 +const managerPath = '/redfish/v1/Managers/bmc';
++// Adaptive mode uses the limits of the Entity-Manager configuration.
++const adaptiveMinimum = 30;
++const adaptiveMaximum = 100;
 +const settingsPath = '/xyz/openbmc_project/ceb_gnrd/fan_settings';
 +// Redfish adds metadata members such as @odata.id to the fan objects.
 +const isConfigEntry = ([name]) => !name.startsWith('@');
@@ -313,21 +316,43 @@ index 0000000..065091b
 +        this.mode = 'adaptive';
 +      }
 +    },
++    async savePersistence() {
++      // bmcweb's D-Bus REST cannot pass arguments here, so use one method each.
++      const action = this.persist ? 'KeepSettings' : 'ForgetSettings';
++      await api.post(`${settingsPath}/action/${action}`, { data: [] });
++    },
 +    async saveSettings() {
 +      const fixed = this.mode === 'fixed';
++      const minimum = fixed ? Number(this.fixedSpeed) : adaptiveMinimum;
++      const maximum = fixed ? Number(this.fixedSpeed) : adaptiveMaximum;
++      const fanControllers = Object.fromEntries(
++        this.controllers.map(([name, config]) => [name,
++          this.selectedFan === 'all' || name === this.selectedFan
++            ? { ...config, OutLimitMin: minimum, OutLimitMax: maximum }
++            : config,
++        ]),
++      );
++      const fanZones = Object.fromEntries(
++        this.zones.map(([name, config]) => [name,
++          this.selectedFan === 'all' || name === this.selectedFan
++            ? { ...config, MinThermalOutput: minimum }
++            : config,
++        ]),
++      );
++
 +      this.isSaving = true;
 +      try {
-+        // One call changes the limits of the selected fans and stores the
-+        // "keep after reboot" choice (same as the IPMI OEM Set command).
-+        const response = await api.post(`${settingsPath}/action/SetFan`, {
-+          data: [
-+            this.fanIndex,
-+            fixed ? 1 : 0,
-+            fixed ? Number(this.fixedSpeed) : 0,
-+            this.persist ? 1 : 0,
-+          ],
++        await api.patch(managerPath, {
++          Oem: {
++            OpenBmc: {
++              Fan: {
++                ...(this.controllers.length ? { FanControllers: fanControllers } : {}),
++                ...(this.zones.length ? { FanZones: fanZones } : {}),
++              },
++            },
++          },
 +        });
-+        if (response?.data?.data !== true) throw new Error('rejected');
++        await this.savePersistence();
 +        await this.loadSettings();
 +        this.successToast(this.$t('pageFanControl.saveSuccess'));
 +      } catch {
