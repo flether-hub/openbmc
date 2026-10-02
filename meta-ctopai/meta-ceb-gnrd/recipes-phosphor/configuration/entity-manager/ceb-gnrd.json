@@ -470,6 +470,6 @@
         }
     ],
     "Name": "CEB-GNRD Sensors",
-    "Probe": "True",
+    "Probe": "TRUE",
     "Type": "Board"
 }

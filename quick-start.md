@@ -617,6 +617,9 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 | 打包阶段文件冲突 | 两个包安装了同一个文件（如 `ipmitool` 自带的 IANA 企业编号表），改为在原包安装后追加 |
 | U-Boot 找不到 `.dtb` | 2019.04 需要把 `ast2600-ceb-gnrd.dtb` 登记进 `arch/arm/dts/Makefile`（bbappend 里已处理） |
 | 网页编译 `Unexpected token` | 模板字符串反引号丢失，补丁里的 JS 要逐字核对 |
+| `entity-manager: Probe statement failed to parse: True`，电压、风扇、温度等传感器一个都没有 | Entity-Manager 配置里的 `"Probe"` 只认大写的 `"TRUE"` / `"FALSE"`，写成 `"True"` 整份配置会被拒绝；用 `journalctl -b -p err \| grep -i entity` 看 |
+| `aspeed-g6-pwm-tach: Failed to create fan -22`，`fansensor: failed to find match for .../fanN_input` | 6.18 的 PWM/TACH 驱动要求风扇子节点写 `tach-ch` 和 `pwms = <&pwm_tach N 40000 0>`，旧写法（`reg`、`aspeed,fan-tach-ch`）会让它失败 |
+| `pin L26 already requested by ...mdio` | EVB 设备树默认启用 `mdio0` 至 `mdio3`，只保留用到的 `mdio1`，其余禁用，否则占用 I2C12 的引脚 |
 
 ### 3. 修改网页补丁的建议流程
 
