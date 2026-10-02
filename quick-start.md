@@ -157,12 +157,14 @@ cd ~/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd
 qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
   -drive file=obmc-phosphor-image-ceb-gnrd.static.mtd,format=raw,if=mtd \
   -nic user \
-  -nic user,net=192.168.185.0/24,hostfwd=tcp:127.0.0.1:8443-192.168.185.200:443,hostfwd=tcp:127.0.0.1:2222-192.168.185.200:22,hostfwd=udp:127.0.0.1:2623-192.168.185.200:623
+  -nic user,net=192.168.185.0/24,host=192.168.185.1,hostfwd=tcp:127.0.0.1:8443-192.168.185.200:443,hostfwd=tcp:127.0.0.1:2222-192.168.185.200:22,hostfwd=udp:127.0.0.1:2623-192.168.185.200:623
 ```
 
 * 串口控制台就是调试口 UART5（`ttyS4`），日志直接显示在当前终端；退出 QEMU：先按 `Ctrl-A`，再按 `X`。
 * 想后台运行可放进 `tmux`：`Ctrl-B` 再按 `D` 暂离，`tmux attach` 回来。
 * 把命令保存成脚本更方便：`~/run-bmc.sh`。
+
+> **QEMU 里 ping 的限制**：QEMU 的 `user` 网络（slirp）是虚拟的 NAT 网络。① 它默认不转发 ICMP，ping 外网大多不通，但 TCP/UDP（`curl`、`nslookup`）是通的，验证外网请用 `curl` 而不是 `ping`；② 192.168.185.0/24 整个网段都在 QEMU 内部，宿主机的真实地址（如 192.168.185.84）在里面是不存在的，虚拟机访问宿主机用 `host=` 指定的 192.168.185.1，DNS 是 192.168.185.3。
 
 > ⚠️ **待验证**：上面的网卡对应关系按 QEMU 的网卡分配规则推断，网页打不开时先在 BMC 控制台里看 `ip addr show eth0` 是否有 `192.168.185.200`。如果你之前用的是旧版三网卡写法（`-net nic -net nic -net nic,netdev=net0`），那条命令对应的是旧的 MAC 映射，请改用本节的写法。
 ### 2. 访问 OpenBMC 服务
