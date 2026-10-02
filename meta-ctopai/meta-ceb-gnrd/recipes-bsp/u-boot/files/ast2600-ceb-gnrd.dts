@@ -46,7 +46,9 @@
 &mac2 {
 	status = "okay";
 	/delete-property/ phy-handle;
-	/delete-property/ phy-mode;
+	/* The ftgmac100 driver reads phy-mode unconditionally; without it the
+	 * probe fails with "Invalid PHY interface '<NULL>'".  NC-SI runs on RMII. */
+	phy-mode = "rmii";
 	pinctrl-names = "default";
 	/* U-Boot pinctrl uses RMII3 pads for physical MAC3 NC-SI. */
 	pinctrl-0 = <&pinctrl_rmii3_default>;
