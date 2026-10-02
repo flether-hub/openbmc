@@ -156,26 +156,56 @@ Platform features
   source sensor names are logged (`journalctl -u ceb-gnrd-temp-max`) and need
   checking on the board.
 * Fans are driven by `phosphor-pid-control` from the Entity-Manager
-  configuration (`ceb-gnrd.json`): six fan PID controllers (SYS_FAN0-5, outputs
+  configuration (`ceb-gnrd.json`): six fan PID controllers (Fan0 Control to Fan5 Control, inputs SYS_FAN0-5, outputs
   PWM1-PWM6, limit 30-100 %), one zone (MinThermalOutput 30) and two stepwise
   curves on CPU_MAX_TEMP and DIMM_MAX_TEMP. The curve points are placeholders
   awaiting confirmation. The zone fail-safe is 30 % on purpose: the number of
   fans that can be read must not decide the fan speed; the temperature
   sensors do that (unreadable CPU or DIMM temperature: 60 %). The six fans have no speed alarms and
-  an unpopulated header simply reads 0 RPM.
+  an unpopulated header simply reads 0 RPM.  The Pid objects must not share a
+  name with the AspeedFan objects (SYS_FAN0-5): both would get one D-Bus path and
+  writes to the Pid properties fail.  Stepwise `Reading`/`Output` arrays are
+  written with a decimal point (`40.0`) because pid-control cannot read the
+  unsigned-integer arrays Entity-Manager publishes for `40`.
 * `ceb-gnrd-fan-owner` hands the fans from the CPLD to the BMC
   (GPIOI6 `BMC_FAN_BMC_OVERRIDE_N`) once pid-control is running and all six
   PWM/TACH channels exist, and returns them when pid-control stops.
 * `ceb-gnrd-fan-settings` backs the web UI fan page (per-fan or common limits,
   optional persistence across BMC restarts in `/var/lib/ceb-gnrd`); it
   re-applies the stored limits to the Entity-Manager Pid objects every 30 s.
-  The page talks to it through bmcweb's `dbus-rest` option.
   Adaptive mode uses fixed limits (30 % to 100 %); there is no minimum-speed
-  setting.  The same control is exposed as two IPMI OEM commands, netfn 0x30:
-  `0x01` Get (flag byte, then mode/duty/RPM-low/RPM-high for SYS_FAN0..5) and
-  `0x02` Set (fan 0-5 or 0xFF, mode, duty, persist).  They are implemented by
-  the `ceb-gnrd-ipmi-fan` ipmid provider (pulled in by `ceb-gnrd-ipmi`) and
-  whitelisted in `ceb-gnrd-ipmi-whitelist.conf`.  Not compiled or verified.
+  setting.  Entity-Manager answers a write to a Pid property with InvalidArgs
+  although the value is changed (cause not found), so the service reads the value
+  back and accepts it when it matches.  bmcweb's D-Bus REST cannot pass scalar
+  arguments in this version, so the page calls argument-free methods in three
+  steps: `SelectAll` / `SelectFan0..5`, `SetAdaptive` / `SetFixed20..100`, then
+  `KeepSettings` / `ForgetSettings`.
+* The same control is exposed as two IPMI OEM commands, netfn 0x30:
+  `0x01` Get (flag byte, then mode/duty/RPM-low/RPM-high for SYS_FAN0..5, 25
+  bytes, duty `0xFF` = unknown) and `0x02` Set (fan 0-5 or 0xFF, mode, duty,
+  persist; Admin).  They are implemented by the `ceb-gnrd-ipmi-fan` ipmid provider
+  (pulled in by `ceb-gnrd-ipmi`) and whitelisted in `ceb-gnrd-ipmi-whitelist.conf`.
+  Checked in QEMU with `ceb-gnrd-check` (set, read back, keep, clear, invalid
+  fan); not checked on the board.
+
+### Boot, ipmid start and board self-check
+
+* The AST2600 SD/eMMC controllers are disabled in the U-Boot and Linux device
+  trees (the EVB include enables them); the board has neither.
+* `CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC` is enabled so that systemd's
+  `RuntimeWatchdogPreGovernor=panic` is accepted.  The 2 minute hardware watchdog
+  reset is unchanged; if the driver has no pre-timeout the message remains and is
+  harmless.
+* `phosphor-ipmi-host` has a drop-in (`10-ceb-gnrd-wait-sensors.conf`) that waits
+  up to 90 s until the number of D-Bus sensors has been stable for 8 s.  Started
+  earlier, ipmid read the sensors before their threshold interfaces existed and
+  offered only the two static sensors for the first minute.  Cost: `ipmitool`
+  is not available for about a minute after boot.
+* `ceb-gnrd-check` (`recipes-phosphor/utils`, installed to `/usr/bin`) runs on
+  the BMC, prints PASS/FAIL for services, sensors and thresholds, IPMI commands,
+  the fan OEM commands, Redfish, RTC and MTD layout and bundles logs into
+  `/tmp/ceb-gnrd-check.tar.gz`.  Its expected values are those of the QEMU run.
+  Known FAIL there: Manager `FirmwareVersion` (see the bmcweb note above).
 
 ### RTC and log time
 
@@ -286,9 +316,14 @@ should appear after flashing the updated image.
   (0004), read-only SOL (0005), KVM full screen (0006), BMC-only factory reset
   (0007), inventory limited to system, BMC and chassis (0008), removal of the
   overview power card (0009), no backup image card (0010) and BMC dump only
-  (0011).
-* bmcweb is built with `dbus-rest` (fan page) and `redfish-dump-log` (dump page;
-  the recipe leaves the dump routes out otherwise). `phosphor-debug-collector`
+  (0011), no Virtual TPM / RTAD switches (0012).  The firmware page has no
+  backup image card for the BMC and for the BIOS (0010).
+* bmcweb is built with `dbus-rest` (fan page), `redfish-dump-log` (dump page;
+  the recipe leaves the dump routes out otherwise) and
+  `redfish-updateservice-use-dbus=disabled`: with the default the Manager
+  `FirmwareVersion` is looked up under `/xyz/openbmc_project/software/bmc/functional`,
+  while the classic phosphor-image-updater used here publishes
+  `/xyz/openbmc_project/software/functional` (not verified after the change). `phosphor-debug-collector`
   produces the BMC dumps. There is no System dump on this platform.
 * Virtual media: only "read image from the browser" is supported
   (bmcweb `/vm/0/0` WebSocket, jsnbd, nbd, USB mass storage through the vHub to
