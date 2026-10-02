@@ -42,17 +42,12 @@
 	pinctrl-0 = <&pinctrl_rgmii2_default>;
 };
 
-/* Physical MAC3: NC-SI to the Intel E810. */
+/* Physical MAC3 is the NC-SI link to the Intel E810.  U-Boot only needs the
+ * RGMII port above for TFTP boot, so leave NC-SI to Linux.  Enabling it here
+ * failed with "Invalid PHY interface '<NULL>'" (no phy-mode), and with
+ * phy-mode set the NC-SI probe crashed U-Boot (data abort, reset loop). */
 &mac2 {
-	status = "okay";
-	/delete-property/ phy-handle;
-	/* The ftgmac100 driver reads phy-mode unconditionally; without it the
-	 * probe fails with "Invalid PHY interface '<NULL>'".  NC-SI runs on RMII. */
-	phy-mode = "rmii";
-	pinctrl-names = "default";
-	/* U-Boot pinctrl uses RMII3 pads for physical MAC3 NC-SI. */
-	pinctrl-0 = <&pinctrl_rmii3_default>;
-	use-ncsi;
+	status = "disabled";
 };
 
 &mac3 { status = "disabled"; };
