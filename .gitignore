@@ -70,3 +70,9 @@ test_crawler.js
 sample_page.html
 nav.html
 
+
+# Tutorial build output
+.tutorial-build/
+
+# Generated output
+/output/

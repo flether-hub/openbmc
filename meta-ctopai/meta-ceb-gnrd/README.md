@@ -196,9 +196,11 @@ Platform features
 * Hardware watchdog: WDT1 resets the SoC only (`aspeed,reset-type = "soc"`, not
   the whole chip, so GPIOs keep their state; check on the board).  systemd feeds it
   (`RuntimeWatchdogSec=120s`).  `aspeed_wdt` has no pre-timeout, so `systemd-conf`
-  installs `50-ceb-gnrd-watchdog.conf`, which clears meta-phosphor's
+  installs a `40-hardware-watchdog.conf` with the same name as meta-phosphor's
+  (the one in /etc wins) that keeps only `RuntimeWatchdogSec=120s` and drops
   `RuntimeWatchdogPreSec` / `RuntimeWatchdogPreGovernor=panic` (otherwise systemd
-  logs "Failed to set watchdog pretimeout_governor" at every boot).
+  logs "Failed to set watchdog pretimeout_governor" at every boot; clearing them
+  with an empty assignment is rejected by systemd).
 * A kernel oops becomes a panic (`CONFIG_PANIC_ON_OOPS`) and a panic restarts the
   BMC after 5 s (`CONFIG_PANIC_TIMEOUT=5`).  Magic SysRq is enabled (not from the
   serial BREAK) so that `echo c > /proc/sysrq-trigger` can test this.
@@ -345,6 +347,9 @@ should appear after flashing the updated image.
   `0001-ceb-gnrd-log-non-recoverable-threshold-events.patch`, makes it handle
   the private NonRecoverable interface as upper/lower non-recoverable), the watchdog by its
   watchdog monitor and the BIOS failure by the alert service itself.
+* rsyslog loads `imjournal` (`recipes-extended/rsyslog/rsyslog_%.bbappend`): without
+  it rsyslog never sees the `IPMI_SEL_*` journal fields and `/var/log/ipmi_sel`
+  stays empty (the SEL then reads "no entries" although sel-logger logs events).
 * The SEL is a rollover log kept with the standard logrotate
   (`ceb-gnrd-sel-logrotate`): phosphor-sel-logger reads `/var/log/ipmi_sel*` (all
   rotated files) and keeps the next record ID in a file of its own, so IDs are
