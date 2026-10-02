@@ -106,7 +106,7 @@ new file mode 100644
 index 0000000..065091b
 --- /dev/null
 +++ b/src/views/Settings/FanControl/FanControl.vue
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,213 @@
 +<template>
 +  <b-container fluid="xl">
 +    <page-title :description="$t('pageFanControl.description')" />
@@ -124,7 +124,7 @@ index 0000000..065091b
 +          v-model="selectedFan"
 +          :options="fanOptions"
 +          :disabled="!hasControl"
-+          @change="loadSelectedSettings"
++          @change="showSelectedFan"
 +        />
 +      </b-form-group>
 +
@@ -200,13 +200,11 @@ index 0000000..065091b
 +import BVToastMixin from '@/components/Mixins/BVToastMixin';
 +import PageTitle from '@/components/Global/PageTitle';
 +
-+const managerPath = '/redfish/v1/Managers/bmc';
++// The service has argument-free methods only: bmcweb's D-Bus REST cannot pass
++// arguments here.  Saving is three calls: select the fan(s), set the mode of
++// the selection, then choose whether the result is kept after a BMC reboot.
 +const settingsPath = '/xyz/openbmc_project/ceb_gnrd/fan_settings';
-+// Adaptive mode uses the limits of the Entity-Manager configuration.
-+const adaptiveMinimum = 30;
-+const adaptiveMaximum = 100;
-+// Redfish adds metadata members such as @odata.id to the fan objects.
-+const isConfigEntry = ([name]) => !name.startsWith('@');
++const fanCount = 6;
 +
 +const hex = (value) =>
 +  `0x${Number(value).toString(16).toUpperCase().padStart(2, '0')}`;
@@ -220,6 +218,7 @@ index 0000000..065091b
 +      mode: 'adaptive',
 +      fixedSpeed: 60,
 +      selectedFan: 'all',
++      fanStatus: [],
 +      modeOptions: [
 +        { text: this.$t('pageFanControl.adaptive'), value: 'adaptive' },
 +        { text: this.$t('pageFanControl.fixed'), value: 'fixed' },
@@ -228,8 +227,14 @@ index 0000000..065091b
 +        text: `${value}%`,
 +        value,
 +      })),
-+      controllers: [],
-+      zones: [],
++      fanOptions: [
++        { text: this.$t('pageFanControl.allFans'), value: 'all' },
++        ...Array.from({ length: fanCount }, (_, index) => ({
++          text: `SYS_FAN${index}`,
++          value: index,
++        })),
++      ],
++      hasControl: false,
 +      isSaving: false,
 +      loadError: false,
 +      persist: false,
@@ -241,20 +246,9 @@ index 0000000..065091b
 +    };
 +  },
 +  computed: {
-+    hasControl() {
-+      return this.controllers.length > 0 || this.zones.length > 0;
-+    },
-+    fanOptions() {
-+      const entries = this.controllers.length ? this.controllers : this.zones;
-+      return [
-+        { text: this.$t('pageFanControl.allFans'), value: 'all' },
-+        ...entries.map(([name]) => ({ text: name, value: name })),
-+      ];
-+    },
 +    fanIndex() {
-+      // fan number: the digits in the name (Fan3 Control -> 3), 0xFF = all
-+      const match = /(\d+)/.exec(this.selectedFan);
-+      return this.selectedFan === 'all' || !match ? 255 : Number(match[1]);
++      // fan number 0..5, 0xFF = all fans
++      return this.selectedFan === 'all' ? 255 : Number(this.selectedFan);
 +    },
 +    setCommand() {
 +      const fixed = this.mode === 'fixed';
@@ -272,86 +266,49 @@ index 0000000..065091b
 +    this.loadSettings();
 +  },
 +  methods: {
++    async callService(action) {
++      const response = await api.post(`${settingsPath}/action/${action}`, {
++        data: [],
++      });
++      return response?.data?.data;
++    },
 +    async loadSettings() {
 +      try {
-+        const { data } = await api.get(managerPath);
-+        const fan = data?.Oem?.OpenBmc?.Fan;
-+        if (!fan) return;
-+
-+        this.controllers = Object.entries(fan.FanControllers || {}).filter(
-+          isConfigEntry,
-+        );
-+        this.zones = Object.entries(fan.FanZones || {}).filter(isConfigEntry);
-+        this.loadSelectedSettings();
-+        await this.loadPersistence();
++        // [keep after reboot, then mode, duty, rpm low, rpm high for each fan]
++        const bytes = await this.callService('GetFans');
++        if (!Array.isArray(bytes) || bytes.length < 1 + 4 * fanCount) return;
++        this.hasControl = true;
++        this.persist = bytes[0] === 1;
++        this.fanStatus = Array.from({ length: fanCount }, (_, index) => ({
++          fixed: bytes[1 + index * 4] === 1,
++          duty: bytes[2 + index * 4],
++        }));
++        this.showSelectedFan();
 +      } catch {
 +        this.loadError = true;
 +      }
 +    },
-+    async loadPersistence() {
-+      try {
-+        const { data } = await api.get(`${settingsPath}/attr/Persist`);
-+        this.persist = data?.data === true;
-+      } catch {
-+        // The persistence service is optional; keep the default (off).
-+      }
-+    },
-+    async savePersistence() {
-+      // bmcweb's D-Bus REST cannot pass arguments here, so use one method each.
-+      const action = this.persist ? 'KeepSettings' : 'ForgetSettings';
-+      await api.post(`${settingsPath}/action/${action}`, { data: [] });
-+    },
-+    loadSelectedSettings() {
-+      const first = this.controllers.find(
-+        ([name]) => this.selectedFan === 'all' || name === this.selectedFan,
-+      )?.[1] || this.zones.find(
-+        ([name]) => this.selectedFan === 'all' || name === this.selectedFan,
-+      )?.[1] || this.controllers[0]?.[1] || this.zones[0]?.[1];
-+      const configuredMinimum = Number(first?.OutLimitMin);
-+      const configuredMaximum = Number(first?.OutLimitMax);
-+      if (
-+        Number.isFinite(configuredMinimum) &&
-+        Number.isFinite(configuredMaximum) &&
-+        configuredMinimum === configuredMaximum
-+      ) {
++    showSelectedFan() {
++      const status = this.fanStatus[this.selectedFan === 'all' ? 0 : this.selectedFan];
++      if (status?.fixed && status.duty >= 10 && status.duty <= 100) {
 +        this.mode = 'fixed';
-+        this.fixedSpeed = configuredMaximum;
++        this.fixedSpeed = status.duty;
 +      } else {
 +        this.mode = 'adaptive';
 +      }
 +    },
 +    async saveSettings() {
-+      const fixed = this.mode === 'fixed';
-+      const minimum = fixed ? Number(this.fixedSpeed) : adaptiveMinimum;
-+      const maximum = fixed ? Number(this.fixedSpeed) : adaptiveMaximum;
-+      const fanControllers = Object.fromEntries(
-+        this.controllers.map(([name, config]) => [name,
-+          this.selectedFan === 'all' || name === this.selectedFan
-+            ? { ...config, OutLimitMin: minimum, OutLimitMax: maximum }
-+            : config,
-+        ]),
-+      );
-+      const fanZones = Object.fromEntries(
-+        this.zones.map(([name, config]) => [name,
-+          this.selectedFan === 'all' || name === this.selectedFan
-+            ? { ...config, MinThermalOutput: minimum }
-+            : config,
-+        ]),
-+      );
-+
++      const select =
++        this.selectedFan === 'all' ? 'SelectAll' : `SelectFan${this.selectedFan}`;
++      const apply =
++        this.mode === 'fixed' ? `SetFixed${this.fixedSpeed}` : 'SetAdaptive';
++      const keep = this.persist ? 'KeepSettings' : 'ForgetSettings';
 +      this.isSaving = true;
 +      try {
-+        await api.patch(managerPath, {
-+          Oem: {
-+            OpenBmc: {
-+              Fan: {
-+                ...(this.controllers.length ? { FanControllers: fanControllers } : {}),
-+                ...(this.zones.length ? { FanZones: fanZones } : {}),
-+              },
-+            },
-+          },
-+        });
-+        await this.savePersistence();
++        // Keep the choice first so that the saved file holds the final values.
++        for (const action of [select, apply, keep]) {
++          if ((await this.callService(action)) !== true) throw new Error(action);
++        }
 +        await this.loadSettings();
 +        this.successToast(this.$t('pageFanControl.saveSuccess'));
 +      } catch {

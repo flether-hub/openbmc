@@ -17,6 +17,8 @@ D-Bus API (reachable through the bmcweb D-Bus REST interface):
   property Persist (b, read/write)
   method   Save()  snapshot the current Entity-Manager values (or delete the
                    stored file when Persist is false)
+  method   SelectAll() / SelectFan0..5()  then SetAdaptive() / SetFixed20..100()
+                   act on the selected fan(s); no arguments (web page)
   method   KeepSettings() / ForgetSettings()  set Persist and save (no arguments,
                    for the web page)
   method   GetFans() -> ay  status of the six fans (used by the IPMI OEM command)
@@ -236,6 +238,7 @@ class FanSettings(ServiceInterface):
         super().__init__(IFACE)
         self.bus = bus
         self.persist = False
+        self.selected = 0xFF  # fan chosen by the argument-free web methods
 
     @dbus_property(access=PropertyAccess.READWRITE)
     def Persist(self) -> "b":
@@ -297,6 +300,70 @@ class FanSettings(ServiceInterface):
     async def SetFan(self, fan: "y", mode: "y", duty: "y", persist: "y") -> "b":
         """Set one fan (0..5) or all fans (0xFF) to adaptive (0) or fixed (1) mode."""
         return await self.apply_fan(fan, mode, duty, persist)
+
+    # The web page cannot pass arguments (bmcweb's D-Bus REST has no usable scalar
+    # arguments here, and writing Entity-Manager through Redfish fails), so it
+    # calls argument-free methods in three steps: SelectAll / SelectFan<n>, then
+    # SetAdaptive / SetFixed<duty> for the selected fan(s), then KeepSettings or
+    # ForgetSettings.
+    @method()
+    async def SelectAll(self) -> "b":
+        self.selected = 0xFF
+        return True
+
+    @method()
+    async def SelectFan0(self) -> "b":
+        self.selected = 0
+        return True
+
+    @method()
+    async def SelectFan1(self) -> "b":
+        self.selected = 1
+        return True
+
+    @method()
+    async def SelectFan2(self) -> "b":
+        self.selected = 2
+        return True
+
+    @method()
+    async def SelectFan3(self) -> "b":
+        self.selected = 3
+        return True
+
+    @method()
+    async def SelectFan4(self) -> "b":
+        self.selected = 4
+        return True
+
+    @method()
+    async def SelectFan5(self) -> "b":
+        self.selected = 5
+        return True
+
+    @method()
+    async def SetAdaptive(self) -> "b":
+        return await self.apply_fan(self.selected, 0, 0, 1 if self.persist else 0)
+
+    @method()
+    async def SetFixed20(self) -> "b":
+        return await self.apply_fan(self.selected, 1, 20, 1 if self.persist else 0)
+
+    @method()
+    async def SetFixed40(self) -> "b":
+        return await self.apply_fan(self.selected, 1, 40, 1 if self.persist else 0)
+
+    @method()
+    async def SetFixed60(self) -> "b":
+        return await self.apply_fan(self.selected, 1, 60, 1 if self.persist else 0)
+
+    @method()
+    async def SetFixed80(self) -> "b":
+        return await self.apply_fan(self.selected, 1, 80, 1 if self.persist else 0)
+
+    @method()
+    async def SetFixed100(self) -> "b":
+        return await self.apply_fan(self.selected, 1, 100, 1 if self.persist else 0)
 
     async def apply_fan(self, fan, mode, duty, persist) -> bool:
         if fan != 0xFF and fan >= FAN_COUNT:
