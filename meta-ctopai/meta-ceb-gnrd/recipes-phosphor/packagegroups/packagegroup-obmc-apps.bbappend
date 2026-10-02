@@ -40,6 +40,7 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         curl \
         openssh-scp \
         ceb-gnrd-check \
+        ceb-gnrd-health \
         "
 
 RDEPENDS:${PN}-extras:remove:ceb-gnrd = "phosphor-state-manager-chassis"

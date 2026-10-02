@@ -1,0 +1,15 @@
+[Unit]
+Description=Log an unexpected BMC watchdog reset to the SEL
+After=xyz.openbmc_project.Logging.IPMI.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=60
+# "start" decides at boot whether the last reset was unexpected; "stop" runs at
+# shutdown and leaves the marker that tells the next boot it was a clean restart.
+ExecStart=/usr/libexec/ceb-gnrd-wdt-reset-log.sh start
+ExecStop=/usr/libexec/ceb-gnrd-wdt-reset-log.sh stop
+
+[Install]
+WantedBy=multi-user.target

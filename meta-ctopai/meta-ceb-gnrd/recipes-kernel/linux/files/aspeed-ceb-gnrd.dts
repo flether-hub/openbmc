@@ -109,11 +109,15 @@
     status = "okay";
 };
 
-/* WDT1 is reserved for systemd's hardware runtime watchdog. Reset the full
- * AST2600 when userspace stops servicing /dev/watchdog. */
+/* WDT1 is reserved for systemd's hardware runtime watchdog.  When userspace stops
+ * servicing /dev/watchdog (or the kernel panics) it resets the SoC only
+ * ("soc"), not the whole chip ("system"): a full-chip reset drives the GPIOs to
+ * their power-on state and could glitch the CPLD / host-facing signals (fan
+ * ownership, BIOS flash select, power button outputs) while the host is running.
+ * Check on the board that the GPIO levels stay stable across a watchdog reset. */
 &wdt1 {
     status = "okay";
-    aspeed,reset-type = "system";
+    aspeed,reset-type = "soc";
 };
 
 /* Reserve AST2600 GPIOW0-W7 for the Xeon 6 host eSPI connection.

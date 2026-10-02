@@ -1,0 +1,13 @@
+[Unit]
+Description=CEB-GNRD BMC service health monitor
+# Restarts a hung D-Bus service or bmcweb and, for a permanent fault, reboots the BMC.
+After=multi-user.target xyz.openbmc_project.EntityManager.service phosphor-ipmi-host.service bmcweb.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/ceb-gnrd-health-monitor.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
