@@ -166,6 +166,8 @@ qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
 
 > **QEMU 里 ping 的限制**：QEMU 的 `user` 网络（slirp）是虚拟的 NAT 网络。① 它默认不转发 ICMP，ping 外网大多不通，但 TCP/UDP（`curl`、`nslookup`）是通的，验证外网请用 `curl` 而不是 `ping`；② 192.168.185.0/24 整个网段都在 QEMU 内部，宿主机的真实地址（如 192.168.185.84）在里面是不存在的，虚拟机访问宿主机用 `host=` 指定的 192.168.185.1，DNS 是 192.168.185.3。
 
+> **QEMU 里测 U-Boot 的 TFTP 启动**：服务器地址和物理板子不同（QEMU 里是 192.168.185.1，需要 `tftp=` 参数），详见本章 “4. U-Boot 通过 TFTP 加载镜像”。
+
 > ⚠️ **待验证**：上面的网卡对应关系按 QEMU 的网卡分配规则推断，网页打不开时先在 BMC 控制台里看 `ip addr show eth0` 是否有 `192.168.185.200`。如果你之前用的是旧版三网卡写法（`-net nic -net nic -net nic,netdev=net0`），那条命令对应的是旧的 MAC 映射，请改用本节的写法。
 ### 2. 访问 OpenBMC 服务
 
@@ -201,6 +203,88 @@ systemctl status xyz.openbmc_project.EntityManager.service
 ip addr
 ```
 
+### 4. U-Boot 通过 TFTP 加载镜像（虚拟机与物理主板的区别）
+
+**启动顺序（已写入 U-Boot 默认 `bootcmd`）**：先从 TFTP 服务器取 `fitImage`，取到就 `bootm` 启动；取不到或启动失败，继续从本地 SPI 闪存启动（`run bootspi`）。
+
+| 项目 | 物理主板 | QEMU 虚拟机 |
+|---|---|---|
+| TFTP 服务器地址 | **192.168.185.84**（Ubuntu 主机，U-Boot 默认 `serverip`） | **192.168.185.1**（QEMU 虚拟网络里的“宿主机”，`host=` 指定） |
+| TFTP 服务由谁提供 | Ubuntu 上的 `tftpd-hpa`（目录 `/srv/tftp`） | QEMU 自带，启动命令里加 `tftp=/srv/tftp` |
+| 网络 | 必须和 Ubuntu 在同一局域网（经交换机），192.168.185.0/24 | QEMU 的 `-nic user` 虚拟网络，只在虚拟机内部有效 |
+| 默认自动启动能否走 TFTP | 能（`serverip` 就是 .84） | 不能：.84 在虚拟网络里不存在，ARP 超时后回退到本地 flash |
+| 要手动做什么 | 无 | 打断自动启动后手动 `setenv serverip 192.168.185.1` |
+| `mii`、PHY 寄存器、RGMII 时序 | 真实硬件，**必须上板验证** | 模拟的（所有 PHY 地址都应答，页寄存器读出全 0），不能代表真实板子 |
+
+**镜像**：`fitImage` 只含内核、设备树和 initramfs，网络启动只替换这一部分，根文件系统仍用本地闪存的 rofs。文件在 `build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/fitImage`，文件名必须保持 `fitImage`。
+
+#### 4.1 在 Ubuntu 上准备 TFTP 服务（物理主板和 QEMU 都用同一个目录）
+
+```bash
+sudo apt install -y tftpd-hpa
+sudo tee /etc/default/tftpd-hpa >/dev/null <<'EOF'
+TFTP_USERNAME="tftp"
+TFTP_DIRECTORY="/srv/tftp"
+TFTP_ADDRESS="0.0.0.0:69"
+TFTP_OPTIONS="--secure --create"
+EOF
+sudo mkdir -p /srv/tftp
+sudo cp ~/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/fitImage /srv/tftp/fitImage
+sudo chmod 644 /srv/tftp/fitImage
+sudo chown -R tftp:tftp /srv/tftp
+sudo systemctl restart tftpd-hpa
+# 自测：能下载下来且大小和源文件一致
+cd /tmp && tftp 127.0.0.1 -c get fitImage && ls -l fitImage
+```
+
+每次重新编译后，要重新复制 `fitImage`。
+
+#### 4.2 QEMU 虚拟机里测试
+
+QEMU 启动命令里给第二个网卡加 `tftp=/srv/tftp`：
+
+```bash
+cd ~/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd
+qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
+  -drive file=obmc-phosphor-image-ceb-gnrd.static.mtd,format=raw,if=mtd \
+  -nic user \
+  -nic user,net=192.168.185.0/24,host=192.168.185.1,tftp=/srv/tftp,hostfwd=tcp:127.0.0.1:8443-192.168.185.200:443,hostfwd=tcp:127.0.0.1:2222-192.168.185.200:22,hostfwd=udp:127.0.0.1:2623-192.168.185.200:623
+```
+
+看到 `Hit any key to stop autoboot` 时按任意键，在 `ast#` 提示符下：
+
+```
+setenv serverip 192.168.185.1
+tftpboot 0x83000000 fitImage
+bootm 0x83000000
+```
+
+成功的标志：`TFTP from server 192.168.185.1`，一排 `#`，`Bytes transferred = 5656980`（字节数应与 `fitImage` 大小一致），然后 `## Loading kernel from FIT Image at 83000000` 并进入 Linux。`/srv/tftp/fitImage` 要对运行 QEMU 的用户可读。
+
+> 如果不手动改 `serverip` 直接让它自动启动，会看到 `Loading: *` 之后 `ARP Retry count exceeded`，再回退到本地 flash 启动，这是预期行为。
+
+#### 4.3 物理主板上测试
+
+1. Ubuntu 的网口配好 `192.168.185.84/24`，BMC 的网口和它在同一局域网（经交换机或直连）。
+2. 烧入新编译的 U-Boot 和镜像后，**第一次要重置 U-Boot 环境**（环境存在闪存里，旧的 `bootcmd` 会盖住新默认值），并设置 MAC（不设会每次启动随机）：
+
+```
+env default -a
+setenv ethaddr 02:00:00:00:00:01
+saveenv
+reset
+```
+
+   `env default -a` 不可用时，手动设置：`setenv ipaddr 192.168.185.200; setenv netmask 255.255.255.0; setenv gatewayip 192.168.185.1; setenv serverip 192.168.185.84; setenv bootcmd 'setenv tftptimeout 2000\; setenv tftptimeoutcountmax 2\; if tftpboot 0x83000000 fitImage\; then bootm 0x83000000\; fi\; run bootspi'; saveenv`（分号要写成 `\;`）。
+3. 重启后串口日志应出现 `TFTP from server 192.168.185.84; our IP address is 192.168.185.200`、`Bytes transferred`，然后启动网络镜像。服务器不在时先 ARP 超时，再自动回退到本地 flash。
+4. 出问题时的排查（**只适用于物理板子**）：
+   * Ubuntu：`ip -br addr`（地址在接 BMC 的网卡上）、`sudo ufw status`（放开 UDP 69）、`sudo journalctl -u tftpd-hpa -f`（看有没有收到请求）。
+   * 抓包（局域网流量大，用 BMC 的 MAC 过滤）：`sudo tcpdump -i <网卡> -n -e ether host 02:00:00:00:00:01`。
+   * 链路已 `up` 但 ARP/TFTP 不通：用 `sudo ethtool -s <网卡> speed 100 duplex full autoneg on` 把链路限制到 100M 再试；100M 通而 1000M 不通，说明是 RGMII 延时问题，可在 U-Boot 里用 `mii write 2 0x1f 0xd08` 后读写 `0x11`（TX 延时，bit 8）和 `0x15`（RX 延时，bit 3）做实验，确认后再改设备树的 `phy-mode`。
+
+#### 4.4 U-Boot 里的 NC-SI 口
+
+NC-SI 口（`&mac2`）在 U-Boot 里**不启动**（设备树里禁用）：U-Boot 只用 eth0 取镜像。不要给它加 `phy-mode` 再启用，那样 NC-SI 探测会让 U-Boot 崩溃（`data abort`，不断复位）；不加则只会打印 `Invalid PHY interface '<NULL>'`。Linux 里 NC-SI 口 `eth1` 自动使能并用 DHCP 取地址：主机上电后由 `ceb-gnrd-ncsi` 服务把 `eth1` 拉起（E810 没有待机供电，主机关机时 NC-SI 不可用，拉起后内核 NC-SI 栈自动选择通道；E810 上电后不一定立刻就绪，服务会在 30 秒内没有链路时对 `eth1` 做 down/up 重试，最多 40 次，日志见 `journalctl -t ceb-gnrd-ncsi`），`systemd-networkd` 按 `DHCP=ipv4` 获取地址。
 ---
 
 ## 五、Devtool 常用操作与板级开发全流程
@@ -428,7 +512,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * **已保留**：概要、事件日志、POST Code、转储、清单与 LED（系统/BMC/机箱三张表）、传感器、恢复出厂设置（仅 BMC）、KVM（含全屏）、固件、重启 BMC、SOL（只读）、服务器电源操作、虚拟媒体、日期与时间、风扇控制、网络、电源恢复策略、会话、用户管理、策略、证书。
 * **已移除**（无后台支持）：转储页的“System dump”选项（只保留 BMC dump）、固件页的“备份镜像”卡片和“切换为运行”（BMC 只有一个镜像区）、概览页“电源信息”卡片（功耗读数和功率上限依赖 DCMI 电源支持，本板不提供）、SNMP Alerts、清除密钥、LDAP、资源管理/电源、“仅重置服务器选项”、清单页的 DIMM/风扇/电源/处理器/组件表。
 * **虚拟媒体**：网页只提供“从浏览器读取镜像文件”（走 bmcweb 的 /vm/0/0 WebSocket → jsnbd → nbd → USB mass storage → 主机 VL805 USB 口）；“从外部服务器读取镜像文件”（CIFS/HTTPS）需要已停止维护的 virtual-media 服务，镜像里没有，网页默认也不显示。上板验证：网页选一个 ISO 点开始，主机里应出现一个 USB 光盘/U 盘；BMC 上 `ls /sys/kernel/config/usb_gadget/`、`ls /dev/nbd0`。
-* **U-Boot 启动顺序**：先从 TFTP 服务器 192.168.185.84 取 `fitImage`（U-Boot 本机地址 192.168.185.200，TFTP 超时已缩短），取不到或启动失败就继续从本地 SPI 闪存启动。U-Boot 只用 RGMII 口（eth0）取镜像，NC-SI 口留给 Linux（U-Boot 里启用它会初始化失败甚至崩溃）。U-Boot 默认网络参数与 Linux 的 eth0 一致：IP 192.168.185.200、掩码 255.255.255.0、网关 192.168.185.1、服务器 192.168.185.84。网络镜像只替换内核和 initramfs，根文件系统仍用本地闪存。U-Boot 环境存在闪存里，旧环境里已保存的 `bootcmd` 会覆盖这个默认值，需要在 U-Boot 里执行 `env default -a; saveenv` 一次。
+* **U-Boot 启动顺序**：先从 TFTP 服务器 192.168.185.84 取 `fitImage`，取不到或启动失败再从本地 SPI 闪存启动；U-Boot 默认网络参数与 Linux 的 eth0 一致（192.168.185.200/24，网关 192.168.185.1）。虚拟机与物理主板的区别、环境重置、排查步骤详见第四章 “4. U-Boot 通过 TFTP 加载镜像”。
 * **时间和 SEL**：BMC 系统时间默认从板上 RTC（NCT3015Y）读取，SEL 时间戳用系统时间。AST2600 内部 RTC 已关闭，NCT3015Y 是 `rtc0`。
 * **SEL 记录**：电压、温度（含 CPU_MAX_TEMP / DIMM_MAX_TEMP，含不可恢复级别）、watchdog 超时、BIOS 启动失败（600 秒）、电源按键都会写 SEL。SEL 为 rollover：约保留最新 2000 条，满了自动丢弃最老的。
 * **SSH / SCP**：BMC 用 dropbear 提供 SSH（22 端口），已带 `openssh-sftp-server` 和 `openssh-scp`，`scp` 新旧协议都可用，例如 `scp -P 2222 file root@127.0.0.1:/tmp/`（QEMU）。
