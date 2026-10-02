@@ -24,13 +24,13 @@ Platform features
 ### Flash layout and upgrade
 
 * BMC flash: W25Q512JVFIQ, 64 MiB on AST2600 Firmware SPI (FMC).
-  `FLASH_SIZE = 65536`, `FLASH_RWFS_OFFSET:flash-65536 = "51200"`.
+  `FLASH_SIZE = 65536`, `FLASH_RWFS_OFFSET:flash-65536 = "55296"`.
 
       u-boot        0x0000000  0xe0000
       u-boot-env    0x00e0000  0x20000
       kernel        0x0100000  9 MiB     (FIT: kernel, device tree, initramfs)
-      rofs          0x0a00000  40 MiB    (squashfs)
-      rwfs          0x3200000  14 MiB    (jffs2, settings)
+      rofs          0x0a00000  44 MiB    (squashfs)
+      rwfs          0x3600000  10 MiB    (jffs2, settings)
 
   The Linux and U-Boot device trees must keep these offsets; `netupdate` in
   U-Boot (below) uses the same numbers.

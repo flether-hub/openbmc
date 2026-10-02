@@ -7,10 +7,10 @@
  *
  * netupdate: fetch the kernel FIT and the read-only root filesystem from the
  * TFTP server and write them to the SPI flash.  U-Boot itself, its environment
- * (0x000000-0x0fffff) and the read-write partition (rwfs, 0x3200000) are left
+ * (0x000000-0x0fffff) and the read-write partition (rwfs, 0x3600000) are left
  * alone.  Partition layout (must match the device trees):
  *   kernel  0x0100000  size 0x0900000
- *   rofs    0x0a00000  size 0x2800000
+ *   rofs    0x0a00000  size 0x2c00000
  * ${filesize} is a hex string without "0x", hence "0x${filesize}" for test.
  * Usage:  run netupdate      (then: reset)
  * The files are taken from ${serverip}; names are in netupdate_kernel and
@@ -25,7 +25,7 @@
 		"test 0x${filesize} -le 0x900000 && "	\
 		"sf update 0x90000000 0x100000 ${filesize} && "	\
 		"tftpboot 0x90000000 ${netupdate_rofs} && "	\
-		"test 0x${filesize} -le 0x2800000 && "	\
+		"test 0x${filesize} -le 0x2c00000 && "	\
 		"sf update 0x90000000 0xa00000 ${filesize} && "	\
 		"echo Network update done, run reset || "	\
 		"echo Network update FAILED"	\
