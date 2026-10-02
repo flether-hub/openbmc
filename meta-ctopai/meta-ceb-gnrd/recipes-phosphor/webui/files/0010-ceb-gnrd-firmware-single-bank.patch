@@ -1,10 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CEB-GNRD board layer <bmc@localhost>
 Date: Fri, 2 Oct 2026 00:00:00 +0000
-Subject: [PATCH] firmware: remove the backup image card
+Subject: [PATCH] firmware: remove the backup image cards
 
-The BMC flash has a single image bank, so there is no backup image to show or
-switch to.  Remove the backup card and its Switch to running action.
+The BMC flash and the BIOS flash each have a single image bank, so there is no
+backup image to show or switch to.  Remove the backup cards and the BMC Switch
+to running action.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
 ---
@@ -56,3 +57,60 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
        </b-row>
      </page-section>
      <modal-switch-to-running
+--- a/src/views/Operations/Firmware/FirmwareCardsBios.vue
++++ b/src/views/Operations/Firmware/FirmwareCardsBios.vue
+@@ -15,30 +15,6 @@
+           </dl>
+         </b-card>
+       </b-col>
+-
+-      <!-- Backup image -->
+-      <b-col class="mb-3">
+-        <b-card class="h-100">
+-          <template #header>
+-            <p class="fw-bold m-0">
+-              {{ $t('pageFirmware.cardTitleBackup') }}
+-            </p>
+-          </template>
+-          <dl class="mb-0">
+-            <dt>{{ $t('pageFirmware.cardBodyVersion') }}</dt>
+-            <dd class="mb-0">
+-              <status-icon v-if="showBackupImageStatus" status="danger" />
+-              <span
+-                v-if="showBackupImageStatus"
+-                class="visually-hidden-focusable"
+-              >
+-                {{ backupStatus }}
+-              </span>
+-              {{ backupVersion }}
+-            </dd>
+-          </dl>
+-        </b-card>
+-      </b-col>
+     </b-row>
+   </page-section>
+ </template>
+@@ -52,23 +28,9 @@
+     running() {
+       return this.$store.getters['firmware/activeBiosFirmware'];
+     },
+-    backup() {
+-      return this.$store.getters['firmware/backupBiosFirmware'];
+-    },
+     runningVersion() {
+       return this.running?.version || '--';
+     },
+-    backupVersion() {
+-      return this.backup?.version || '--';
+-    },
+-    backupStatus() {
+-      return this.backup?.status || null;
+-    },
+-    showBackupImageStatus() {
+-      return (
+-        this.backupStatus === 'Critical' || this.backupStatus === 'Warning'
+-      );
+-    },
+   },
+ };
+ </script>

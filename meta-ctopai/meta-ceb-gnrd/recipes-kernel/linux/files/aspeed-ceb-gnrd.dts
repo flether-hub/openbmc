@@ -373,6 +373,16 @@
 &i3c4 { status = "disabled"; };
 &i3c5 { status = "disabled"; };
 
+/* This board has no eMMC and no SD card; the EVB include enables all three SDHCI
+ * slots, which only makes the kernel probe cards that are not there
+ * ("mmc0: Failed to initialize a non-removable card").
+ */
+&emmc { status = "disabled"; };
+&emmc_controller { status = "disabled"; };
+&sdhci0 { status = "disabled"; };
+&sdhci1 { status = "disabled"; };
+&sdc { status = "disabled"; };
+
 /*
  * AST2600 DT labels are zero-based: schematic I2C7 is &i2c6.  The EVB
  * include enables demo devices on Linux i2c-7 and i2c-8; remove those before

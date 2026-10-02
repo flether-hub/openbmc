@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Fri, 2 Oct 2026 00:00:00 +0000
+Subject: [PATCH] policies: remove the Virtual TPM and RTAD switches
+
+This board has no virtual TPM and no host-firmware remote attestation daemon,
+so both switches only produce "failed" messages.  Remove them and the BIOS
+attribute request that only fed them.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
+---
+--- a/src/views/SecurityAndAccess/Policies/Policies.vue
++++ b/src/views/SecurityAndAccess/Policies/Policies.vue
+@@ -83,56 +83,6 @@
+         <b-row class="setting-section">
+           <b-col class="d-flex align-items-center justify-content-between">
+             <dl class="mt-3 me-3 w-75">
+-              <dt>{{ $t('pagePolicies.vtpm') }}</dt>
+-              <dd>
+-                {{ $t('pagePolicies.vtpmDescription') }}
+-              </dd>
+-            </dl>
+-            <b-form-checkbox
+-              id="vtpmSwitch"
+-              :model-value="vtpmState"
+-              data-test-id="policies-toggle-vtpm"
+-              switch
+-              @update:model-value="changeVtpmState"
+-            >
+-              <span class="visually-hidden-focusable">
+-                {{ $t('pagePolicies.vtpm') }}
+-              </span>
+-              <span v-if="vtpmState">
+-                {{ $t('global.status.enabled') }}
+-              </span>
+-              <span v-else>{{ $t('global.status.disabled') }}</span>
+-            </b-form-checkbox>
+-          </b-col>
+-        </b-row>
+-        <b-row class="setting-section">
+-          <b-col class="d-flex align-items-center justify-content-between">
+-            <dl class="mt-3 me-3 w-75">
+-              <dt>{{ $t('pagePolicies.rtad') }}</dt>
+-              <dd>
+-                {{ $t('pagePolicies.rtadDescription') }}
+-              </dd>
+-            </dl>
+-            <b-form-checkbox
+-              id="rtadSwitch"
+-              :model-value="rtadState"
+-              data-test-id="policies-toggle-rtad"
+-              switch
+-              @update:model-value="changeRtadState"
+-            >
+-              <span class="visually-hidden-focusable">
+-                {{ $t('pagePolicies.rtad') }}
+-              </span>
+-              <span v-if="rtadState">
+-                {{ $t('global.status.enabled') }}
+-              </span>
+-              <span v-else>{{ $t('global.status.disabled') }}</span>
+-            </b-form-checkbox>
+-          </b-col>
+-        </b-row>
+-        <b-row class="setting-section">
+-          <b-col class="d-flex align-items-center justify-content-between">
+-            <dl class="mt-3 me-3 w-75">
+               <dt>{{ $t('pagePolicies.webSessionTimeOut') }}</dt>
+               <dd>
+                 {{ $t('pagePolicies.webSessionTimeOutDescription') }}
+@@ -213,12 +163,6 @@
+     ipmiProtocolState() {
+       return this.$store.getters['policies/ipmiProtocolEnabled'];
+     },
+-    rtadState() {
+-      return this.$store.getters['policies/rtadEnabled'] === 'Enabled';
+-    },
+-    vtpmState() {
+-      return this.$store.getters['policies/vtpmEnabled'] === 'Enabled';
+-    },
+     sessionTimeoutState() {
+       return this.$store.getters['policies/getSessionTimeoutValue'];
+     },
+@@ -232,7 +176,6 @@
+   created() {
+     this.startLoader();
+     Promise.all([
+-      this.$store.dispatch('policies/getBiosStatus'),
+       this.$store.dispatch('policies/getNetworkProtocolStatus'),
+       this.$store.dispatch('policies/getSessionTimeout'),
+       this.$store.dispatch('policies/getBasicAuth'),
+@@ -261,18 +204,6 @@
+         .then((message) => this.successToast(message))
+         .catch(({ message }) => this.errorToast(message));
+     },
+-    changeRtadState(state) {
+-      this.$store
+-        .dispatch('policies/saveRtadState', state ? 'Enabled' : 'Disabled')
+-        .then((message) => this.successToast(message))
+-        .catch(({ message }) => this.errorToast(message));
+-    },
+-    changeVtpmState(state) {
+-      this.$store
+-        .dispatch('policies/saveVtpmState', state ? 'Enabled' : 'Disabled')
+-        .then((message) => this.successToast(message))
+-        .catch(({ message }) => this.errorToast(message));
+-    },
+     saveSessionTimeoutValue(value) {
+       this.$store
+         .dispatch('policies/saveSessionTimeoutValue', value)
