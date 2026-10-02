@@ -35,7 +35,9 @@ set changes:  journalctl -u ceb-gnrd-temp-max
 import asyncio
 import logging
 import math
+import os
 import re
+import socket
 import sys
 
 from dbus_fast import BusType, Message, MessageType, Variant
@@ -44,7 +46,7 @@ from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, s
 
 LOG = logging.getLogger("ceb-gnrd-temp-max")
 
-BUS_NAME = "xyz.openbmc_project.CebGnrd.TempMax"
+BUS_NAME = "com.ctopai.CebGnrd.TempMax"
 SENSOR_ROOT = "/xyz/openbmc_project/sensors/temperature"
 ADC_ROOT = "/xyz/openbmc_project/sensors/voltage"
 SOURCE_SERVICE = "xyz.openbmc_project.IntelCPUSensor"
@@ -55,7 +57,7 @@ ASSOC_IFACE = "xyz.openbmc_project.Association.Definitions"
 # xyz.openbmc_project.Sensor.Threshold.HardShutdown: services such as the fan
 # sensor monitor power the system off on a HardShutdown alarm, and the BMC must
 # not shut the system down.  The board patches of ipmid and sel-logger read it.
-NONRECOVERABLE_IFACE = "xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable"
+NONRECOVERABLE_IFACE = "com.ctopai.CebGnrd.Threshold.NonRecoverable"
 
 MAPPER = "xyz.openbmc_project.ObjectMapper"
 MAPPER_PATH = "/xyz/openbmc_project/object_mapper"
@@ -287,6 +289,28 @@ async def find_default_assoc(bus):
     return []
 
 
+def sd_notify(message):
+    """Tell systemd about READY / watchdog pings (Type=notify, WatchdogSec=)."""
+    path = os.environ.get("NOTIFY_SOCKET")
+    if not path:
+        return
+    if path[0] == "@":
+        path = "\0" + path[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(path)
+            sock.sendall(message.encode())
+    except OSError:
+        pass
+
+
+async def watchdog_task(interval=15):
+    """Ping the systemd watchdog from the event loop: a blocked or hung loop stops
+    the pings and systemd restarts the service (WatchdogSec= in the unit)."""
+    while True:
+        sd_notify("WATCHDOG=1")
+        await asyncio.sleep(interval)
+
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(message)s")
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -307,6 +331,8 @@ async def main():
             bus.export(path, obj)
     await bus.request_name(BUS_NAME)
     LOG.info("started, publishing CPU_MAX_TEMP and DIMM_MAX_TEMP")
+    sd_notify("READY=1")
+    asyncio.create_task(watchdog_task())
 
     known = None
     default_assoc = []

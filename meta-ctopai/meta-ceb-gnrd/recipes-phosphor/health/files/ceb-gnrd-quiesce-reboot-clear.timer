@@ -1,0 +1,9 @@
+[Unit]
+Description=Forget the automatic BMC reboot count 15 minutes after boot
+
+[Timer]
+OnBootSec=15min
+Unit=ceb-gnrd-quiesce-reboot-clear.service
+
+[Install]
+WantedBy=timers.target

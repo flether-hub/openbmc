@@ -9,6 +9,18 @@
             "members": []
         },
         {
+            "group": "enclosure_fault",
+            "members": [
+                {
+                    "Name": "fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
             "group": "enclosure_identify",
             "members": [
                 {
@@ -16,7 +28,7 @@
                     "Action": "On",
                     "DutyOn": 50,
                     "Period": 0,
-                    "Priority": "Blink"
+                    "Priority": "On"
                 }
             ]
         }

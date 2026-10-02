@@ -10,7 +10,7 @@ SRC_URI = " \
     file://ceb-gnrd-temp-max.py \
     file://ceb-gnrd-temp-max.service \
     file://10-ceb-gnrd-temp-max.conf \
-    file://xyz.openbmc_project.CebGnrd.TempMax.conf \
+    file://com.ctopai.CebGnrd.TempMax.conf \
     "
 
 S = "${UNPACKDIR}"
@@ -40,13 +40,13 @@ do_install() {
     install -m 0644 ${UNPACKDIR}/ceb-gnrd-temp-max.service ${D}${systemd_system_unitdir}/ceb-gnrd-temp-max.service
     install -m 0644 ${UNPACKDIR}/10-ceb-gnrd-temp-max.conf \
         ${D}${systemd_system_unitdir}/phosphor-pid-control.service.d/10-ceb-gnrd-temp-max.conf
-    install -m 0644 ${UNPACKDIR}/xyz.openbmc_project.CebGnrd.TempMax.conf \
-        ${D}${datadir}/dbus-1/system.d/xyz.openbmc_project.CebGnrd.TempMax.conf
+    install -m 0644 ${UNPACKDIR}/com.ctopai.CebGnrd.TempMax.conf \
+        ${D}${datadir}/dbus-1/system.d/com.ctopai.CebGnrd.TempMax.conf
 }
 
 FILES:${PN} += " \
     ${libexecdir}/ceb-gnrd-temp-max.py \
     ${systemd_system_unitdir}/ceb-gnrd-temp-max.service \
     ${systemd_system_unitdir}/phosphor-pid-control.service.d \
-    ${datadir}/dbus-1/system.d/xyz.openbmc_project.CebGnrd.TempMax.conf \
+    ${datadir}/dbus-1/system.d/com.ctopai.CebGnrd.TempMax.conf \
     "

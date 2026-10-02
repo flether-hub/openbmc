@@ -12,7 +12,7 @@ This service lets the user choose to keep the settings:
     (read-write flash, survives power cycles) and re-applied after every boot.
 
 D-Bus API (reachable through the bmcweb D-Bus REST interface):
-  service  xyz.openbmc_project.CebGnrd.FanSettings
+  service  com.ctopai.CebGnrd.FanSettings
   object   /xyz/openbmc_project/ceb_gnrd/fan_settings
   property Persist (b, read/write)
   method   Save()  snapshot the current Entity-Manager values (or delete the
@@ -40,6 +40,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
 
 from dbus_fast import BusType, Message, MessageType, Variant
@@ -48,9 +49,11 @@ from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, m
 
 LOG = logging.getLogger("ceb-gnrd-fan-settings")
 
-BUS_NAME = "xyz.openbmc_project.CebGnrd.FanSettings"
+BUS_NAME = "com.ctopai.CebGnrd.FanSettings"
+# The object path stays under /xyz: the bmcweb D-Bus REST API (used by the web page)
+# only serves object paths that start with /xyz or /org.
 OBJ_PATH = "/xyz/openbmc_project/ceb_gnrd/fan_settings"
-IFACE = "xyz.openbmc_project.CebGnrd.FanSettings"
+IFACE = "com.ctopai.CebGnrd.FanSettings"
 
 STATE_DIR = "/var/lib/ceb-gnrd"
 STATE_FILE = os.path.join(STATE_DIR, "fan-settings.json")
@@ -445,6 +448,28 @@ async def maintain(bus, iface):
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
 
+def sd_notify(message):
+    """Tell systemd about READY / watchdog pings (Type=notify, WatchdogSec=)."""
+    path = os.environ.get("NOTIFY_SOCKET")
+    if not path:
+        return
+    if path[0] == "@":
+        path = "\0" + path[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(path)
+            sock.sendall(message.encode())
+    except OSError:
+        pass
+
+
+async def watchdog_task(interval=15):
+    """Ping the systemd watchdog from the event loop: a blocked or hung loop stops
+    the pings and systemd restarts the service (WatchdogSec= in the unit)."""
+    while True:
+        sd_notify("WATCHDOG=1")
+        await asyncio.sleep(interval)
+
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                         format="%(levelname)s %(message)s")
@@ -453,6 +478,8 @@ async def main():
     bus.export(OBJ_PATH, iface)
     await bus.request_name(BUS_NAME)
     LOG.info("started, D-Bus service %s", BUS_NAME)
+    sd_notify("READY=1")
+    asyncio.create_task(watchdog_task())
     await maintain(bus, iface)
 
 

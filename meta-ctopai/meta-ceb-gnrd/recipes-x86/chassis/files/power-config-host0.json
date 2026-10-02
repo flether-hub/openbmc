@@ -7,6 +7,12 @@
             "Polarity": "ActiveHigh"
         },
         {
+            "Name": "PostComplete",
+            "LineName": "BMC_BIOS_BOOT_OK",
+            "Type": "GPIO",
+            "Polarity": "ActiveHigh"
+        },
+        {
             "Name": "PowerOut",
             "LineName": "BMC_CPU_POWER_BUTTON",
             "Type": "GPIO",
@@ -21,7 +27,7 @@
     ],
     "timing_configs": {
         "PowerPulseMs": 200,
-        "ForceOffPulseMs": 15000,
+        "ForceOffPulseMs": 8000,
         "ResetPulseMs": 500,
         "PowerCycleMs": 5000,
         "PowerOKWatchdogMs": 8000,

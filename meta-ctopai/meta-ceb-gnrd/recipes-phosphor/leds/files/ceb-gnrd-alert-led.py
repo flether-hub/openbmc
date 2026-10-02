@@ -3,13 +3,20 @@
 import json
 import logging
 import os
+import socket
 import subprocess
 import threading
 import time
 
 
 LOG = logging.getLogger("ceb-gnrd-alert-led")
-LED_BRIGHTNESS = "/sys/class/leds/bmc-system-alert/brightness"
+# The system alert LED is the "fault" LED of phosphor-led-manager: this service only
+# asserts or de-asserts the standard enclosure_fault group, the LED manager drives
+# the physical LED (kernel LED label "fault", see led.json).
+LED_GROUP_SERVICE = "xyz.openbmc_project.LED.GroupManager"
+LED_GROUP_PATH = "/xyz/openbmc_project/led/groups/enclosure_fault"
+LED_GROUP_INTERFACE = "xyz.openbmc_project.Led.Group"
+LED_REASSERT_SECONDS = 30
 STATE_DIR = "/run/ceb-gnrd-alert-led"
 WATCHDOG_LATCH = os.path.join(STATE_DIR, "watchdog-timeout")
 BOOT_LATCH = os.path.join(STATE_DIR, "bios-boot-timeout")
@@ -29,15 +36,31 @@ THRESHOLD_INTERFACES = (
     "xyz.openbmc_project.Sensor.Threshold.SoftShutdown",
     "xyz.openbmc_project.Sensor.Threshold.HardShutdown",
     # private interface of ceb-gnrd-temp-max (upper non-recoverable temperature)
-    "xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable",
+    "com.ctopai.CebGnrd.Threshold.NonRecoverable",
 )
-# Temperature alerts only follow the upper critical (and the higher upper
-# non-recoverable) thresholds; warning level and low alarms do not light the LED.
-TEMPERATURE_ALARM_PROPERTIES = ("CriticalAlarmHigh", "NonRecoverableAlarmHigh")
+# A temperature only lights the LED when the upper non-recoverable threshold is
+# reached (the private interface of ceb-gnrd-temp-max); warning, critical and low
+# alarms do not.
+TEMPERATURE_ALARM_PROPERTIES = ("NonRecoverableAlarmHigh",)
 WATCHDOG_MATCH = (
     "type='signal',interface='xyz.openbmc_project.Watchdog',"
     "member='Timeout',path='/xyz/openbmc_project/watchdog/host0'"
 )
+
+
+def sd_notify(message):
+    """Tell systemd about READY / watchdog pings (Type=notify, WatchdogSec=)."""
+    path = os.environ.get("NOTIFY_SOCKET")
+    if not path:
+        return
+    if path[0] == "@":
+        path = "\0" + path[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(path)
+            sock.sendall(message.encode())
+    except OSError:
+        pass
 
 
 def busctl(*args):
@@ -138,6 +161,7 @@ def any_alarm(root, property_filter):
         if not sensors:
             return None
         for service, path, interfaces in sensors:
+            sd_notify("WATCHDOG=1")
             for interface in THRESHOLD_INTERFACES:
                 if interface not in interfaces:
                     continue
@@ -184,20 +208,53 @@ def sel_add(message, path, data=(0x00, 0xFF, 0xFF)):
     return False
 
 
-def read_gpio(line_name):
-    found = subprocess.run(
-        ["gpiofind", line_name], check=True, capture_output=True, text=True, timeout=5
-    ).stdout.split()
-    if len(found) != 2:
-        raise RuntimeError("unexpected gpiofind result for %s" % line_name)
-    result = subprocess.run(
-        ["gpioget", found[0], found[1]],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=5,
+CHASSIS_STATE_SERVICE = "xyz.openbmc_project.State.Chassis"
+CHASSIS_STATE_PATH = "/xyz/openbmc_project/state/chassis0"
+CHASSIS_POWER_ON = "xyz.openbmc_project.State.Chassis.PowerState.On"
+
+
+def chassis_power_on():
+    """True when the host is powered on.  BMC_CPU_PWRGD cannot be read with
+    gpioget: x86-power-control holds that line (it fails with "device or
+    resource busy"), so use the chassis state it publishes from that line."""
+    result = busctl(
+        "--json=short",
+        "get-property",
+        CHASSIS_STATE_SERVICE,
+        CHASSIS_STATE_PATH,
+        "xyz.openbmc_project.State.Chassis",
+        "CurrentPowerState",
     )
-    return result.stdout.strip() in ("1", "active")
+    try:
+        return unwrap_variant(json.loads(result.stdout)) == CHASSIS_POWER_ON
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("unexpected CurrentPowerState reply: %s" % exc)
+
+
+OS_STATE_SERVICE = "xyz.openbmc_project.State.OperatingSystem"
+OS_STATE_PATH = "/xyz/openbmc_project/state/host0"
+OS_STATE_INTERFACE = "xyz.openbmc_project.State.OperatingSystem.Status"
+# x86-power-control sets Standby while PostComplete (BMC_BIOS_BOOT_OK) is high
+# and Inactive otherwise (also when the host is switched off).
+OS_STATE_BOOT_OK = "xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.Standby"
+
+
+def bios_boot_ok():
+    """True when the BIOS has signalled boot OK (POST complete).  BMC_BIOS_BOOT_OK
+    is the PostComplete line of x86-power-control, which holds it exclusively, so
+    read the OperatingSystemState it publishes instead of the GPIO."""
+    result = busctl(
+        "--json=short",
+        "get-property",
+        OS_STATE_SERVICE,
+        OS_STATE_PATH,
+        OS_STATE_INTERFACE,
+        "OperatingSystemState",
+    )
+    try:
+        return unwrap_variant(json.loads(result.stdout)) == OS_STATE_BOOT_OK
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("unexpected OperatingSystemState reply: %s" % exc)
 
 
 def watchdog_monitor():
@@ -223,15 +280,21 @@ def watchdog_monitor():
 
 
 def set_led(on):
-    value = "1\n" if on else "0\n"
+    """Assert (True) or de-assert (False) the enclosure_fault LED group."""
     try:
-        with open(LED_BRIGHTNESS, "w", encoding="ascii") as led:
-            led.write(value)
+        busctl(
+            "set-property",
+            LED_GROUP_SERVICE,
+            LED_GROUP_PATH,
+            LED_GROUP_INTERFACE,
+            "Asserted",
+            "b",
+            "true" if on else "false",
+        )
         return True
-    except OSError as exc:
-        LOG.error("Unable to set system alert LED: %s", exc)
+    except (OSError, subprocess.SubprocessError) as exc:
+        LOG.error("Unable to set the enclosure_fault LED group: %s", exc)
         return False
-
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -242,19 +305,23 @@ def main():
     boot_succeeded = False
     boot_failed = os.path.exists(BOOT_LATCH)
     watchdog_failed = os.path.exists(WATCHDOG_LATCH)
-    # One shared system alert LED.  Voltage and temperature alarms follow the
-    # sensors: the LED goes out once they are de-asserted.  The watchdog and BIOS
+    # One shared system alert LED.  A voltage alarm and a temperature upper
+    # non-recoverable alarm follow the sensors: the LED goes out once they are
+    # de-asserted.  The watchdog and BIOS
     # boot failures are latched until the BMC is rebooted.
     voltage_alarm = False
     temperature_alarm = False
     led_state = None
+    led_set_at = 0.0
+    sd_notify("READY=1")
 
     while True:
+        sd_notify("WATCHDOG=1")
         try:
-            power_good = read_gpio("BMC_CPU_PWRGD")
-            boot_ok = read_gpio("BMC_BIOS_BOOT_OK")
+            power_good = chassis_power_on()
+            boot_ok = bios_boot_ok()
         except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
-            LOG.warning("Unable to read host boot GPIOs: %s", exc)
+            LOG.warning("Unable to read the host power / boot state: %s", exc)
         else:
             now = time.monotonic()
             if not power_good:
@@ -289,8 +356,12 @@ def main():
         if temperature_state is not None:
             temperature_alarm = temperature_state
         alert = voltage_alarm or temperature_alarm or boot_failed or watchdog_failed
-        if alert != led_state and set_led(alert):
+        # Assert again every LED_REASSERT_SECONDS while alerting: the group is lost
+        # when phosphor-led-manager restarts.
+        stale = alert and time.monotonic() - led_set_at >= LED_REASSERT_SECONDS
+        if (alert != led_state or stale) and set_led(alert):
             led_state = alert
+            led_set_at = time.monotonic()
         time.sleep(2)
 
 

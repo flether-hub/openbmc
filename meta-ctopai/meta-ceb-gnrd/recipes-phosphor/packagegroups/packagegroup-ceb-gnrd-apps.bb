@@ -53,5 +53,5 @@ RDEPENDS:${PN}-system = " \
     phosphor-dbus-monitor \
     ceb-gnrd-psu-detect \
     ceb-gnrd-rtc-sync \
-    ceb-gnrd-sel-rollover \
+    ceb-gnrd-sel-logrotate \
     "

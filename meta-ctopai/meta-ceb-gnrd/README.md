@@ -45,8 +45,9 @@ Platform features
 
 * Boot order: `bootcmd` is fixed to `run bootspi`, the FIT image in the local SPI flash; U-Boot never loads the system over the network by itself. TFTP is only used by hand: `tftpboot 0x83000000 fitImage` and `bootm` for kernel debugging (the root file system still comes from the local `rofs`), and by `run netupdate` below.
 * Default network settings equal Linux `eth0`: 192.168.185.200/24, gateway
-  192.168.185.1, server 192.168.185.84 (patched into `aspeed-common.h` by the
-  U-Boot bbappend; the build fails if the patch does not apply).
+  192.168.185.1, server 192.168.185.84 (set in `aspeed-common.h` by
+  `0001-ceb-gnrd-board-device-tree-network-and-environment.patch`, which also
+  registers the device tree and adds the board environment to the default one).
 * `run netupdate` (variables in `recipes-bsp/u-boot/files/ceb-gnrd-env.h`)
   fetches `image-kernel` and `image-rofs` over TFTP and writes them with
   `sf update` to the kernel and rofs partitions after checking their size. It
@@ -80,7 +81,7 @@ Platform features
   needed), waits five seconds for the CPLD to place the CPU in S5, and flashes
   the full-chip `host-bios` MTD. Afterward it restores BIOS ownership and
   issues one ForceOff power-button pulse, then requests PowerOn. If the host is
-  still On, the normal chassis Off request generates the configured 15-second
+  still On, the normal chassis Off request generates the configured 8-second
   override; if already Off/S5, a guarded board-specific method in
   x86-power-control generates that pulse without taking GPIO ownership away
   from the daemon. Confirm GPIO polarity and verify power sequencing on the
@@ -92,7 +93,7 @@ Platform features
   `obmc-phosphor-chassis-mgmt`, `obmc-phosphor-flash-mgmt`. Host and chassis
   state come from `x86-power-control` (`power-config-host0.json`: PowerOk
   `BMC_CPU_PWRGD`, PowerOut `BMC_CPU_POWER_BUTTON`, ResetOut `BMC_CPU_RESET`,
-  200 ms power pulse, 15 s force-off, 500 ms reset). Machine uses
+  200 ms power pulse, 8 s force-off, 500 ms reset). Machine uses
   `obmc-bsp-common.inc` (managed server), not `obmc-evb-common.inc`.
 * The chassis power button input `BMC_POWER_BUTTON_INPUT` is detect-only: a
   press is written to the SEL and the journal (`ceb-gnrd-power-button-log`). It
@@ -114,7 +115,7 @@ Platform features
 * The pinned `linux-aspeed` revision (`c0538446`) lacks the AST2600 eSPI
   controller driver. The board carries a focused driver
   (`0001-soc-aspeed-add-AST2600-eSPI-peripheral-ready-driver.patch`; its
-  Makefile line is added by `linux-aspeed_%.bbappend`) and enables
+  Makefile line is part of the same patch) and enables
   `CONFIG_ASPEED_ESPI`. It enables only the Peripheral channel, asserts
   Peripheral Software Ready, resets the block and the peripheral channel on a
   host eSPI reset and sets ready again, counts channel errors/aborts, logs
@@ -147,7 +148,7 @@ Platform features
   Upper thresholds only (non-critical / critical / non-recoverable):
   CPU 90 / 98 / 105 degC, DIMM 80 / 85 / 95 degC.  The first two use the Warning
   and Critical threshold interfaces; the non-recoverable one is on a private
-  interface (`xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable`), never on
+  interface (`com.ctopai.CebGnrd.Threshold.NonRecoverable`), never on
   HardShutdown: the BMC must not shut the system down because of a threshold,
   and services such as phosphor-fan's sensor monitor power the system off on a
   HardShutdown alarm (that monitor is also removed from the image).  The service
@@ -201,13 +202,24 @@ Platform features
 * A kernel oops becomes a panic (`CONFIG_PANIC_ON_OOPS`) and a panic restarts the
   BMC after 5 s (`CONFIG_PANIC_TIMEOUT=5`).  Magic SysRq is enabled (not from the
   serial BREAK) so that `echo c > /proc/sysrq-trigger` can test this.
-* `ceb-gnrd-health-monitor` probes the object mapper, Entity-Manager, ipmid, the
-  BMC state manager, bmcweb, fan settings and CPU/DIMM max temperature every 30 s
-  (D-Bus Peer.Ping or HTTPS), restarts a service after 3 failures with a SEL
-  record, and reboots the BMC if the mapper or Entity-Manager stays down or a
-  service needs 3 restarts in 15 minutes (at most 3 forced reboots per hour).
+* Service recovery uses the standard systemd / OpenBMC mechanisms
+  (`ceb-gnrd-health`): a drop-in `10-ceb-gnrd-restart.conf` gives the object
+  mapper, Entity-Manager, bmcweb, ipmid and this layer's fan-settings,
+  temp-max and alert-led services `Restart=always`, a start limit (5 starts in
+  5 minutes) and `OnFailure=obmc-bmc-service-quiesce@0.target`, which makes
+  phosphor-state-manager put the BMC into Quiesced; the option
+  `auto-reboot-on-bmc-quiesce` (`phosphor-state-manager_%.bbappend`) then reboots
+  it.  Upstream puts no limit on these reboots; `ceb-gnrd-quiesce-reboot-limit.sh`
+  (ExecCondition of `phosphor-bmc-quiesce-reboot.service`) allows at most 1
+  automatic reboot, counted in the read-write flash and cleared 15 minutes after a
+  boot by `ceb-gnrd-quiesce-reboot-clear.timer`.  If the fault is still there
+  after that reboot the BMC stays Quiesced (a SEL record is written) for manual
+  recovery.  The upstream daemons do not ping the systemd watchdog,
+  so only crashes are recovered for them (a hang that keeps the process alive is
+  not).  This layer's own services are `Type=notify` with `WatchdogSec=` and
+  ping from their main loop, so a hang restarts them.
   `ceb-gnrd-wdt-reset-log` writes a SEL record when `bootstatus` shows a
-  watchdog reset without the clean-shutdown marker (an `reset` typed in U-Boot is
+  watchdog reset without the clean-shutdown marker (a `reset` typed in U-Boot is
   also reported once).  Neither has been built or run yet.
 * `phosphor-ipmi-host` has a drop-in (`10-ceb-gnrd-wait-sensors.conf`) that waits
   up to 90 s until the number of D-Bus sensors has been stable for 8 s.  Started
@@ -220,6 +232,37 @@ Platform features
   `/tmp/ceb-gnrd-check.tar.gz`.  Its expected values are those of the QEMU run.
   Known FAIL there: Manager `FirmwareVersion` (see the bmcweb note above).
 
+### Alignment with OpenBMC conventions
+
+* x86 platform setup follows the Intel reference platform: `obmc-host-ctl` is not
+  a machine feature (its only provider is OpenPOWER's `obmc-op-control-host`) and
+  `VIRTUAL-RUNTIME_obmc-discover-system-state` is `x86-power-control`, which also
+  applies the power restore policy at BMC boot.
+* Private D-Bus names use the vendor domain: services and interfaces are
+  `com.ctopai.CebGnrd.*` (`FanSettings`, `TempMax`, `Threshold.NonRecoverable`).
+  The fan settings object path stays `/xyz/openbmc_project/ceb_gnrd/fan_settings`
+  because the bmcweb D-Bus REST API only serves object paths under `/xyz` and
+  `/org`.
+* Changes to upstream sources are patch files, not `sed`: U-Boot
+  (`0001-ceb-gnrd-board-device-tree-network-and-environment.patch`), the kernel
+  Makefile line (inside the eSPI patch), ipmitool's product name
+  (`0002-ipmitool-add-ceb-gnrd-product-name.patch`).  The x86-power-control and
+  ipmid patches were regenerated against the pinned sources, so the `patch-fuzz`
+  QA downgrade is gone.  The ipmitool manufacturer name (IANA enterprise number
+  6659) still comes from a line added to the installed `enterprise-numbers` data
+  file in `do_install:append`, because that file is not part of the ipmitool source.
+* `DISTRO_VERSION` is defined in the vendor distro `ctopai-openbmc`
+  (`meta-ctopai/conf/distro`); `local.conf` must select it (`./setup ceb-gnrd`
+  migrates an old `DISTRO ?= "openbmc-phosphor"`).  The board hardware contract is
+  installed through `MACHINE_EXTRA_RDEPENDS`, not a machine feature.
+* Not changed on purpose: bmcweb keeps `redfish-updateservice-use-dbus=disabled`
+  and phosphor-software-manager keeps the classic updater
+  (`software-update-dbus-interface` removed, BMC updater enabled by a symlink).
+  The default flow replaces `xyz.openbmc_project.Software.BMC.Updater` by
+  `Software.Manager` and the BIOS update here (`bios-update.sh`,
+  `obmc-flash-host-bios@.service`) is built on the classic flow, so switching
+  needs the BIOS update re-done and tested on the board.
+* None of this was built or run.
 ### RTC and log time
 
 * The NCT3015Y-R is on AST2600 I2C10 (Linux `i2c-9`, address `0x6f`) and is
@@ -280,21 +323,36 @@ should appear after flashing the updated image.
 
 ### Alerts, SEL and the system alert LED
 
-* One shared LED, `BMC_SYS_ALERT_LED` (GPIOI5), shows four alarms
-  (`ceb-gnrd-alert-led`): a voltage threshold alarm and a temperature upper
-  critical alarm (or the higher non-recoverable one) go out when the alarm
-  clears; a host watchdog timeout and a BIOS boot failure (`BMC_BIOS_BOOT_OK`
+* One shared LED, `BMC_SYS_ALERT_LED` (GPIOI5, kernel LED label `fault`),
+  shows four alarms (`ceb-gnrd-alert-led`).  It is driven by phosphor-led-manager:
+  the service only asserts / de-asserts the standard `enclosure_fault` group
+  (`Asserted` property, re-sent every 30 s while alerting) and `led.json` maps
+  the group to the `fault` LED.  A voltage threshold alarm and a temperature
+  upper non-recoverable (UNR) alarm go out when the alarm clears; a temperature
+  upper critical alarm alone does not light the LED; a host watchdog timeout and a BIOS boot failure (`BMC_BIOS_BOOT_OK`
   not asserted within 600 s of power good) stay latched until the BMC is
-  rebooted. Any of them lights the LED.
+  rebooted. Any of them lights the LED.  The service reads no GPIO itself: the
+  host power state comes from `xyz.openbmc_project.State.Chassis`
+  `CurrentPowerState` and BIOS boot OK from `OperatingSystemState`
+  (`xyz.openbmc_project.State.OperatingSystem`, `/xyz/openbmc_project/state/host0`);
+  x86-power-control holds both lines (`PowerOk` `BMC_CPU_PWRGD`, standard
+  `PostComplete` `BMC_BIOS_BOOT_OK`, high active) exclusively.  A falling
+  `PostComplete` edge while the host is on starts the warm-reset check of its
+  state machine and records a soft-reset restart cause; it sends no power pulse.
+  Not run on the board.
 * All four are written to the SEL: voltages and temperatures by
   phosphor-sel-logger's threshold monitor (a board patch,
   `0001-ceb-gnrd-log-non-recoverable-threshold-events.patch`, makes it handle
   the private NonRecoverable interface as upper/lower non-recoverable), the watchdog by its
   watchdog monitor and the BIOS failure by the alert service itself.
-* The SEL is a rollover log: `ceb-gnrd-sel-rollover` keeps the newest 2000
-  records of `/var/log/ipmi_sel` and drops the oldest when it grows past 2100
-  (it may lose a record that arrives during the trim). Whether `/var/log`
-  survives a reboot is not checked.
+* The SEL is a rollover log kept with the standard logrotate
+  (`ceb-gnrd-sel-logrotate`): phosphor-sel-logger reads `/var/log/ipmi_sel*` (all
+  rotated files) and keeps the next record ID in a file of its own, so IDs are
+  never reused.  A timer runs logrotate every 5 minutes with `size 15k` and
+  `rotate 1`, i.e. about the newest 100 to 200 records are kept and older ones
+  are deleted (size based, so the count is approximate; a burst of records can
+  exceed it for up to 5 minutes).  Whether `/var/log` survives a reboot is not
+  checked.
 * The web event log is fed from the SEL through the journal records of
   sel-logger.
 
@@ -303,7 +361,7 @@ should appear after flashing the updated image.
 * `mc info`: Device ID 32, Device Revision 2, Product ID 3346 (0x0D12),
   Manufacturer ID 6659 (0x1A03), shown as `CTOPAI` / `CEB-GNR-D` by the
   on-BMC ipmitool. The board revision is the fourth AUX firmware revision byte.
-  Firmware revision comes from `DISTRO_VERSION` (2.0.0; the firmware version starts at 2.0, shown as 2.00 by `ipmitool mc info`).
+  Firmware revision comes from `DISTRO_VERSION`, set in the vendor distro `meta-ctopai/conf/distro/ctopai-openbmc.conf` (`DISTRO = "ctopai-openbmc"` in `local.conf`; 2.0.0; the firmware version starts at 2.0, shown as 2.00 by `ipmitool mc info`).
 * Sensors: `dynamic-sensors` and `hybrid-sensors` are enabled, so every D-Bus
   sensor (ADC, temperatures, fans, CPU/DIMM maximum, PSU) is visible through
   IPMI next to the static host-state sensors. In QEMU only the two static

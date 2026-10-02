@@ -5,7 +5,8 @@ Subject: [PATCH] x86-power-control: expose force-off pulse while host is off
 
 The BIOS update CPLD handoff can already put the host in S5 before the BMC
 finishes flashing. In that state a normal Off transition is a no-op, but the
-board requires one explicit 15-second power-button override before powering
+board requires one explicit force-off power-button override (ForceOffPulseMs)
+before powering
 the host back on. Expose a guarded board-used method while preserving GPIO
 ownership in x86-power-control.
 
@@ -17,7 +18,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific power sequence]
 diff --git a/src/power_control.cpp b/src/power_control.cpp
 --- a/src/power_control.cpp
 +++ b/src/power_control.cpp
-@@ -3211,3 +3211,18 @@
+@@ -3210,6 +3210,21 @@
+         });
      chassisIface->register_property("CurrentPowerState",
                                      std::string(getChassisState(powerState)));
 +    chassisIface->register_method("ForcePowerButtonOff", []() {
@@ -36,3 +38,5 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
 +        lg2::info("Force-off power-button pulse started while host is Off");
 +    });
      chassisIface->register_property("LastStateChangeTime", getCurrentTimeMs());
+ 
+     chassisIface->initialize();

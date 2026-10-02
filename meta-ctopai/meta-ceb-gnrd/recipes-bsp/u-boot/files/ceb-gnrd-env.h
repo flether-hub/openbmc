@@ -2,8 +2,8 @@
 /*
  * CEB-GNRD: extra default environment variables.
  *
- * CEB_GNRD_ENV is concatenated into CONFIG_EXTRA_ENV_SETTINGS (see the sed in
- * u-boot-aspeed-sdk_%.bbappend).
+ * CEB_GNRD_ENV is concatenated into CONFIG_EXTRA_ENV_SETTINGS by
+ * 0001-ceb-gnrd-board-device-tree-network-and-environment.patch.
  *
  * netupdate: fetch the kernel FIT and the read-only root filesystem from the
  * TFTP server and write them to the SPI flash.  U-Boot itself, its environment

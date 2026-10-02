@@ -7,7 +7,7 @@
 # cannot tell a hang from a clean reboot.  The service therefore leaves a marker
 # file when it is stopped at shutdown ("stop"); at the next boot ("start") a
 # watchdog reset without the marker is an unexpected reset: a hang of systemd or
-# the kernel, a kernel panic, or a forced reboot by ceb-gnrd-health-monitor.
+# the kernel, or a kernel panic (a "reboot -f" counts too).
 #
 #   ceb-gnrd-wdt-reset-log start|stop
 

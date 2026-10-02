@@ -1,6 +1,7 @@
-# 该配方没有版本后缀，因此必须使用不带 _% 的 bbappend 文件名。
-# 上电恢复策略的出厂默认值为 Restore（恢复断电前状态）。
-# 用户可在 Web 界面中改为 AlwaysOn / AlwaysOff / Restore，设置会被持久化。
+# This recipe has no version suffix, so the bbappend file name must not use _%.
+# Factory default of the power restore policy: Restore (return to the state before
+# the power loss).  The user can change it to AlwaysOn / AlwaysOff / Restore in
+# the web UI; the choice is persisted.
 do_install:append:ceb-gnrd() {
     sed -i \
         's/Default: RestorePolicy::Policy::AlwaysOff/Default: RestorePolicy::Policy::Restore/g' \

@@ -31,8 +31,11 @@
             default-state = "off";
         };
 
+        /* System alert (fault) LED, driven through phosphor-led-manager (group
+         * enclosure_fault).  The label is the LED name used in led.json and in
+         * the D-Bus path; keep it free of dashes. */
         system-alert {
-            label = "bmc-system-alert";
+            label = "fault";
             gpios = <&gpio0 69 GPIO_ACTIVE_HIGH>;
             default-state = "off";
         };

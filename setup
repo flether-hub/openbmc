@@ -100,6 +100,16 @@ machine() {
                     fi
                 fi
 
+                # The release version moved from the machine configuration into the
+                # ctopai-openbmc distro; reuse existing builds that still select
+                # the plain openbmc-phosphor distro.
+                if [ "${target}" = "ceb-gnrd" ] && [ -f conf/local.conf ]; then
+                    if grep -q '^DISTRO ?= "openbmc-phosphor"$' conf/local.conf; then
+                        sed -i 's/^DISTRO ?= "openbmc-phosphor"$/DISTRO ?= "ctopai-openbmc"/' conf/local.conf
+                        echo "Switched ${build_dir}/conf/local.conf to the ctopai-openbmc distro"
+                    fi
+                fi
+
                 if [ "$(cat conf/templateconf.cfg)" = "${tmpl}/templates/default" ]; then
                     sed "s/^\(MACHINE\s*[?:]*\s*=\s*\).*$/\1\"${target}\"/" \
                         -i conf/local.conf

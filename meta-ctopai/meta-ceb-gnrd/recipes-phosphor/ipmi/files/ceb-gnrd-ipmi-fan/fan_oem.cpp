@@ -33,9 +33,9 @@ void registerCebGnrdFanCommands() __attribute__((constructor));
 
 namespace
 {
-constexpr auto fanService = "xyz.openbmc_project.CebGnrd.FanSettings";
+constexpr auto fanService = "com.ctopai.CebGnrd.FanSettings";
 constexpr auto fanPath = "/xyz/openbmc_project/ceb_gnrd/fan_settings";
-constexpr auto fanInterface = "xyz.openbmc_project.CebGnrd.FanSettings";
+constexpr auto fanInterface = "com.ctopai.CebGnrd.FanSettings";
 
 constexpr ipmi::Cmd cmdGetFans = 0x01;
 constexpr ipmi::Cmd cmdSetFan = 0x02;

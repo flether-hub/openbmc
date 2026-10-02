@@ -1,5 +1,5 @@
 MACHINE ??= "ceb-gnrd"
-DISTRO ?= "openbmc-phosphor"
+DISTRO ?= "ctopai-openbmc"
 PACKAGE_CLASSES ?= "package_ipk"
 SANITY_TESTED_DISTROS:append ?= " *"
 EXTRA_IMAGE_FEATURES ?= "allow-root-login"

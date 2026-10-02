@@ -9,7 +9,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = " \
     file://ceb-gnrd-fan-settings.py \
     file://ceb-gnrd-fan-settings.service \
-    file://xyz.openbmc_project.CebGnrd.FanSettings.conf \
+    file://com.ctopai.CebGnrd.FanSettings.conf \
     "
 
 S = "${UNPACKDIR}"
@@ -35,12 +35,12 @@ do_install() {
     install -d ${D}${libexecdir} ${D}${systemd_system_unitdir} ${D}${datadir}/dbus-1/system.d
     install -m 0755 ${UNPACKDIR}/ceb-gnrd-fan-settings.py ${D}${libexecdir}/ceb-gnrd-fan-settings.py
     install -m 0644 ${UNPACKDIR}/ceb-gnrd-fan-settings.service ${D}${systemd_system_unitdir}/ceb-gnrd-fan-settings.service
-    install -m 0644 ${UNPACKDIR}/xyz.openbmc_project.CebGnrd.FanSettings.conf \
-        ${D}${datadir}/dbus-1/system.d/xyz.openbmc_project.CebGnrd.FanSettings.conf
+    install -m 0644 ${UNPACKDIR}/com.ctopai.CebGnrd.FanSettings.conf \
+        ${D}${datadir}/dbus-1/system.d/com.ctopai.CebGnrd.FanSettings.conf
 }
 
 FILES:${PN} += " \
     ${libexecdir}/ceb-gnrd-fan-settings.py \
     ${systemd_system_unitdir}/ceb-gnrd-fan-settings.service \
-    ${datadir}/dbus-1/system.d/xyz.openbmc_project.CebGnrd.FanSettings.conf \
+    ${datadir}/dbus-1/system.d/com.ctopai.CebGnrd.FanSettings.conf \
     "

@@ -1,0 +1,6 @@
+[Unit]
+Description=Forget the automatic BMC reboot count after a stable boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ceb-gnrd-quiesce-reboot-limit.sh clear

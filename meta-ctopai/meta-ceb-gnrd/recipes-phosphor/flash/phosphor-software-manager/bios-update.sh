@@ -7,7 +7,8 @@ readonly MTD_PARTITION_NAME="host-bios"
 readonly EXPECTED_FLASH_SIZE=67108864
 readonly HOST_SHUTDOWN_TIMEOUT_S=1800
 readonly HOST_OFF_STABLE_S=3
-readonly FORCE_OFF_PULSE_S=16
+# Must be longer than ForceOffPulseMs (8000 ms) in x86-power-control's power-config-host0.json.
+readonly FORCE_OFF_PULSE_S=9
 FLASH_SELECT_PID=""
 FLASH_OWNERSHIP_SELECTED=0
 

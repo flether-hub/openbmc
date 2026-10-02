@@ -29,6 +29,14 @@ diff --git a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
  config ASPEED_SBC
  	bool "ASPEED Secure Boot Controller driver"
  	default MACH_ASPEED_G6
+diff --git a/drivers/soc/aspeed/Makefile b/drivers/soc/aspeed/Makefile
+--- a/drivers/soc/aspeed/Makefile
++++ b/drivers/soc/aspeed/Makefile
+@@ -6,3 +6,4 @@
+ obj-$(CONFIG_ASPEED_SOCINFO)		+= aspeed-socinfo.o
+ obj-$(CONFIG_ASPEED_SBC)		+= aspeed-sbc.o
+ obj-$(CONFIG_ASPEED_XDMA)		+= aspeed-xdma.o
++obj-$(CONFIG_ASPEED_ESPI)		+= aspeed-espi-peripheral.o
 diff --git a/drivers/soc/aspeed/aspeed-espi-peripheral.c b/drivers/soc/aspeed/aspeed-espi-peripheral.c
 new file mode 100644
 index 000000000000..111111111111

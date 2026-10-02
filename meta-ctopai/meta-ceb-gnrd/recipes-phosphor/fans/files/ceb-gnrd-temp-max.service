@@ -5,7 +5,9 @@ Wants=xyz.openbmc_project.EntityManager.service
 Before=phosphor-pid-control.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+WatchdogSec=60
 ExecStart=/usr/libexec/ceb-gnrd-temp-max.py
 Restart=always
 RestartSec=5

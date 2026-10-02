@@ -2,7 +2,10 @@
 Description=CEB-GNRD system alert LED policy
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+# the main loop pings every 2 s and between sensor reads; a hang stops the pings
+WatchdogSec=180
 ExecStart=/usr/libexec/ceb-gnrd-alert-led.py
 Restart=always
 RestartSec=2

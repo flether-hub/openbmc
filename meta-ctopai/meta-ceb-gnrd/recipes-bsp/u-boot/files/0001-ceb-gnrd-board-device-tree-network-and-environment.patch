@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Fri, 2 Oct 2026 00:00:00 +0000
+Subject: [PATCH] ceb-gnrd: board device tree, default network and environment
+
+Register the ast2600-ceb-gnrd device tree in arch/arm/dts/Makefile, set the
+default network settings to the Linux eth0 values (192.168.185.200/24, gateway
+192.168.185.1, TFTP server 192.168.185.84) and add the board environment
+(CEB_GNRD_ENV, "run netupdate") to the default environment.  The device tree
+(ast2600-ceb-gnrd.dts) and include/configs/ceb-gnrd-env.h are new files that the
+recipe installs next to this patch.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific configuration]
+---
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -719,6 +719,7 @@
+ 	mt7623n-bananapi-bpi-r2.dtb \
+ 	mt7629-rfb.dtb
+ 
++dtb-y += ast2600-ceb-gnrd.dtb
+ targets += $(dtb-y)
+ 
+ # Add any required device tree compiler flags here
+diff --git a/include/configs/aspeed-common.h b/include/configs/aspeed-common.h
+--- a/include/configs/aspeed-common.h
++++ b/include/configs/aspeed-common.h
+@@ -13,10 +13,10 @@
+ 
+ #define CONFIG_BOOTFILE		"all.bin"
+ 
++#define CONFIG_GATEWAYIP	192.168.185.1
+-#define CONFIG_GATEWAYIP	192.168.0.1
+ #define CONFIG_NETMASK		255.255.255.0
++#define CONFIG_IPADDR		192.168.185.200
++#define CONFIG_SERVERIP		192.168.185.84
+-#define CONFIG_IPADDR		192.168.0.45
+-#define CONFIG_SERVERIP		192.168.0.81
+ 
+ #define CONFIG_STANDALONE_LOAD_ADDR 0x83000000
+ 
+diff --git a/include/configs/evb_ast2600a1_spl.h b/include/configs/evb_ast2600a1_spl.h
+--- a/include/configs/evb_ast2600a1_spl.h
++++ b/include/configs/evb_ast2600a1_spl.h
+@@ -8,6 +8,7 @@
+ #define __CONFIG_H
+ 
+ #include <configs/aspeed-common.h>
++#include <configs/ceb-gnrd-env.h>
+ 
+ #define CONFIG_SYS_MEMTEST_START	(CONFIG_SYS_SDRAM_BASE + 0x300000)
+ #define CONFIG_SYS_MEMTEST_END		(CONFIG_SYS_MEMTEST_START + 0x5000000)
+@@ -30,7 +31,7 @@
+ #define CONFIG_EXTRA_ENV_SETTINGS	\
+ 	"loadaddr=" __stringify(CONFIG_SYS_LOAD_ADDR) "\0"	\
+ 	"bootspi=fdt addr 20100000 && fdt header get fitsize totalsize && cp.b 20100000 ${loadaddr} ${fitsize} && bootm; echo Error loading kernel FIT image\0"	\
++	CEB_GNRD_ENV "verify=yes\0"	\
+-	"verify=yes\0"	\
+ 	""
+ 
+ #ifdef CONFIG_SPL_TINY

@@ -121,7 +121,8 @@ check "rwfs is mounted and persistent" "df -h /var/lib | tail -n 1" 'cow|overlay
 info  "u-boot environment" "fw_printenv bootcmd bootargs ipaddr serverip"
 
 sec "7. Other BMC functions"
-check "alert LED sysfs exists" "ls /sys/class/leds/" 'alert|system|identify|bmc'
+check "fault and identify LEDs exist (sysfs)" "ls /sys/class/leds/" 'fault'
+check "enclosure_fault LED group is on D-Bus" "busctl --system get-property xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted" '^b (true|false)$'
 check "obmc-console (SOL) unit exists" "systemctl list-units --all --no-legend 'obmc-console*' | wc -l" '^ *[1-9]'
 info  "network" "ip -br addr"
 info  "NC-SI (expected: no channel in QEMU)" "dmesg | grep -i ncsi | tail -n 5"

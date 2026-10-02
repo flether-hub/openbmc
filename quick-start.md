@@ -533,21 +533,21 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | U-Boot | 固定从本地 SPI 闪存启动（`bootcmd = run bootspi`）；默认网络参数与 Linux eth0 一致（用于手动 TFTP）；`run netupdate` 通过 TFTP 更新闪存里的内核和 rofs（见第四章 4.5）；NC-SI 口在 U-Boot 里禁用 |
 | PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备；传感器有输入/输出电压、输入/输出功率和 PSUn_Temp（取 pmbus 的 temp2）⚠️ |
 | SD / eMMC | 本板没有，U-Boot 和 Linux 设备树都把 `emmc`、`sdhci` 相关节点设为 disabled，开机日志里不再有 `mmc0: Failed to initialize a non-removable card` |
-| 硬件看门狗 | AST2600 WDT1 由 systemd 喂狗（`RuntimeWatchdogSec=120s`），复位类型 `soc`（只复位 SoC，不是整颗芯片，避免 GPIO 回到上电状态让 CPLD/主机侧信号抖动 ⚠️ 上板要确认复位期间这些电平稳定）。`aspeed_wdt` 不支持预超时，所以 `systemd-conf` 的 `50-ceb-gnrd-watchdog.conf` 清掉了 meta-phosphor 设的 `RuntimeWatchdogPreSec` 和 `RuntimeWatchdogPreGovernor=panic`，否则每次开机都会有 `Failed to set watchdog pretimeout_governor` 提示。内核崩溃：`CONFIG_PANIC_ON_OOPS` + `CONFIG_PANIC_TIMEOUT=5`，5 秒后重启；打开了 Magic SysRq（`echo c > /proc/sysrq-trigger` 可以制造崩溃做测试，串口 BREAK 不能触发）。服务卡死：`ceb-gnrd-health-monitor` 每 30 秒探测对象映射器、Entity-Manager、ipmid、状态管理、bmcweb、风扇设置、温度最大值，连续失败 3 次重启该服务并写 SEL，同一服务 15 分钟内重启 3 次或映射器/Entity-Manager 重启后仍无应答就强制重启 BMC（每小时最多 3 次）；`ceb-gnrd-wdt-reset-log` 在没有干净关机标记而 `bootstatus` 显示看门狗复位时写 SEL（在 U-Boot 里 `reset` 也会被记一次）。以上新增部分没有编译、没有验证 |
+| 硬件看门狗 | AST2600 WDT1 由 systemd 喂狗（`RuntimeWatchdogSec=120s`），复位类型 `soc`（只复位 SoC，不是整颗芯片，避免 GPIO 回到上电状态让 CPLD/主机侧信号抖动 ⚠️ 上板要确认复位期间这些电平稳定）。`aspeed_wdt` 不支持预超时，所以 `systemd-conf` 的 `50-ceb-gnrd-watchdog.conf` 清掉了 meta-phosphor 设的 `RuntimeWatchdogPreSec` 和 `RuntimeWatchdogPreGovernor=panic`，否则每次开机都会有 `Failed to set watchdog pretimeout_governor` 提示。内核崩溃：`CONFIG_PANIC_ON_OOPS` + `CONFIG_PANIC_TIMEOUT=5`，5 秒后重启；打开了 Magic SysRq（`echo c > /proc/sysrq-trigger` 可以制造崩溃做测试，串口 BREAK 不能触发）。服务恢复（标准做法，`ceb-gnrd-health`）：drop-in `10-ceb-gnrd-restart.conf` 给对象映射器、Entity-Manager、bmcweb、ipmid 和本层的风扇设置、温度最大值、告警灯服务设置 `Restart=always`、启动限制（5 分钟内 5 次）和 `OnFailure=obmc-bmc-service-quiesce@0.target`，服务一直起不来时 phosphor-state-manager 把 BMC 置为 Quiesced，并按 `phosphor-state-manager_%.bbappend` 里打开的 `auto-reboot-on-bmc-quiesce` 自动重启 BMC。上游没有次数限制，这里用 `ceb-gnrd-quiesce-reboot-limit.sh` 限制为**最多自动重启 1 次**（计数存在读写分区，开机 15 分钟后由定时器清零）：重启后同一个故障还在，BMC 就停在 Quiesced 状态，不再自动重启，并写一条 SEL，需要人工处理；上游的守护进程不向 systemd 报活，所以只能恢复崩溃，进程还在但卡死不会被发现，本层自己的三个服务是 `Type=notify` + `WatchdogSec=`，主循环卡死会被重启；`ceb-gnrd-wdt-reset-log` 在没有干净关机标记而 `bootstatus` 显示看门狗复位时写 SEL（在 U-Boot 里 `reset` 也会被记一次）。以上新增部分没有编译、没有验证 |
 
 ### 2. GPIO 行为
 
 | GPIO | 行为 |
 | :--- | :--- |
 | UID 按键 `BMC_UID_BUTTON_N`（GPIOV0） | 低有效，按下切换 identify 灯组；UID 灯 `BMC_UID_LED`（GPIOV1）高有效 |
-| CPU 开关机 `BMC_CPU_POWER_BUTTON`（V2）、复位 `BMC_CPU_RESET`（V3） | 低脉冲，由 `x86-power-control` 输出（200 ms / 强制关机 15 s / 复位 500 ms） |
+| CPU 开关机 `BMC_CPU_POWER_BUTTON`（V2）、复位 `BMC_CPU_RESET`（V3） | 低脉冲，由 `x86-power-control` 输出（200 ms / 强制关机 8 s / 复位 500 ms；强制关机脉冲在 `power-config-host0.json` 的 `ForceOffPulseMs`，`bios-update.sh` 里的 `FORCE_OFF_PULSE_S` 要比它大 1 秒） |
 | `BMC_CPU_PWRGD`（V4） | 高有效输入，供状态机判断上电 |
 | 电源按键输入 `BMC_POWER_BUTTON_INPUT`（GPIOM2） | **只检测**：按下时写 SEL 和日志，不触发开关机，也不直通到 CPU 电源按键输出 |
-| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 电压越限、温度超过 Upper Critical（含更高的不可恢复上限）点亮，两者恢复后熄灭；watchdog 超时、BIOS 启动超时（**600 秒**）锁存点亮，BMC 重启后清除 |
+| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 内核 LED 名 `fault`，由 phosphor-led-manager 的标准组 `enclosure_fault` 驱动（`ceb-gnrd-alert-led` 只负责置位/清除该组的 `Asserted`，每 30 秒重发一次以防 led-manager 重启丢状态）。电压越限点亮，**温度只有到达 UNR（不可恢复上限）才点亮**，Upper Critical 不亮灯，两者恢复后熄灭；watchdog 超时、BIOS 启动超时（**600 秒**）锁存点亮，BMC 重启后清除 ⚠️ 没有验证 |
 | `BMC_FAN_BMC_OVERRIDE_N`（GPIOI6） | 风扇控制就绪后拉高，BMC 接管风扇；服务停止时拉低交还 CPLD |
 | `BMC_HBLED_N`（GPIOP7） | eSPI 驱动就绪后启用内核 heartbeat 触发器 |
 | `BMC_BIOS_FLASH_SELECT`（GPIOM1） | BIOS 升级时拉高切给 BMC，等 5 秒后烧写，结束后拉低 |
-| `BMC_BIOS_BOOT_OK`（GPIOM7） | 只用于取消 BIOS 启动超时告警，不更新主机启动状态 |
+| `BMC_BIOS_BOOT_OK`（GPIOM7） | x86-power-control 的标准 `PostComplete`（高有效）：拉高时 D-Bus `xyz.openbmc_project.State.OperatingSystem` 的 `OperatingSystemState` 为 `Standby`，否则为 `Inactive`（主机关机时也是 `Inactive`）。主机开着时它的下降沿会进入 x86-power-control 的热复位检查并记一次软复位的重启原因，**不会产生电源脉冲**。告警灯服务读 `OperatingSystemState` 来取消当次 BIOS 启动超时告警 ⚠️ 没有在板上验证 |
 
 ### 3. Web 界面
 
@@ -557,7 +557,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * **固件版本**：bmcweb 默认（`redfish-updateservice-use-dbus=enabled`）到 `/xyz/openbmc_project/software/bmc/functional` 找 BMC 版本，而这里用的经典 `phosphor-image-updater` 发布在 `/xyz/openbmc_project/software/functional`，结果 Redfish 的 `FirmwareVersion` 为空、网页 BMC 卡片显示 `--`；`bmcweb_%.bbappend` 里已把该选项设为 `disabled`（同时固件上传走 `/tmp/images`，和经典更新服务一致）⚠️ 没有验证。`journalctl` 里的 `mapperx: Found invalid association` 是 BMC 版本对象的 `inventory` 关联目标路径为空（找不到 BMC 清单对象），只是告警。网页只提供“从浏览器读取镜像文件”（走 bmcweb 的 /vm/0/0 WebSocket → jsnbd → nbd → USB mass storage → 主机 VL805 USB 口）；“从外部服务器读取镜像文件”（CIFS/HTTPS）需要已停止维护的 virtual-media 服务，镜像里没有，网页默认也不显示。上板验证：网页选一个 ISO 点开始，主机里应出现一个 USB 光盘/U 盘；BMC 上 `ls /sys/kernel/config/usb_gadget/`、`ls /dev/nbd0`。
 * **U-Boot 启动方式**：固定从本地 SPI 闪存启动（`bootcmd = run bootspi`），不自动走网络；U-Boot 默认网络参数与 Linux 的 eth0 一致（192.168.185.200/24，网关 192.168.185.1，TFTP 服务器 192.168.185.84），只用于手动 TFTP 启动调试和 `run netupdate`。虚拟机与物理主板的区别、环境重置、排查步骤详见第四章 “4. U-Boot 的 TFTP 使用”。
 * **时间和 SEL**：BMC 系统时间默认从板上 RTC（NCT3015Y）读取，SEL 时间戳用系统时间。AST2600 内部 RTC 已关闭，NCT3015Y 是 `rtc0`。
-* **SEL 记录**：电压、温度（含 CPU_MAX_TEMP / DIMM_MAX_TEMP，含不可恢复级别）、watchdog 超时、BIOS 启动失败（600 秒）、电源按键都会写 SEL。SEL 为 rollover：约保留最新 2000 条，满了自动丢弃最老的。
+* **SEL 记录**：电压、温度（含 CPU_MAX_TEMP / DIMM_MAX_TEMP，含不可恢复级别）、watchdog 超时、BIOS 启动失败（600 秒）、电源按键都会写 SEL。SEL 为 rollover，用标准的 logrotate 实现（`ceb-gnrd-sel-logrotate`，每 5 分钟检查一次，单个文件 15 KiB、保留 1 个旧文件），约保留最新 100 到 200 条，更老的删除；按大小轮转，条数是近似值，记录 ID 由 sel-logger 单独保存，不会重复。
 * **SSH / SCP**：BMC 用 dropbear 提供 SSH（22 端口），已带 `openssh-sftp-server` 和 `openssh-scp`，`scp` 新旧协议都可用，例如 `scp -P 2222 file root@127.0.0.1:/tmp/`（QEMU）。
 * **SOL**：硬件上只能接收（CPU 串口输出接 BMC UART3 的 RX，TXD3 不接管脚），网页、SSH、IPMI 的 SOL 都不能向主机输入；网页提示为只读模式，终端禁用输入。
 * **风扇控制**：6 个风扇可单独或统一设置（网页下拉框是“全部风扇”和 `SYS_FAN0` 到 `SYS_FAN5`），模式只有“自适应”（最低 30%、最高 100%，固定默认值，没有最低转速滑块）和“固定转速”（20/40/60/80/100%）。页面下方有命令框：上面一个是读取每个风扇转速和模式的命令，下面一个随当前选择实时生成设置命令。风扇控制器（Pid）在 Entity-Manager 里叫 `Fan0 Control` 到 `Fan5 Control`，不能和风扇本身的 `SYS_FAN0` 到 `SYS_FAN5` 同名。
@@ -570,9 +570,9 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * `mc info`：Device ID 32，Device Revision 2，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。
 * 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常；温度读不到（主机已开机）时风扇 60%（temp-max 发布 70 ℃，两条曲线在 70 ℃ 都是 60%），风扇读到几个都不影响（FailSafePercent=30）。
 * 主机侧 IPMI 走 KCS3（见上）；LAN 通道 1 是 eth0（RMCP+ 只绑 eth0），通道 2 是 NC-SI 的 eth1。
-* SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-rollover` 保持 rollover，sel-logger 加了补丁，把“不可恢复”事件也记成 SEL（CPU/DIMM 最高温的 UNR 放在我们自己的接口上，不用 HardShutdown，所以不会触发任何自动关机）；告警灯的四种告警都有 SEL 记录。
+* SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-logrotate`（logrotate 按大小轮转）保持 rollover，sel-logger 加了补丁，把“不可恢复”事件也记成 SEL（CPU/DIMM 最高温的 UNR 放在我们自己的接口上，不用 HardShutdown，所以不会触发任何自动关机）；告警灯的四种告警都有 SEL 记录。
 * DCMI（`ipmitool dcmi power reading`、`dcmi get_temp_reading`）：**未配置**，`power_reading.json` 的路径为空，`dcmi_sensors.json` 为空数组，命令会报不支持或没有内容。
-* 电压阈值：规格表里的上下限（标称 ±15%）按 Critical 级别配置（`lower critical` / `upper critical`），所以 `ipmitool sensor` 的 LC / UC 列能显示；越限时 sel-logger 直接记成 Critical 事件，告警灯随之点亮。CPU/DIMM 最高温度的 UNC / UC / UNR 都能显示：UNR 在我们自己的接口 `xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable` 上，ipmid 加了补丁读取它。**BMC 不会因为任何阈值自动关机**：不使用 HardShutdown / SoftShutdown 接口，并且镜像里去掉了会据此关机的 phosphor-fan 的 sensor-monitor。
+* 电压阈值：规格表里的上下限（标称 ±15%）按 Critical 级别配置（`lower critical` / `upper critical`），所以 `ipmitool sensor` 的 LC / UC 列能显示；越限时 sel-logger 直接记成 Critical 事件，告警灯随之点亮。CPU/DIMM 最高温度的 UNC / UC / UNR 都能显示：UNR 在我们自己的接口 `com.ctopai.CebGnrd.Threshold.NonRecoverable` 上，ipmid 加了补丁读取它。**BMC 不会因为任何阈值自动关机**：不使用 HardShutdown / SoftShutdown 接口，并且镜像里去掉了会据此关机的 phosphor-fan 的 sensor-monitor。
 * FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式和占位默认值（`CHASSIS_PART_NUMBER`、`PRODUCT_NAME` 等），直接回车就用默认值，输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成的镜像约 280 字节），再用 `ipmitool fru print 0` 核对。
 * ipmid 启动：`phosphor-ipmi-host` 有一个 drop-in（`10-ceb-gnrd-wait-sensors.conf`），启动前最多等 90 秒，等映射器里的传感器数量连续 8 秒不变。原因是 ipmid 在传感器刚注册、阈值接口还没出来时去读会失败，开机后一分钟内 `ipmitool sensor` 只剩 2 个静态传感器。代价是开机后约一分钟内 `ipmitool` 不可用（QEMU 里已验证开机后传感器完整）。 PCIe 槽位总线 i2c-0 至 i2c-5（本板没有 slot 2 的总线）。
 
@@ -611,7 +611,7 @@ ipmitool mc info                               # Manufacturer Name CTOPAI，Prod
 | PHY | U-Boot：`mdio list`；Linux：`dmesg \| grep -i -E "phy\|mdio"`、`ethtool -S eth0`、`iperf3` |
 | PSU | 插 1 个和 2 个模块各验证：`journalctl -u ceb-gnrd-psu-detect`；`ipmitool sdr` 里应有 PSUn_Temp，`ls /sys/class/hwmon/*/temp*_input` 核对 temp2 确实是电源温度 |
 | 电源按键 | `journalctl -u ceb-gnrd-power-button-log -f`；`ipmitool sel list \| tail -3` |
-| 告警灯 | 电压越限、温度超 Upper Critical、watchdog 超时、BIOS 启动超过 600 秒各验证一次（四种共用一个灯，前两种恢复后灭，后两种重启 BMC 才灭） |
+| 告警灯 | 电压越限、温度到 UNR（Upper Critical 不亮）、watchdog 超时、BIOS 启动超过 600 秒各验证一次（四种共用一个灯，前两种恢复后灭，后两种重启 BMC 才灭）；`busctl get-property xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted` 应随告警翻转，`cat /sys/class/leds/fault/brightness` 对应亮灭 |
 | 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings`；OEM 命令：`ipmitool raw 0x30 0x01`、`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`（再读一次确认），失败时 `journalctl -u phosphor-ipmi-host` |
 | KCS | BMC：`ls /dev/ipmi-kcs3`、`journalctl -u phosphor-ipmi-kcs@ipmi-kcs3`；主机侧：`ipmitool -I open mc info` |
 | NC-SI | 主机上电后 `ip -br addr show eth1`、`journalctl -t ceb-gnrd-ncsi`（看有没有重试）；主机关机后接口应被关闭 |
@@ -644,7 +644,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 | `do_patch` 里的 shell 追加报 `SyntaxError` | `do_patch` 是 Python 任务，shell 逻辑要写成独立任务并用 `addtask` |
 | 镜像大小超限 | `FLASH_RWFS_OFFSET` 必须写成带 override 的 `FLASH_RWFS_OFFSET:flash-65536`，普通赋值会被盖掉 |
 | 打包阶段文件冲突 | 两个包安装了同一个文件（如 `ipmitool` 自带的 IANA 企业编号表），改为在原包安装后追加 |
-| U-Boot 找不到 `.dtb` | 2019.04 需要把 `ast2600-ceb-gnrd.dtb` 登记进 `arch/arm/dts/Makefile`（bbappend 里已处理） |
+| U-Boot 找不到 `.dtb` | 2019.04 需要把 `ast2600-ceb-gnrd.dtb` 登记进 `arch/arm/dts/Makefile`（已放进 `0001-ceb-gnrd-board-device-tree-network-and-environment.patch`） |
 | 网页编译 `Unexpected token` | 模板字符串反引号丢失，补丁里的 JS 要逐字核对 |
 | `entity-manager: Probe statement failed to parse: True`，电压、风扇、温度等传感器一个都没有 | Entity-Manager 配置里的 `"Probe"` 只认大写的 `"TRUE"` / `"FALSE"`，写成 `"True"` 整份配置会被拒绝；用 `journalctl -b -p err \| grep -i entity` 看 |
 | `aspeed-g6-pwm-tach: Failed to create fan -22`，`fansensor: failed to find match for .../fanN_input` | 6.18 的 PWM/TACH 驱动要求风扇子节点写 `tach-ch` 和 `pwms = <&pwm_tach N 40000 0>`，旧写法（`reg`、`aspeed,fan-tach-ch`）会让它失败 |
@@ -660,7 +660,8 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 | `swampd`：`Must have one stepwise point`，风扇不按温度调速 | Entity-Manager 把整数数组（`[40, 50, ...]`）以 `at` 发布，pid-control 读不到，`Stepwise` 的 `Reading`/`Output` 要写成带小数点的 `40.0` |
 | 启动日志里有 `mmc0: Failed to initialize a non-removable card` | EVB 设备树启用了 eMMC/SD；本板没有，U-Boot 和 Linux 设备树里都把 `emmc`、`sdhci` 相关节点禁用 |
 | `patch-fuzz` 警告出现在 `phosphor-ipmi-host` | 手写补丁的上下文不对；按真实源码重新生成补丁（`0001` 已重新生成） |
-| `os-release.bb: git describe --dirty ... No names found` | openbmc 仓库没有带注释的 tag；`git tag -a v2.0.0 -m "CEB-GNRD 2.0.0"`（必须用 `-a`），固件版本号仍由 `DISTRO_VERSION` 决定 |
+| `os-release.bb: git describe --dirty ... No names found` | openbmc 仓库没有带注释的 tag；`git tag -a v2.0.0 -m "CEB-GNRD 2.0.0"`（必须用 `-a`），固件版本号仍由 `DISTRO_VERSION` 决定（定义在 `meta-ctopai/conf/distro/ctopai-openbmc.conf`，`local.conf` 里必须是 `DISTRO ?= "ctopai-openbmc"`，`./setup ceb-gnrd` 会自动把旧的 `openbmc-phosphor` 改过来；没改的话固件版本会变成 `git describe` 的结果） |
+| 告警灯服务日志反复出现 `Unable to read host boot GPIOs: Command '['gpioget', 'gpiochip0', '172']' returned non-zero exit status 1` | 第 172 号线是 `BMC_CPU_PWRGD`，已被 x86-power-control 独占请求，`gpioget` 会报设备忙。告警灯服务改为读 D-Bus 的 `xyz.openbmc_project.State.Chassis` `CurrentPowerState`（x86-power-control 根据这根线发布的状态）；`BMC_BIOS_BOOT_OK` 现在也是 x86-power-control 的 `PostComplete`，同样改读 `OperatingSystemState`，告警灯服务不再直接读任何 GPIO |
 | `do_rootfs: Group render has never been defined` | 来自 `rootfs-postcommands.bbclass` 的 `systemd_sysusers_check`，核对 `/usr/lib/sysusers.d/*.conf` 声明的组是否都在 `/etc/group`。`render` 组本来由 `udev` 包创建，但 meta-phosphor 的 `systemd_%.bbappend` 有意把 `udev` 从 `USERADD_PACKAGES` 里去掉（为了让 udev 不依赖 `shadow`，能放进 initramfs，BMC 没有 `/dev/dri`），所以这个告警是预期的，无影响，忽略 |
 | `systemd: Failed to set watchdog pretimeout_governor to 'panic'` | `aspeed_wdt` 不支持预超时，内核不提供 `pretimeout_governor`（打开 `CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC` 没有用）；`systemd-conf` 里的 `50-ceb-gnrd-watchdog.conf` 清掉 meta-phosphor 的 `RuntimeWatchdogPreSec` / `RuntimeWatchdogPreGovernor` 设置 |
 

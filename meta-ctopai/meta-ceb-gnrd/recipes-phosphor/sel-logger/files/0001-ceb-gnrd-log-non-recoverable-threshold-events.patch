@@ -4,7 +4,7 @@ Date: Fri, 2 Oct 2026 00:00:00 +0000
 Subject: [PATCH] threshold monitor: log non-recoverable threshold events
 
 The CPU/DIMM maximum temperature sensors publish their upper non-recoverable
-threshold on the private xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable
+threshold on the private com.ctopai.CebGnrd.Threshold.NonRecoverable
 interface (not HardShutdown, which other services turn into a power off).
 Log its assertions as upper/lower non-recoverable SEL events.
 

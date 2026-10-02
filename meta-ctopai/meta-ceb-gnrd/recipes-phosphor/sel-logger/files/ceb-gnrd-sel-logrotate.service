@@ -1,0 +1,8 @@
+[Unit]
+Description=Rotate the IPMI SEL log (keeps the newest records)
+After=rsyslog.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/mkdir -p /var/lib/ceb-gnrd
+ExecStart=/usr/sbin/logrotate --state /var/lib/ceb-gnrd/sel-logrotate.status /etc/ceb-gnrd/ipmi_sel.logrotate
