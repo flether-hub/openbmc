@@ -185,8 +185,8 @@ Platform features
   battery, so it is disabled in the device tree and the NCT3015Y is `rtc0`.
 * The BMC system time, and with it the SEL and journal timestamps, comes from
   the RTC by default: `CONFIG_RTC_HCTOSYS` at boot, with `ceb-gnrd-rtc-sync` as
-  a safety net (waits up to 30 s for `/dev/rtc0`, so a machine without an RTC,
-  such as QEMU, waits the full 30 s). `CONFIG_RTC_SYSTOHC` writes the time back
+  a safety net (waits up to 3 s for `/dev/rtc0`, so a machine without an RTC,
+  such as QEMU, waits the full 3 s; start timeout 5 s). `CONFIG_RTC_SYSTOHC` writes the time back
   after NTP sync. Keep the RTC in UTC.
 
 ### Board hardware map

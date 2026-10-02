@@ -17,7 +17,9 @@ D-Bus API (reachable through the bmcweb D-Bus REST interface):
   property Persist (b, read/write)
   method   Save()  snapshot the current Entity-Manager values (or delete the
                    stored file when Persist is false)
-  method   GetFans() -> ay   status of the six fans (used by the IPMI OEM command)
+  method   KeepSettings() / ForgetSettings()  set Persist and save (no arguments,
+                   for the web page)
+  method   GetFans() -> ay  status of the six fans (used by the IPMI OEM command)
   method   SetFan(y fan, y mode, y duty, y persist) -> b   change one fan or all fans
                    (used by the IPMI OEM command)
 
@@ -232,6 +234,22 @@ class FanSettings(ServiceInterface):
         """Store the current fan settings, or forget them when Persist is false."""
         return await self.do_save()
 
+    # The web page (bmcweb D-Bus REST) cannot pass scalar arguments, so these two
+    # methods have none: the page sets the limits through Redfish, then calls one.
+    @method()
+    async def KeepSettings(self) -> "b":
+        """Keep the current fan settings after a BMC reboot."""
+        self.persist = True
+        self.emit_properties_changed({"Persist": True})
+        return await self.do_save()
+
+    @method()
+    async def ForgetSettings(self) -> "b":
+        """Do not keep the fan settings: a BMC reboot returns to adaptive mode."""
+        self.persist = False
+        self.emit_properties_changed({"Persist": False})
+        return await self.do_save()
+
     @method()
     async def GetFans(self) -> "ay":
         """Fan status for the IPMI OEM Get command (see the module docstring)."""
@@ -254,7 +272,8 @@ class FanSettings(ServiceInterface):
                 duty = 0xFF if pwm is None else pwm
             rpm = max(0, min(0xFFFF, rpms.get(name, 0)))
             out += [1 if fixed else 0, duty, rpm & 0xFF, rpm >> 8]
-        return out
+        # dbus-fast marshals "ay" from bytes, not from a list of ints
+        return bytes(out)
 
     @method()
     async def SetFan(self, fan: "y", mode: "y", duty: "y", persist: "y") -> "b":

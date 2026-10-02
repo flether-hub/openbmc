@@ -106,7 +106,7 @@ new file mode 100644
 index 0000000..065091b
 --- /dev/null
 +++ b/src/views/Settings/FanControl/FanControl.vue
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,231 @@
 +<template>
 +  <b-container fluid="xl">
 +    <page-title :description="$t('pageFanControl.description')" />
@@ -202,9 +202,6 @@ index 0000000..065091b
 +
 +const managerPath = '/redfish/v1/Managers/bmc';
 +const settingsPath = '/xyz/openbmc_project/ceb_gnrd/fan_settings';
-+// Adaptive mode uses the limits of the Entity-Manager configuration.
-+const adaptiveMinimum = 30;
-+const adaptiveMaximum = 100;
 +// Redfish adds metadata members such as @odata.id to the fan objects.
 +const isConfigEntry = ([name]) => !name.startsWith('@');
 +
@@ -251,10 +248,13 @@ index 0000000..065091b
 +        ...entries.map(([name]) => ({ text: name, value: name })),
 +      ];
 +    },
-+    setCommand() {
++    fanIndex() {
 +      // fan number: the digits at the end of the name (SYS_FAN3 -> 3), 0xFF = all
 +      const match = /(\d+)$/.exec(this.selectedFan);
-+      const fan = this.selectedFan === 'all' || !match ? 255 : Number(match[1]);
++      return this.selectedFan === 'all' || !match ? 255 : Number(match[1]);
++    },
++    setCommand() {
++      const fan = this.fanIndex;
 +      const fixed = this.mode === 'fixed';
 +      return `ipmitool raw 0x30 0x02 ${[
 +        fan,
@@ -294,10 +294,6 @@ index 0000000..065091b
 +        // The persistence service is optional; keep the default (off).
 +      }
 +    },
-+    async savePersistence() {
-+      await api.put(`${settingsPath}/attr/Persist`, { data: this.persist });
-+      await api.post(`${settingsPath}/action/Save`, { data: [] });
-+    },
 +    loadSelectedSettings() {
 +      const first = this.controllers.find(
 +        ([name]) => this.selectedFan === 'all' || name === this.selectedFan,
@@ -318,40 +314,20 @@ index 0000000..065091b
 +      }
 +    },
 +    async saveSettings() {
-+      const minimum = this.mode === 'fixed'
-+        ? Number(this.fixedSpeed)
-+        : adaptiveMinimum;
-+      const maximum = this.mode === 'fixed'
-+        ? Number(this.fixedSpeed)
-+        : adaptiveMaximum;
-+      const fanControllers = Object.fromEntries(
-+        this.controllers.map(([name, config]) => [name,
-+          this.selectedFan === 'all' || name === this.selectedFan
-+            ? { ...config, OutLimitMin: minimum, OutLimitMax: maximum }
-+            : config,
-+        ]),
-+      );
-+      const fanZones = Object.fromEntries(
-+        this.zones.map(([name, config]) => [name,
-+          this.selectedFan === 'all' || name === this.selectedFan
-+            ? { ...config, MinThermalOutput: minimum }
-+            : config,
-+        ]),
-+      );
-+
++      const fixed = this.mode === 'fixed';
 +      this.isSaving = true;
 +      try {
-+        await api.patch(managerPath, {
-+          Oem: {
-+            OpenBmc: {
-+              Fan: {
-+                ...(this.controllers.length ? { FanControllers: fanControllers } : {}),
-+                ...(this.zones.length ? { FanZones: fanZones } : {}),
-+              },
-+            },
-+          },
++        // One call changes the limits of the selected fans and stores the
++        // "keep after reboot" choice (same as the IPMI OEM Set command).
++        const response = await api.post(`${settingsPath}/action/SetFan`, {
++          data: [
++            this.fanIndex,
++            fixed ? 1 : 0,
++            fixed ? Number(this.fixedSpeed) : 0,
++            this.persist ? 1 : 0,
++          ],
 +        });
-+        await this.savePersistence();
++        if (response?.data?.data !== true) throw new Error('rejected');
 +        await this.loadSettings();
 +        this.successToast(this.$t('pageFanControl.saveSuccess'));
 +      } catch {
@@ -359,7 +335,6 @@ index 0000000..065091b
 +      } finally {
 +        this.isSaving = false;
 +      }
-+    },
-+  },
++    },  },
 +};
 +</script>
