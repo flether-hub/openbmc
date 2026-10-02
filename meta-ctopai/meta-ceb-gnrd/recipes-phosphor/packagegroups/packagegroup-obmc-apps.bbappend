@@ -36,6 +36,8 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         phosphor-u-boot-mgr \
         u-boot-fw-utils \
         ipmitool \
+        curl \
+        openssh-scp \
         "
 
 RDEPENDS:${PN}-extras:remove:ceb-gnrd = "phosphor-state-manager-chassis"

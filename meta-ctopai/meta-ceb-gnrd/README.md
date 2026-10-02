@@ -150,7 +150,7 @@ Platform features
   `/xyz/openbmc_project/sensors/temperature/CPU_MAX_TEMP` and `DIMM_MAX_TEMP`,
   as the maximum of the IntelCPUSensor temperatures (names containing "dimm"
   are DIMM; DTS, Tcontrol, Tthrottle, Tjmax and margin readings are excluded).
-  Host off: 0. Host on and no reading: 127 degC (full speed, no alarm).
+  Host off: 0. Host on and no reading: 70 degC, which both fan curves map to 60 % (no alarm).
   Upper thresholds only (non-critical / critical / non-recoverable):
   CPU 90 / 98 / 105 degC, DIMM 80 / 85 / 95 degC, on the Warning, Critical and
   HardShutdown threshold interfaces. The service emits `ThresholdAsserted`
@@ -162,8 +162,8 @@ Platform features
   PWM1-PWM6, limit 30-100 %), one zone (MinThermalOutput 30) and two stepwise
   curves on CPU_MAX_TEMP and DIMM_MAX_TEMP. The curve points are placeholders
   awaiting confirmation. The zone fail-safe is 30 % on purpose: the number of
-  fans that can be read must not decide whether the fans go to full speed; the
-  temperature sensors do that (127 degC). The six fans have no speed alarms and
+  fans that can be read must not decide the fan speed; the temperature
+  sensors do that (unreadable CPU or DIMM temperature: 60 %). The six fans have no speed alarms and
   an unpopulated header simply reads 0 RPM.
 * `ceb-gnrd-fan-owner` hands the fans from the CPLD to the BMC
   (GPIOI6 `BMC_FAN_BMC_OVERRIDE_N`) once pid-control is running and all six

@@ -21,11 +21,11 @@ Warning / Critical / HardShutdown threshold interfaces, so phosphor-sel-logger
 records the alarms and IPMI shows UNC / UC / UNR.
 
 When the host is off the value is 0 (no thermal load); when the host is on but
-no source sensor is readable the value is FAILSAFE_TEMP, which lies above the
-last point of both fan curves, so the fans run at full speed.  The zone's own
-fail-safe speed is kept at the minimum on purpose: the number of readable fans
-must not decide whether the fans go to full speed.  No alarm is raised for the
-substitute value.
+no source sensor is readable the value is FAILSAFE_TEMP.  Both fan curves in
+ceb-gnrd.json give exactly 60 % at that temperature, so unreadable CPU or DIMM
+temperatures run the fans at 60 %.  The zone's own fail-safe speed is kept at
+the minimum on purpose: the number of readable fans must not decide the fan
+speed.  No alarm is raised for the substitute value.
 
 All discovered names and their group are written to the journal whenever the
 set changes:  journalctl -u ceb-gnrd-temp-max
@@ -45,6 +45,7 @@ LOG = logging.getLogger("ceb-gnrd-temp-max")
 
 BUS_NAME = "xyz.openbmc_project.CebGnrd.TempMax"
 SENSOR_ROOT = "/xyz/openbmc_project/sensors/temperature"
+ADC_ROOT = "/xyz/openbmc_project/sensors/voltage"
 SOURCE_SERVICE = "xyz.openbmc_project.IntelCPUSensor"
 VALUE_IFACE = "xyz.openbmc_project.Sensor.Value"
 UNIT_DEGREES_C = "xyz.openbmc_project.Sensor.Value.Unit.DegreesC"
@@ -62,8 +63,9 @@ EXCLUDE_RE = re.compile(r"dts|tcontrol|tthrottle|tjmax|margin", re.IGNORECASE)
 
 POLL_SECONDS = 2
 
-# Published while the host is on but no temperature can be read (full speed)
-FAILSAFE_TEMP = 127.0
+# Published while the host is on but no temperature can be read: 70 degC, the
+# point where both fan curves give 60 % (keep them in sync with ceb-gnrd.json)
+FAILSAFE_TEMP = 70.0
 
 # Upper thresholds in degrees C: (non-critical UNC, critical UC, non-recoverable UNR)
 THRESHOLDS = {
@@ -258,6 +260,26 @@ async def read_assoc(bus, service, path):
         return []
 
 
+async def find_default_assoc(bus):
+    """Chassis associations of an ADC sensor of this board.
+
+    IntelCPUSensor only exists while the host is on, so the associations copied
+    from it are not available when the host is off.  The ADC sensors belong to
+    the same board, so their associations make the maximum sensors visible to
+    IPMI and Redfish at all times."""
+    try:
+        body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetSubTree", "sias",
+                          [ADC_ROOT, 0, [ASSOC_IFACE]])
+        for path, services in body[0].items():
+            for service in services:
+                assoc = await read_assoc(bus, service, path)
+                if assoc:
+                    return assoc
+    except Exception:
+        pass
+    return []
+
+
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(message)s")
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -280,6 +302,7 @@ async def main():
     LOG.info("started, publishing CPU_MAX_TEMP and DIMM_MAX_TEMP")
 
     known = None
+    default_assoc = []
     while True:
         try:
             sources = await find_sources(bus)
@@ -315,7 +338,7 @@ async def main():
             if values:
                 sensor.update(real)
             elif on:
-                sensor.update(FAILSAFE_TEMP)   # no reading while the host is on: full speed
+                sensor.update(FAILSAFE_TEMP)   # no reading while the host is on: 60 % fans
             else:
                 sensor.update(0.0)             # host off: no thermal load
             for obj, alarm_name, level in thresholds[group]:
@@ -324,6 +347,10 @@ async def main():
                                 sensor.name, level,
                                 "asserted" if obj.alarm else "cleared",
                                 real, obj.high)
+            if not assoc and not assocs[group].assoc:
+                if not default_assoc:
+                    default_assoc = await find_default_assoc(bus)
+                assoc = default_assoc
             if assoc:
                 assocs[group].update(assoc)
         await asyncio.sleep(POLL_SECONDS)

@@ -182,10 +182,23 @@ qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
   ssh -p 2222 root@127.0.0.1
   ```
 
-* **Redfish API 接口测试**：
+* **Redfish API 接口测试**（在宿主机 Ubuntu 终端里执行；BMC 镜像里也带了 `curl`，在 BMC 里用 `https://127.0.0.1/` 不带端口）：
   ```bash
   curl -k https://127.0.0.1:8443/redfish/v1/
+  # 以下需要登录；-u 用户名:密码，-k 忽略自签名证书
+  curl -k -u root:0penBmc https://127.0.0.1:8443/redfish/v1/Systems/system
+  curl -k -u root:0penBmc https://127.0.0.1:8443/redfish/v1/Chassis/chassis/Sensors          # 传感器列表
+  curl -k -u root:0penBmc https://127.0.0.1:8443/redfish/v1/Systems/system/LogServices/EventLog/Entries   # 事件日志（SEL）
+  curl -k -u root:0penBmc https://127.0.0.1:8443/redfish/v1/Managers/bmc/LogServices/Dump/Entries         # 转储列表
   ```
+  创建一个 BMC 转储（返回一个任务，QEMU 里约 30 秒完成，期间再提交会返回 503 `ResourceInUse`）：
+  ```bash
+  curl -k -i -u root:0penBmc -X POST -H "Content-Type: application/json" \
+    -d '{"DiagnosticDataType":"Manager"}' \
+    https://127.0.0.1:8443/redfish/v1/Managers/bmc/LogServices/Dump/Actions/LogService.CollectDiagnosticData
+  curl -k -u root:0penBmc https://127.0.0.1:8443/redfish/v1/TaskService/Tasks/0     # 看任务状态
+  ```
+  `-i` 会把 HTTP 状态码和响应头也打印出来，排查接口错误时很有用。
 
 ### 3. 系统服务状态检查
 
@@ -552,7 +565,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 ### 4. IPMI
 
 * `mc info`：Device ID 32，Device Revision 2，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。
-* 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常；温度读不到时全速（temp-max 发布 127 ℃），风扇读到几个都不影响（FailSafePercent=30）。
+* 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常；温度读不到（主机已开机）时风扇 60%（temp-max 发布 70 ℃，两条曲线在 70 ℃ 都是 60%），风扇读到几个都不影响（FailSafePercent=30）。
 * 主机侧 IPMI 走 KCS3（见上）；LAN 通道 1 是 eth0（RMCP+ 只绑 eth0），通道 2 是 NC-SI 的 eth1。
 * SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-rollover` 保持 rollover，sel-logger 加了补丁，把“不可恢复”（HardShutdown）级别也记成 SEL 事件；告警灯的四种告警都有 SEL 记录。
 * DCMI（`ipmitool dcmi power reading`、`dcmi get_temp_reading`）：**未配置**，`power_reading.json` 的路径为空，`dcmi_sensors.json` 为空数组，命令会报不支持或没有内容。
