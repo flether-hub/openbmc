@@ -77,7 +77,8 @@ THRESHOLDS = {
 class TempSensor(ServiceInterface):
     def __init__(self, name):
         super().__init__(VALUE_IFACE)
-        self.name = name
+        # not self.name: ServiceInterface keeps the D-Bus interface name there
+        self.sensor_name = name
         self.value = math.nan
 
     @dbus_property(access=PropertyAccess.READ)
@@ -287,7 +288,7 @@ async def main():
     assocs = {"CPU": Associations(), "DIMM": Associations()}
     thresholds = {}
     for group, sensor in sensors.items():
-        path = "%s/%s" % (SENSOR_ROOT, sensor.name)
+        path = "%s/%s" % (SENSOR_ROOT, sensor.sensor_name)
         bus.export(path, sensor)
         bus.export(path, assocs[group])
         unc, uc, unr = THRESHOLDS[group]
@@ -307,7 +308,10 @@ async def main():
         try:
             sources = await find_sources(bus)
         except Exception as exc:
-            LOG.warning("cannot list temperature sensors: %s", exc)
+            # The mapper reports ResourceNotFound while no temperature sensor
+            # exists yet (for example host off); that is not worth a warning.
+            if "ResourceNotFound" not in str(exc):
+                LOG.warning("cannot list temperature sensors: %s", exc)
             sources = {}
         names = {p.rsplit("/", 1)[-1]: g for p, (_, g) in sources.items()}
         if names != known:
@@ -342,9 +346,9 @@ async def main():
             else:
                 sensor.update(0.0)             # host off: no thermal load
             for obj, alarm_name, level in thresholds[group]:
-                if obj.evaluate(sensor.name, real, alarm_name):
+                if obj.evaluate(sensor.sensor_name, real, alarm_name):
                     LOG.warning("%s %s %s (value %.1f, threshold %.1f)",
-                                sensor.name, level,
+                                sensor.sensor_name, level,
                                 "asserted" if obj.alarm else "cleared",
                                 real, obj.high)
             if not assoc and not assocs[group].assoc:

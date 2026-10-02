@@ -256,7 +256,7 @@ should appear after flashing the updated image.
 * `mc info`: Device ID 32, Device Revision 2, Product ID 3346 (0x0D12),
   Manufacturer ID 6659 (0x1A03), shown as `CTOPAI` / `CEB-GNR-D` by the
   on-BMC ipmitool. The board revision is the fourth AUX firmware revision byte.
-  Firmware revision comes from `DISTRO_VERSION` (1.0.0, tentative).
+  Firmware revision comes from `DISTRO_VERSION` (2.0.0; the firmware version starts at 2.0, shown as 2.00 by `ipmitool mc info`).
 * Sensors: `dynamic-sensors` and `hybrid-sensors` are enabled, so every D-Bus
   sensor (ADC, temperatures, fans, CPU/DIMM maximum, PSU) is visible through
   IPMI next to the static host-state sensors. In QEMU only the two static
@@ -267,6 +267,7 @@ should appear after flashing the updated image.
 * DCMI power reading and temperature reading are not configured
   (`power_reading.json` has no path, `dcmi_sensors.json` is empty), so those
   commands return nothing useful.
+* `ipmitool fru gen [file]` (a board patch to ipmitool) interactively builds a FRU image (default `fru.bin`) with chassis, board and product info areas: each prompt shows the format and a placeholder default. Write it with `ipmitool fru write 0 fru.bin`.
 * SSH is dropbear (port 22); `openssh-sftp-server` and `openssh-scp` are
   installed, so `scp` works with both the SFTP-based and the legacy protocol.
 

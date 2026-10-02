@@ -1,3 +1,9 @@
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+
+# 'ipmitool fru gen [file]': interactive generator for a FRU image with chassis,
+# board and product info areas (placeholder defaults, format hints per field).
+SRC_URI:append = " file://0001-ipmitool-fru-add-gen-command.patch"
+
 # ipmitool shows the Manufacturer Name of "mc info" by looking the ID up in the
 # IANA enterprise number file under ${datadir}/misc.  Add the CEB-GNR-D entry to
 # that file (the full IANA list when the distro ships it, otherwise a new

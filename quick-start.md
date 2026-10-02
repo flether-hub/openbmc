@@ -570,6 +570,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-rollover` 保持 rollover，sel-logger 加了补丁，把“不可恢复”（HardShutdown）级别也记成 SEL 事件；告警灯的四种告警都有 SEL 记录。
 * DCMI（`ipmitool dcmi power reading`、`dcmi get_temp_reading`）：**未配置**，`power_reading.json` 的路径为空，`dcmi_sensors.json` 为空数组，命令会报不支持或没有内容。
 * 电压阈值：规格表里的上下限（标称 ±15%）按 Critical 级别配置（`lower critical` / `upper critical`），所以 `ipmitool sensor` 的 LC / UC 列能显示；越限时 sel-logger 直接记成 Critical 事件，告警灯随之点亮。CPU/DIMM 最高温度的 UNC / UC / UNR 里，UNR 在这个版本的 ipmid 里不显示。
+* FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式和占位默认值（`CHASSIS_PART_NUMBER`、`PRODUCT_NAME` 等），直接回车就用默认值，输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成的镜像约 280 字节），再用 `ipmitool fru print 0` 核对。
 * 白名单：`Master Write-Read` 仅限 PCIe 槽位总线 i2c-0 至 i2c-5（本板没有 slot 2 的总线）。
 
 ---
@@ -582,7 +583,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 systemctl --failed --no-pager                 # QEMU 缺少 KCS、eSPI、PECI 等硬件，对应服务失败属预期
 journalctl -b -p err --no-pager | tail -40
 ip addr show eth0                              # 应有 192.168.185.200
-cat /etc/os-release | head                     # VERSION_ID 应为 1.0.0
+cat /etc/os-release | head                     # VERSION_ID 应为 2.0.0；ipmitool mc info 的 Firmware Revision 应为 2.00
 ipmitool mc info                               # Manufacturer Name CTOPAI，Product Name CEB-GNR-D
 ```
 
