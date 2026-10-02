@@ -131,12 +131,17 @@ async def write_config(bus, interface, stored):
     for service, path in await find_objects(bus, interface):
         body = await call(bus, service, path, PROPS, "GetAll", "s", [interface])
         props = {k: v.value for k, v in body[0].items()}
+        signatures = {k: v.signature for k, v in body[0].items()}
         wanted = stored.get(props.get("Name"))
         if not wanted:
             continue
         for key, value in wanted.items():
             if key not in props or props[key] == value:
                 continue
+            # Write with the type the property already has (Entity-Manager
+            # rejects a different one with InvalidArgs).
+            signature = signatures[key]
+            send = float(value) if signature == "d" else int(value)
             await call(
                 bus,
                 service,
@@ -144,7 +149,7 @@ async def write_config(bus, interface, stored):
                 PROPS,
                 "Set",
                 "ssv",
-                [interface, key, Variant("d", float(value))],
+                [interface, key, Variant(signature, send)],
             )
             LOG.info("applied %s %s.%s = %s (was %s)", interface.rsplit(".", 1)[-1],
                      props["Name"], key, value, props[key])

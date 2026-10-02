@@ -27,3 +27,12 @@ LDFLAGS:append = " -lgpiod"
 # DIMM_MAX_TEMP) through IPMI.  hybrid-sensors keeps the static host-state
 # sensors (boot progress, OS status, ...) next to the dynamic ones.
 PACKAGECONFIG:append = " dynamic-sensors hybrid-sensors"
+
+# Delay ipmid until the first D-Bus sensor exists (see the drop-in).
+SRC_URI:append:ceb-gnrd = " file://10-ceb-gnrd-wait-sensors.conf"
+do_install:append:ceb-gnrd() {
+    install -d ${D}${systemd_system_unitdir}/phosphor-ipmi-host.service.d
+    install -m 0644 ${UNPACKDIR}/10-ceb-gnrd-wait-sensors.conf \
+        ${D}${systemd_system_unitdir}/phosphor-ipmi-host.service.d/10-ceb-gnrd-wait-sensors.conf
+}
+FILES:${PN}:append:ceb-gnrd = " ${systemd_system_unitdir}/phosphor-ipmi-host.service.d"
