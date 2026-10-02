@@ -175,7 +175,7 @@ Platform features
   re-applies the stored limits to the Entity-Manager Pid objects every 30 s.
   Adaptive mode uses fixed limits (30 % to 100 %); there is no minimum-speed
   setting.  Entity-Manager answers a write to a Pid property with InvalidArgs
-  although the value is changed (cause not found), so the service reads the value
+  although the value is changed (root cause not pursued), so the service reads the value
   back and accepts it when it matches.  bmcweb's D-Bus REST cannot pass scalar
   arguments in this version, so the page calls argument-free methods in three
   steps: `SelectAll` / `SelectFan0..5`, `SetAdaptive` / `SetFixed20..100`, then
