@@ -7,23 +7,31 @@ revision in the final AUX byte.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific behavior]
 ---
- apphandler.cpp | 72 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 72 insertions(+)
+ apphandler.cpp | 75 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 75 insertions(+)
 
 --- a/apphandler.cpp
 +++ b/apphandler.cpp
-@@ -2,4 +2,5 @@
+@@ -3,6 +3,7 @@
  #include <arpa/inet.h>
  #include <fcntl.h>
  #include <limits.h>
 +#include <gpiod.h>
  #include <linux/i2c-dev.h>
-@@ -40,2 +41,3 @@
+ #include <linux/i2c.h>
+ #include <sys/ioctl.h>
+@@ -37,6 +38,7 @@
+ #include <filesystem>
+ #include <fstream>
  #include <memory>
 +#include <optional>
  #include <regex>
-@@ -65,0 +68,72 @@
-+
+ #include <string>
+ #include <string_view>
+@@ -62,6 +64,78 @@
+ using BMCState = sdbusplus::server::xyz::openbmc_project::state::BMC;
+ namespace fs = std::filesystem;
+ 
 +/* Return nullopt when the board straps cannot be sampled. This must not make
 + * the standard Get Device ID command unavailable. */
 +static std::optional<uint8_t> getCebGnrdBoardRevision()
@@ -95,3 +103,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific behavior]
 +    }
 +    return aux;
 +}
++
+ #ifdef ENABLE_I2C_WHITELIST_CHECK
+ typedef struct
+ {
