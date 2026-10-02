@@ -296,6 +296,9 @@ class FanSettings(ServiceInterface):
     @method()
     async def SetFan(self, fan: "y", mode: "y", duty: "y", persist: "y") -> "b":
         """Set one fan (0..5) or all fans (0xFF) to adaptive (0) or fixed (1) mode."""
+        return await self.apply_fan(fan, mode, duty, persist)
+
+    async def apply_fan(self, fan, mode, duty, persist) -> bool:
         if fan != 0xFF and fan >= FAN_COUNT:
             LOG.warning("SetFan: invalid fan %d", fan)
             return False

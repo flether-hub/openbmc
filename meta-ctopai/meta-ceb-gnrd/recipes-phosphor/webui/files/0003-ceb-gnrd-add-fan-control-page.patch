@@ -201,10 +201,10 @@ index 0000000..065091b
 +import PageTitle from '@/components/Global/PageTitle';
 +
 +const managerPath = '/redfish/v1/Managers/bmc';
++const settingsPath = '/xyz/openbmc_project/ceb_gnrd/fan_settings';
 +// Adaptive mode uses the limits of the Entity-Manager configuration.
 +const adaptiveMinimum = 30;
 +const adaptiveMaximum = 100;
-+const settingsPath = '/xyz/openbmc_project/ceb_gnrd/fan_settings';
 +// Redfish adds metadata members such as @odata.id to the fan objects.
 +const isConfigEntry = ([name]) => !name.startsWith('@');
 +
@@ -257,10 +257,9 @@ index 0000000..065091b
 +      return this.selectedFan === 'all' || !match ? 255 : Number(match[1]);
 +    },
 +    setCommand() {
-+      const fan = this.fanIndex;
 +      const fixed = this.mode === 'fixed';
 +      return `ipmitool raw 0x30 0x02 ${[
-+        fan,
++        this.fanIndex,
 +        fixed ? 1 : 0,
 +        fixed ? Number(this.fixedSpeed) : 0,
 +        this.persist ? 1 : 0,
@@ -297,6 +296,11 @@ index 0000000..065091b
 +        // The persistence service is optional; keep the default (off).
 +      }
 +    },
++    async savePersistence() {
++      // bmcweb's D-Bus REST cannot pass arguments here, so use one method each.
++      const action = this.persist ? 'KeepSettings' : 'ForgetSettings';
++      await api.post(`${settingsPath}/action/${action}`, { data: [] });
++    },
 +    loadSelectedSettings() {
 +      const first = this.controllers.find(
 +        ([name]) => this.selectedFan === 'all' || name === this.selectedFan,
@@ -315,11 +319,6 @@ index 0000000..065091b
 +      } else {
 +        this.mode = 'adaptive';
 +      }
-+    },
-+    async savePersistence() {
-+      // bmcweb's D-Bus REST cannot pass arguments here, so use one method each.
-+      const action = this.persist ? 'KeepSettings' : 'ForgetSettings';
-+      await api.post(`${settingsPath}/action/${action}`, { data: [] });
 +    },
 +    async saveSettings() {
 +      const fixed = this.mode === 'fixed';
@@ -360,6 +359,7 @@ index 0000000..065091b
 +      } finally {
 +        this.isSaving = false;
 +      }
-+    },  },
++    },
++  },
 +};
 +</script>
