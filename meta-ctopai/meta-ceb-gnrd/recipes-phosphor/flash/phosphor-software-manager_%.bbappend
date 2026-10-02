@@ -33,4 +33,17 @@ do_install:append:ceb-gnrd() {
     install -d ${D}${systemd_system_unitdir}
     install -m 0644 ${UNPACKDIR}/obmc-flash-host-bios@.service \
         ${D}${systemd_system_unitdir}/
+
+    # AUTO_ENABLE above is disabled for the whole updater package, which includes
+    # the BMC image updater daemon.  That daemon provides the BMC version object
+    # (mc info firmware revision, web "running image") and handles firmware
+    # uploads, so it must start at boot: enable just that unit with a static
+    # symlink.
+    install -d ${D}${systemd_system_unitdir}/multi-user.target.wants
+    ln -sf ../xyz.openbmc_project.Software.BMC.Updater.service \
+        ${D}${systemd_system_unitdir}/multi-user.target.wants/xyz.openbmc_project.Software.BMC.Updater.service
 }
+
+FILES:${PN}-updater:append:ceb-gnrd = " \
+    ${systemd_system_unitdir}/multi-user.target.wants/xyz.openbmc_project.Software.BMC.Updater.service \
+    "

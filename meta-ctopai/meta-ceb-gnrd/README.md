@@ -261,6 +261,7 @@ should appear after flashing the updated image.
   sensor (ADC, temperatures, fans, CPU/DIMM maximum, PSU) is visible through
   IPMI next to the static host-state sensors. In QEMU only the two static
   sensors that have D-Bus objects appear.
+* Voltage thresholds (nominal +-15 %) use the Critical level (lower critical / upper critical) so that ipmitool shows them; the Entity-Manager board is named "CEB-GNRD" (Redfish chassis "CEB_GNRD").
 * LAN: `phosphor-ipmi-net` serves RMCP+ on `eth0`. SOL, user, channel and
   session commands use the standard phosphor-host-ipmid providers.
 * DCMI power reading and temperature reading are not configured

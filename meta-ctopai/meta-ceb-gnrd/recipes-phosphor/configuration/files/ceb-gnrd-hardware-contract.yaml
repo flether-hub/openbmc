@@ -61,7 +61,7 @@ interfaces:
     scaling: ADC sensor reading = measured pin voltage multiplied by ScaleFactor
     reference: internal 2.5 V (aspeed,int-vref-microvolt = 2500000); ADCVREFEXT0/1 (AF19/AF17) are tied to P1V8_STBY but not selected
     sampling_power_state: chassis-on-only
-    thresholds: only-lower-and-upper-non-recoverable-at-nominal-minus-plus-15-percent
+    thresholds: only-lower-and-upper-critical-at-nominal-minus-plus-15-percent
     channels:
       - { channel: 0, name: P12V_SYS, net: P12V_SYS_ADC0, package_ball: AD20, nominal: 12.0, divider_ratio: 11.0, lnr: 10.2, unr: 13.8 }
       - { channel: 1, name: P5V0_SYS, net: P5V0_SYS_ADC1, package_ball: AC18, nominal: 5.0, divider_ratio: 11.0, lnr: 4.25, unr: 5.75 }

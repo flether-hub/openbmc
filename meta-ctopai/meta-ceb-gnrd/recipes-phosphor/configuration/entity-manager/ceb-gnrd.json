@@ -20,8 +20,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 11.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 10.2 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 13.8 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 10.2 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 13.8 }
             ],
             "Type": "ADC"
         },
@@ -31,8 +31,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 11.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 4.25 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 5.75 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 4.25 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 5.75 }
             ],
             "Type": "ADC"
         },
@@ -42,8 +42,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 2.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 2.805 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 3.795 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.805 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.795 }
             ],
             "Type": "ADC"
         },
@@ -53,8 +53,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.07 }
             ],
             "Type": "ADC"
         },
@@ -64,8 +64,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.765 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.035 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.765 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.035 }
             ],
             "Type": "ADC"
         },
@@ -75,8 +75,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.9605 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.2995 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.9605 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.2995 }
             ],
             "Type": "ADC"
         },
@@ -86,8 +86,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.7225 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 0.9775 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.7225 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 0.9775 }
             ],
             "Type": "ADC"
         },
@@ -97,8 +97,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.85 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.15 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.85 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.15 }
             ],
             "Type": "ADC"
         },
@@ -108,8 +108,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.07 }
             ],
             "Type": "ADC"
         },
@@ -119,8 +119,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.9605 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.2995 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.9605 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.2995 }
             ],
             "Type": "ADC"
         },
@@ -130,8 +130,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.07 }
             ],
             "Type": "ADC"
         },
@@ -141,8 +141,8 @@
             "PowerState": "Always",
             "ScaleFactor": 2.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 2.805 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 3.795 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.805 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.795 }
             ],
             "Type": "ADC"
         },
@@ -152,8 +152,8 @@
             "PowerState": "Always",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.53 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 2.07 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.53 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.07 }
             ],
             "Type": "ADC"
         },
@@ -163,8 +163,8 @@
             "PowerState": "Always",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 1.02 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.38 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.02 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.38 }
             ],
             "Type": "ADC"
         },
@@ -174,8 +174,8 @@
             "PowerState": "Always",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 0.85 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 1.15 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.85 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.15 }
             ],
             "Type": "ADC"
         },
@@ -185,8 +185,8 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower non recoverable", "Severity": 4, "Value": 2.55 },
-                { "Direction": "greater than", "Name": "upper non recoverable", "Severity": 4, "Value": 3.45 }
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.55 },
+                { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.45 }
             ],
             "Type": "ADC"
         },
@@ -469,7 +469,7 @@
             "Type": "LM75A"
         }
     ],
-    "Name": "CEB-GNRD Sensors",
+    "Name": "CEB-GNRD",
     "Probe": "TRUE",
     "Type": "Board"
 }

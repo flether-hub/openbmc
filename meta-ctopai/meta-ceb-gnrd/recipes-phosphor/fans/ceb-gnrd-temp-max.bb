@@ -18,7 +18,19 @@ S = "${UNPACKDIR}"
 SYSTEMD_SERVICE:${PN} = "ceb-gnrd-temp-max.service"
 SYSTEMD_AUTO_ENABLE = "enable"
 
-RDEPENDS:${PN} = "python3-core python3-asyncio python3-dbus-fast"
+# python3-dbus-fast only depends on python3-core, but it imports xml.etree
+# (python3-xml) and urllib (python3-netclient) at start-up.
+RDEPENDS:${PN} = " \
+    python3-core \
+    python3-asyncio \
+    python3-io \
+    python3-logging \
+    python3-math \
+    python3-netclient \
+    python3-threading \
+    python3-xml \
+    python3-dbus-fast \
+    "
 
 do_install() {
     install -d ${D}${libexecdir} ${D}${systemd_system_unitdir} \

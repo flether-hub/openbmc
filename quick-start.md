@@ -569,6 +569,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * 主机侧 IPMI 走 KCS3（见上）；LAN 通道 1 是 eth0（RMCP+ 只绑 eth0），通道 2 是 NC-SI 的 eth1。
 * SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-rollover` 保持 rollover，sel-logger 加了补丁，把“不可恢复”（HardShutdown）级别也记成 SEL 事件；告警灯的四种告警都有 SEL 记录。
 * DCMI（`ipmitool dcmi power reading`、`dcmi get_temp_reading`）：**未配置**，`power_reading.json` 的路径为空，`dcmi_sensors.json` 为空数组，命令会报不支持或没有内容。
+* 电压阈值：规格表里的上下限（标称 ±15%）按 Critical 级别配置（`lower critical` / `upper critical`），所以 `ipmitool sensor` 的 LC / UC 列能显示；越限时 sel-logger 直接记成 Critical 事件，告警灯随之点亮。CPU/DIMM 最高温度的 UNC / UC / UNR 里，UNR 在这个版本的 ipmid 里不显示。
 * 白名单：`Master Write-Read` 仅限 PCIe 槽位总线 i2c-0 至 i2c-5（本板没有 slot 2 的总线）。
 
 ---
@@ -632,6 +633,9 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 | 网页编译 `Unexpected token` | 模板字符串反引号丢失，补丁里的 JS 要逐字核对 |
 | `entity-manager: Probe statement failed to parse: True`，电压、风扇、温度等传感器一个都没有 | Entity-Manager 配置里的 `"Probe"` 只认大写的 `"TRUE"` / `"FALSE"`，写成 `"True"` 整份配置会被拒绝；用 `journalctl -b -p err \| grep -i entity` 看 |
 | `aspeed-g6-pwm-tach: Failed to create fan -22`，`fansensor: failed to find match for .../fanN_input` | 6.18 的 PWM/TACH 驱动要求风扇子节点写 `tach-ch` 和 `pwms = <&pwm_tach N 40000 0>`，旧写法（`reg`、`aspeed,fan-tach-ch`）会让它失败 |
+| `xyz.openbmc_project.LED.GroupManager.service: start operation timed out`，identify 灯不工作 | 这个版本的 LED 管理器只读 `/usr/share/phosphor-led-manager/led-group-config.json`（或 `/etc/phosphor-led-manager/` 下的同名文件），找不到就一直等 Entity-Manager；用 `phosphor-led-manager_%.bbappend` 把板级 `led.json` 装成这个文件名 |
+| `ipmitool mc info` 固件版本 `0.00`、网页运行版本 `--`，`xyz.openbmc_project.Software.BMC.Updater` 不存在 | BMC 镜像更新守护进程没有自启（updater 包整体设了 `SYSTEMD_AUTO_ENABLE = "disable"`），它同时提供 BMC 版本对象和固件上传后端；在 bbappend 里为它单独建 `multi-user.target.wants` 软链接 |
+| `ModuleNotFoundError: No module named 'xml'` | `python3-dbus-fast` 配方没带 `python3-xml` 等运行依赖，用到它的 Python 服务要在自己的 `RDEPENDS` 里补 |
 | `pin L26 already requested by ...mdio` | EVB 设备树默认启用 `mdio0` 至 `mdio3`，只保留用到的 `mdio1`，其余禁用，否则占用 I2C12 的引脚 |
 
 ### 3. 修改网页补丁的建议流程
