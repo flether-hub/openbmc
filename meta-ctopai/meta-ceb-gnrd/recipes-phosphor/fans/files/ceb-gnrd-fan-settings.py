@@ -17,6 +17,17 @@ D-Bus API (reachable through the bmcweb D-Bus REST interface):
   property Persist (b, read/write)
   method   Save()  snapshot the current Entity-Manager values (or delete the
                    stored file when Persist is false)
+  method   GetFans() -> ay   status of the six fans (used by the IPMI OEM command)
+  method   SetFan(y fan, y mode, y duty, y persist) -> b   change one fan or all fans
+                   (used by the IPMI OEM command)
+
+IPMI OEM commands (netfn 0x30, implemented by the ceb-gnrd-ipmi-fan library, which
+only forwards to the two methods above):
+  0x01  Get   response: byte 0 = keep settings after reboot (0/1), then 4 bytes per
+              fan SYS_FAN0..SYS_FAN5: mode (0 adaptive, 1 fixed), duty in percent
+              (0xFF unknown), speed in RPM (low byte, high byte)
+  0x02  Set   request: fan (0..5, 0xFF = all), mode (0 adaptive, 1 fixed), duty
+              (10..100, used for fixed mode), persist (0/1)
 
 Everything is logged to the journal: journalctl -u ceb-gnrd-fan-settings
 """
@@ -47,6 +58,17 @@ PID_IFACE = "xyz.openbmc_project.Configuration.Pid"
 ZONE_IFACE = "xyz.openbmc_project.Configuration.Pid.Zone"
 
 # Property names persisted for each configuration type.
+FAN_COUNT = 6
+FAN_NAMES = ["SYS_FAN%d" % i for i in range(FAN_COUNT)]
+FAN_TACH_ROOT = "/xyz/openbmc_project/sensors/fan_tach"
+PWM_ROOT = "/xyz/openbmc_project/control/fanpwm"
+VALUE_IFACE = "xyz.openbmc_project.Sensor.Value"
+FANPWM_IFACE = "xyz.openbmc_project.Control.FanPwm"
+ZONE_NAME = "Zone 1"
+# Adaptive mode: the fan controllers use these limits (same as ceb-gnrd.json).
+ADAPTIVE_MIN = 30.0
+ADAPTIVE_MAX = 100.0
+FIXED_MIN_DUTY = 10
 PID_KEYS = ("OutLimitMin", "OutLimitMax")
 ZONE_KEYS = ("MinThermalOutput",)
 
@@ -128,6 +150,38 @@ async def write_config(bus, interface, stored):
     return changed
 
 
+async def read_fan_rpms(bus):
+    """Return {sensor name: rpm} of the fan tach sensors."""
+    rpms = {}
+    try:
+        body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetSubTree", "sias",
+                          [FAN_TACH_ROOT, 0, [VALUE_IFACE]])
+    except Exception:
+        return rpms
+    for path, services in body[0].items():
+        for service in services:
+            try:
+                value = await call(bus, service, path, PROPS, "Get", "ss", [VALUE_IFACE, "Value"])
+                rpm = float(value[0].value)
+                if rpm == rpm:  # not NaN
+                    rpms[path.rsplit("/", 1)[-1]] = int(round(rpm))
+            except Exception:
+                pass
+    return rpms
+
+
+async def read_pwm_percent(bus, index):
+    """Current PWM output of fan index in percent, None when it cannot be read."""
+    path = "%s/PWM%d" % (PWM_ROOT, index + 1)
+    try:
+        body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetObject", "sas", [path, [FANPWM_IFACE]])
+        service = next(iter(body[0]))
+        value = await call(bus, service, path, PROPS, "Get", "ss", [FANPWM_IFACE, "Target"])
+        return max(0, min(100, int(round(float(value[0].value)))))
+    except Exception:
+        return None
+
+
 def load_state():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as handle:
@@ -176,6 +230,64 @@ class FanSettings(ServiceInterface):
     @method()
     async def Save(self) -> "b":
         """Store the current fan settings, or forget them when Persist is false."""
+        return await self.do_save()
+
+    @method()
+    async def GetFans(self) -> "ay":
+        """Fan status for the IPMI OEM Get command (see the module docstring)."""
+        try:
+            pids = await read_config(self.bus, PID_IFACE, PID_KEYS)
+        except Exception as exc:
+            LOG.error("GetFans: cannot read the fan controllers: %s", exc)
+            pids = {}
+        rpms = await read_fan_rpms(self.bus)
+        out = [1 if self.persist else 0]
+        for index, name in enumerate(FAN_NAMES):
+            limits = pids.get(name, {})
+            low = limits.get("OutLimitMin")
+            high = limits.get("OutLimitMax")
+            fixed = low is not None and high is not None and low == high
+            if fixed:
+                duty = int(round(high))
+            else:
+                pwm = await read_pwm_percent(self.bus, index)
+                duty = 0xFF if pwm is None else pwm
+            rpm = max(0, min(0xFFFF, rpms.get(name, 0)))
+            out += [1 if fixed else 0, duty, rpm & 0xFF, rpm >> 8]
+        return out
+
+    @method()
+    async def SetFan(self, fan: "y", mode: "y", duty: "y", persist: "y") -> "b":
+        """Set one fan (0..5) or all fans (0xFF) to adaptive (0) or fixed (1) mode."""
+        if fan != 0xFF and fan >= FAN_COUNT:
+            LOG.warning("SetFan: invalid fan %d", fan)
+            return False
+        if mode not in (0, 1) or persist not in (0, 1):
+            LOG.warning("SetFan: invalid mode %d or persist %d", mode, persist)
+            return False
+        if mode == 1 and not (FIXED_MIN_DUTY <= duty <= 100):
+            LOG.warning("SetFan: invalid duty %d (valid %d..100)", duty, FIXED_MIN_DUTY)
+            return False
+        names = FAN_NAMES if fan == 0xFF else [FAN_NAMES[fan]]
+        low, high = (float(duty), float(duty)) if mode == 1 else (ADAPTIVE_MIN, ADAPTIVE_MAX)
+        try:
+            changed = await write_config(
+                self.bus, PID_IFACE,
+                {name: {"OutLimitMin": low, "OutLimitMax": high} for name in names})
+            if fan == 0xFF:
+                await write_config(self.bus, ZONE_IFACE,
+                                   {ZONE_NAME: {"MinThermalOutput": low}})
+        except Exception as exc:
+            LOG.error("SetFan failed: %s", exc)
+            return False
+        LOG.info("SetFan: fan %s mode %s duty %d persist %d (%d value(s) changed)",
+                 "all" if fan == 0xFF else fan, "fixed" if mode else "adaptive",
+                 duty, persist, changed)
+        self.persist = bool(persist)
+        self.emit_properties_changed({"Persist": self.persist})
+        return await self.do_save()
+
+    async def do_save(self) -> bool:
         if not self.persist:
             delete_state()
             LOG.info("Save: persistence off, the next BMC reboot returns to adaptive mode")

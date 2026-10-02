@@ -17,8 +17,9 @@ and by name pattern:
            readings (DTS) and the Tcontrol / Tthrottle / Tjmax thresholds
 
 Upper thresholds (non-critical / critical / non-recoverable) are published on the
-Warning / Critical / HardShutdown threshold interfaces, so phosphor-sel-logger
-records the alarms and IPMI shows UNC / UC / UNR.
+Warning / Critical threshold interfaces and a private NonRecoverable interface (not
+HardShutdown, nothing may power the system off), so phosphor-sel-logger records the
+alarms and IPMI shows UNC / UC / UNR.
 
 When the host is off the value is 0 (no thermal load); when the host is on but
 no source sensor is readable the value is FAILSAFE_TEMP.  Both fan curves in
@@ -50,6 +51,11 @@ SOURCE_SERVICE = "xyz.openbmc_project.IntelCPUSensor"
 VALUE_IFACE = "xyz.openbmc_project.Sensor.Value"
 UNIT_DEGREES_C = "xyz.openbmc_project.Sensor.Value.Unit.DegreesC"
 ASSOC_IFACE = "xyz.openbmc_project.Association.Definitions"
+# Private interface for the upper non-recoverable threshold.  It is deliberately not
+# xyz.openbmc_project.Sensor.Threshold.HardShutdown: services such as the fan
+# sensor monitor power the system off on a HardShutdown alarm, and the BMC must
+# not shut the system down.  The board patches of ipmid and sel-logger read it.
+NONRECOVERABLE_IFACE = "xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable"
 
 MAPPER = "xyz.openbmc_project.ObjectMapper"
 MAPPER_PATH = "/xyz/openbmc_project/object_mapper"
@@ -175,24 +181,24 @@ class CriticalThreshold(_Threshold):
         return False
 
 
-class HardShutdownThreshold(_Threshold):
+class NonRecoverableThreshold(_Threshold):
     def __init__(self, high):
-        super().__init__("xyz.openbmc_project.Sensor.Threshold.HardShutdown", high)
+        super().__init__(NONRECOVERABLE_IFACE, high)
 
     @dbus_property(access=PropertyAccess.READ)
-    def HardShutdownHigh(self) -> "d":
+    def NonRecoverableHigh(self) -> "d":
         return self.high
 
     @dbus_property(access=PropertyAccess.READ)
-    def HardShutdownLow(self) -> "d":
+    def NonRecoverableLow(self) -> "d":
         return math.nan
 
     @dbus_property(access=PropertyAccess.READ)
-    def HardShutdownAlarmHigh(self) -> "b":
+    def NonRecoverableAlarmHigh(self) -> "b":
         return self.alarm
 
     @dbus_property(access=PropertyAccess.READ)
-    def HardShutdownAlarmLow(self) -> "b":
+    def NonRecoverableAlarmLow(self) -> "b":
         return False
 
 
@@ -295,7 +301,7 @@ async def main():
         thresholds[group] = [
             (WarningThreshold(unc), "WarningAlarmHigh", "UNC"),
             (CriticalThreshold(uc), "CriticalAlarmHigh", "UC"),
-            (HardShutdownThreshold(unr), "HardShutdownAlarmHigh", "UNR"),
+            (NonRecoverableThreshold(unr), "NonRecoverableAlarmHigh", "UNR"),
         ]
         for obj, _, _ in thresholds[group]:
             bus.export(path, obj)

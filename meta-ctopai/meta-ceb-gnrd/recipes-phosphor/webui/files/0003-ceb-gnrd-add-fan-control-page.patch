@@ -46,7 +46,7 @@ diff --git a/src/locales/en-US.json b/src/locales/en-US.json
          "dumps": "Dumps",
          "eventLogs": "Event logs",
          "factoryReset": "Factory reset",
-@@ -198,6 +200,22 @@
+@@ -198,6 +200,27 @@
              "successDelete": "Successfully disconnected {count} session. | Successfully disconnected {count} sessions."
          }
      },
@@ -57,14 +57,19 @@ diff --git a/src/locales/en-US.json b/src/locales/en-US.json
 +        "mode": "Control mode",
 +        "adaptive": "Adaptive",
 +        "fixed": "Fixed speed",
-+        "minimumSpeed": "Minimum fan speed",
 +        "fixedSpeed": "Fixed fan speed",
 +        "unavailable": "No fan control configuration was found on the BMC, so fan speeds cannot be changed.",
 +        "loadError": "Unable to load fan control settings.",
 +        "saveSuccess": "Fan control settings saved successfully.",
 +        "saveError": "Unable to save fan control settings.",
 +        "persist": "Keep these settings after the BMC reboots",
-+        "persistHelp": "When off, a BMC reboot returns the fans to adaptive mode. When on, the settings survive reboots and power cycles."
++        "persistHelp": "When off, a BMC reboot returns the fans to adaptive mode. When on, the settings survive reboots and power cycles.",
++        "commandTitle": "ipmitool commands",
++        "commandHelp": "The same fan control is available from the command line with two OEM commands. Run them on a Linux computer; to reach the BMC remotely add -I lanplus -H <BMC address> -U <user> -P <password> after ipmitool.",
++        "readTitle": "Read the current speed and control mode of every fan",
++        "readHelp": "The first line returns the raw bytes: byte 0 is 1 when the settings are kept after a BMC reboot, then 4 bytes per fan from SYS_FAN0 to SYS_FAN5: control mode (0 adaptive, 1 fixed), duty in percent (0xFF unknown), speed in RPM (low byte, high byte). The second line decodes them (bash); duty 255 means unknown.",
++        "setTitle": "Apply the selection above",
++        "setHelp": "Parameters: fan (0 to 5, 0xFF all fans), control mode (0x00 adaptive, 0x01 fixed), fixed duty in percent (hex, used in fixed mode only), keep settings after a BMC reboot (0x00 no, 0x01 yes). The command changes with the selection above."
 +    },
      "pageDateTime": {
          "alert": {
@@ -101,7 +106,7 @@ new file mode 100644
 index 0000000..065091b
 --- /dev/null
 +++ b/src/views/Settings/FanControl/FanControl.vue
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,256 @@
 +<template>
 +  <b-container fluid="xl">
 +    <page-title :description="$t('pageFanControl.description')" />
@@ -132,18 +137,6 @@ index 0000000..065091b
 +        />
 +      </b-form-group>
 +
-+      <b-form-group :label="$t('pageFanControl.minimumSpeed')">
-+        <b-form-input
-+          v-model.number="minimumSpeed"
-+          type="range"
-+          min="10"
-+          max="100"
-+          step="1"
-+          :disabled="!hasControl"
-+        />
-+        <output>{{ minimumSpeed }}%</output>
-+      </b-form-group>
-+
 +      <b-form-group
 +        v-if="mode === 'fixed'"
 +        :label="$t('pageFanControl.fixedSpeed')"
@@ -172,6 +165,33 @@ index 0000000..065091b
 +        {{ $t('global.action.saveSettings') }}
 +      </b-button>
 +    </b-form>
++
++    <h2 class="h5 mt-5">{{ $t('pageFanControl.commandTitle') }}</h2>
++    <p class="text-muted">{{ $t('pageFanControl.commandHelp') }}</p>
++
++    <label for="fan-read-command">{{ $t('pageFanControl.readTitle') }}</label>
++    <textarea
++      id="fan-read-command"
++      class="form-control font-monospace mb-1"
++      rows="6"
++      readonly
++      :value="readCommand"
++    />
++    <small class="d-block text-muted mb-4">
++      {{ $t('pageFanControl.readHelp') }}
++    </small>
++
++    <label for="fan-set-command">{{ $t('pageFanControl.setTitle') }}</label>
++    <textarea
++      id="fan-set-command"
++      class="form-control font-monospace mb-1"
++      rows="2"
++      readonly
++      :value="setCommand"
++    />
++    <small class="d-block text-muted">
++      {{ $t('pageFanControl.setHelp') }}
++    </small>
 +  </b-container>
 +</template>
 +
@@ -182,6 +202,14 @@ index 0000000..065091b
 +
 +const managerPath = '/redfish/v1/Managers/bmc';
 +const settingsPath = '/xyz/openbmc_project/ceb_gnrd/fan_settings';
++// Adaptive mode uses the limits of the Entity-Manager configuration.
++const adaptiveMinimum = 30;
++const adaptiveMaximum = 100;
++// Redfish adds metadata members such as @odata.id to the fan objects.
++const isConfigEntry = ([name]) => !name.startsWith('@');
++
++const hex = (value) =>
++  `0x${Number(value).toString(16).toUpperCase().padStart(2, '0')}`;
 +
 +export default {
 +  name: 'FanControl',
@@ -190,7 +218,6 @@ index 0000000..065091b
 +  data() {
 +    return {
 +      mode: 'adaptive',
-+      minimumSpeed: 30,
 +      fixedSpeed: 60,
 +      selectedFan: 'all',
 +      modeOptions: [
@@ -206,6 +233,11 @@ index 0000000..065091b
 +      isSaving: false,
 +      loadError: false,
 +      persist: false,
++      readCommand: [
++        'ipmitool raw 0x30 0x01',
++        '',
++        'r=($(ipmitool raw 0x30 0x01)); echo "keep=$((0x${r[0]}))"; for i in 0 1 2 3 4 5; do b=$((1+i*4)); echo "SYS_FAN$i mode=$((0x${r[b]})) duty=$((0x${r[b+1]}))% rpm=$((0x${r[b+3]}${r[b+2]}))"; done',
++      ].join('\n'),
 +    };
 +  },
 +  computed: {
@@ -219,6 +251,20 @@ index 0000000..065091b
 +        ...entries.map(([name]) => ({ text: name, value: name })),
 +      ];
 +    },
++    setCommand() {
++      // fan number: the digits at the end of the name (SYS_FAN3 -> 3), 0xFF = all
++      const match = /(\d+)$/.exec(this.selectedFan);
++      const fan = this.selectedFan === 'all' || !match ? 255 : Number(match[1]);
++      const fixed = this.mode === 'fixed';
++      return `ipmitool raw 0x30 0x02 ${[
++        fan,
++        fixed ? 1 : 0,
++        fixed ? Number(this.fixedSpeed) : 0,
++        this.persist ? 1 : 0,
++      ]
++        .map(hex)
++        .join(' ')}`;
++    },
 +  },
 +  created() {
 +    this.loadSettings();
@@ -230,8 +276,10 @@ index 0000000..065091b
 +        const fan = data?.Oem?.OpenBmc?.Fan;
 +        if (!fan) return;
 +
-+        this.controllers = Object.entries(fan.FanControllers || {});
-+        this.zones = Object.entries(fan.FanZones || {});
++        this.controllers = Object.entries(fan.FanControllers || {}).filter(
++          isConfigEntry,
++        );
++        this.zones = Object.entries(fan.FanZones || {}).filter(isConfigEntry);
 +        this.loadSelectedSettings();
 +        await this.loadPersistence();
 +      } catch {
@@ -258,9 +306,6 @@ index 0000000..065091b
 +      )?.[1] || this.controllers[0]?.[1] || this.zones[0]?.[1];
 +      const configuredMinimum = Number(first?.OutLimitMin);
 +      const configuredMaximum = Number(first?.OutLimitMax);
-+      if (Number.isFinite(configuredMinimum)) {
-+        this.minimumSpeed = Math.min(100, Math.max(10, configuredMinimum));
-+      }
 +      if (
 +        Number.isFinite(configuredMinimum) &&
 +        Number.isFinite(configuredMaximum) &&
@@ -275,8 +320,10 @@ index 0000000..065091b
 +    async saveSettings() {
 +      const minimum = this.mode === 'fixed'
 +        ? Number(this.fixedSpeed)
-+        : Math.min(100, Math.max(10, Number(this.minimumSpeed)));
-+      const maximum = this.mode === 'fixed' ? Number(this.fixedSpeed) : 100;
++        : adaptiveMinimum;
++      const maximum = this.mode === 'fixed'
++        ? Number(this.fixedSpeed)
++        : adaptiveMaximum;
 +      const fanControllers = Object.fromEntries(
 +        this.controllers.map(([name, config]) => [name,
 +          this.selectedFan === 'all' || name === this.selectedFan

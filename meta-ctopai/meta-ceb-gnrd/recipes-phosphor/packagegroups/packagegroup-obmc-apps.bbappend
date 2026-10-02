@@ -42,3 +42,9 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
 
 RDEPENDS:${PN}-extras:remove:ceb-gnrd = "phosphor-state-manager-chassis"
 RDEPENDS:${PN}-chassis-state-mgmt:remove:ceb-gnrd = "obmc-phosphor-power"
+
+# The BMC must never shut the system down because of a sensor threshold.
+# phosphor-fan-monitor pulls in phosphor-fan's sensor-monitor ("Sensor Monitor"),
+# which powers the system off on HardShutdown / SoftShutdown threshold alarms.
+# Fans are controlled by phosphor-pid-control here, so neither is needed.
+RDEPENDS:${PN}-fan-control:remove:ceb-gnrd = "phosphor-fan-monitor"

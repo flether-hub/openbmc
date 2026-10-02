@@ -2,7 +2,6 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 
 SRC_URI:append:ceb-gnrd = " \
 	file://ast2600-ceb-gnrd.dts \
-	file://ceb-gnrd-netboot.cfg \
 	file://ceb-gnrd-env.h \
 	"
 

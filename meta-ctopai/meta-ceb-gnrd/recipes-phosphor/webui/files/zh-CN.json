@@ -207,14 +207,19 @@
     "mode": "控制模式",
     "adaptive": "自适应",
     "fixed": "固定转速",
-    "minimumSpeed": "最低风扇转速",
     "fixedSpeed": "固定风扇转速",
     "unavailable": "BMC 上没有找到风扇控制配置（风扇调速策略），暂时无法调节风扇转速。",
     "loadError": "无法加载风扇控制设置。",
     "saveSuccess": "风扇控制设置已保存。",
     "saveError": "无法保存风扇控制设置。",
     "persist": "BMC 重启后保留这些设置",
-    "persistHelp": "关闭时，BMC 重启后风扇自动恢复到自适应模式；开启后，设置在重启和断电重启后仍然有效。"
+    "persistHelp": "关闭时，BMC 重启后风扇自动恢复到自适应模式；开启后，设置在重启和断电重启后仍然有效。",
+    "commandTitle": "ipmitool 命令",
+    "commandHelp": "同样的风扇控制也可以在命令行用两条 OEM 命令完成。请在 Linux 主机上运行；远程访问 BMC 时，在 ipmitool 后加上 -I lanplus -H <BMC地址> -U <用户名> -P <密码>。",
+    "readTitle": "读取每个风扇当前的转速和控制模式",
+    "readHelp": "第一行返回原始字节：第 0 字节为 1 表示设置在 BMC 重启后保留；之后每个风扇 4 字节（SYS_FAN0 到 SYS_FAN5）：控制模式（0 自适应，1 固定）、占空比百分比（0xFF 表示未知）、转速 RPM（低字节、高字节）。第二行（bash）把它们解码；占空比 255 表示未知。",
+    "setTitle": "应用上面的选择",
+    "setHelp": "参数依次为：风扇（0 到 5，0xFF 表示全部风扇）、控制模式（0x00 自适应，0x01 固定）、固定占空比百分比（十六进制，仅固定模式有效）、BMC 重启后是否保留（0x00 否，0x01 是）。命令会随上面的选择实时变化。"
   },
   "pageDateTime": {
     "alert": {

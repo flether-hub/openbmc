@@ -28,10 +28,12 @@ THRESHOLD_INTERFACES = (
     "xyz.openbmc_project.Sensor.Threshold.PerformanceLoss",
     "xyz.openbmc_project.Sensor.Threshold.SoftShutdown",
     "xyz.openbmc_project.Sensor.Threshold.HardShutdown",
+    # private interface of ceb-gnrd-temp-max (upper non-recoverable temperature)
+    "xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable",
 )
 # Temperature alerts only follow the upper critical (and the higher upper
 # non-recoverable) thresholds; warning level and low alarms do not light the LED.
-TEMPERATURE_ALARM_PROPERTIES = ("CriticalAlarmHigh", "HardShutdownAlarmHigh")
+TEMPERATURE_ALARM_PROPERTIES = ("CriticalAlarmHigh", "NonRecoverableAlarmHigh")
 WATCHDOG_MATCH = (
     "type='signal',interface='xyz.openbmc_project.Watchdog',"
     "member='Timeout',path='/xyz/openbmc_project/watchdog/host0'"

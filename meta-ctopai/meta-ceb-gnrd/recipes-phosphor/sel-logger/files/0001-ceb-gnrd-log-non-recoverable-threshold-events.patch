@@ -1,11 +1,12 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CEB-GNRD board layer <bmc@localhost>
 Date: Fri, 2 Oct 2026 00:00:00 +0000
-Subject: [PATCH] threshold monitor: log non-recoverable (HardShutdown) events
+Subject: [PATCH] threshold monitor: log non-recoverable threshold events
 
-Entity-Manager Severity 4 thresholds and the CPU/DIMM maximum temperature
-sensors are published on the HardShutdown threshold interface, which the
-threshold monitor ignored.  Log them as upper/lower non-recoverable SEL events.
+The CPU/DIMM maximum temperature sensors publish their upper non-recoverable
+threshold on the private xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable
+interface (not HardShutdown, which other services turn into a power off).
+Log its assertions as upper/lower non-recoverable SEL events.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
 ---
@@ -29,12 +30,12 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
              eventData[0] =
                  static_cast<uint8_t>(thresholdEventOffsets::upperCritGoingHigh);
          }
-+        else if (event == "HardShutdownAlarmLow")
++        else if (event == "NonRecoverableAlarmLow")
 +        {
 +            eventData[0] = static_cast<uint8_t>(
 +                thresholdEventOffsets::lowerNonRecoverableGoingLow);
 +        }
-+        else if (event == "HardShutdownAlarmHigh")
++        else if (event == "NonRecoverableAlarmHigh")
 +        {
 +            eventData[0] = static_cast<uint8_t>(
 +                thresholdEventOffsets::upperNonRecoverableGoingHigh);
@@ -46,7 +47,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
                  redfishMessageID += ".SensorThresholdCriticalHighGoingLow";
              }
          }
-+        else if (event == "HardShutdownLow")
++        else if (event == "NonRecoverableLow")
 +        {
 +            threshold = "non-recoverable low";
 +            if (assert)
@@ -62,7 +63,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific policy]
 +                redfishMessageID += ".SensorThresholdCriticalLowGoingHigh";
 +            }
 +        }
-+        else if (event == "HardShutdownHigh")
++        else if (event == "NonRecoverableHigh")
 +        {
 +            threshold = "non-recoverable high";
 +            if (assert)

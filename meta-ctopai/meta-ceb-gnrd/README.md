@@ -43,13 +43,7 @@ Platform features
 
 ### U-Boot
 
-* Default boot order (`bootcmd`, set in `recipes-bsp/u-boot/files/ceb-gnrd-netboot.cfg`):
-  load `fitImage` from the TFTP server 192.168.185.84 to `0x83000000` and
-  `bootm` it; if that fails (no link, no server, no file, image does not boot)
-  fall through to `run bootspi`, the image in the local SPI flash. The TFTP
-  timeouts are shortened so a missing server costs only a few seconds plus the
-  fixed ARP timeout. The network image replaces only the kernel and initramfs;
-  the root file system still comes from the local `rofs`.
+* Boot order: `bootcmd` is fixed to `run bootspi`, the FIT image in the local SPI flash; U-Boot never loads the system over the network by itself. TFTP is only used by hand: `tftpboot 0x83000000 fitImage` and `bootm` for kernel debugging (the root file system still comes from the local `rofs`), and by `run netupdate` below.
 * Default network settings equal Linux `eth0`: 192.168.185.200/24, gateway
   192.168.185.1, server 192.168.185.84 (patched into `aspeed-common.h` by the
   U-Boot bbappend; the build fails if the patch does not apply).
@@ -57,8 +51,7 @@ Platform features
   fetches `image-kernel` and `image-rofs` over TFTP and writes them with
   `sf update` to the kernel and rofs partitions after checking their size. It
   never writes U-Boot, the environment or `rwfs`.
-* The environment is stored in flash, so a previously saved environment hides
-  the new defaults: run `env default -a; saveenv` once (and set `ethaddr`, which
+* The environment is stored in flash, so a previously saved environment (for example an older `bootcmd` that tried TFTP first) hides the new defaults: run `env default -a; saveenv` once (and set `ethaddr`, which
   is random otherwise).
 * U-Boot uses only the RGMII port. The NC-SI MAC (`&mac2`) is disabled in the
   U-Boot device tree: with a `phy-mode` its probe crashes U-Boot (data abort and
@@ -152,9 +145,14 @@ Platform features
   are DIMM; DTS, Tcontrol, Tthrottle, Tjmax and margin readings are excluded).
   Host off: 0. Host on and no reading: 70 degC, which both fan curves map to 60 % (no alarm).
   Upper thresholds only (non-critical / critical / non-recoverable):
-  CPU 90 / 98 / 105 degC, DIMM 80 / 85 / 95 degC, on the Warning, Critical and
-  HardShutdown threshold interfaces. The service emits `ThresholdAsserted`
-  signals, which phosphor-sel-logger turns into SEL records. The discovered
+  CPU 90 / 98 / 105 degC, DIMM 80 / 85 / 95 degC.  The first two use the Warning
+  and Critical threshold interfaces; the non-recoverable one is on a private
+  interface (`xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable`), never on
+  HardShutdown: the BMC must not shut the system down because of a threshold,
+  and services such as phosphor-fan's sensor monitor power the system off on a
+  HardShutdown alarm (that monitor is also removed from the image).  The service
+  emits `ThresholdAsserted` signals, which phosphor-sel-logger turns into SEL
+  records; a board patch of ipmid shows the non-recoverable value as UNR. The discovered
   source sensor names are logged (`journalctl -u ceb-gnrd-temp-max`) and need
   checking on the board.
 * Fans are driven by `phosphor-pid-control` from the Entity-Manager
@@ -172,6 +170,12 @@ Platform features
   optional persistence across BMC restarts in `/var/lib/ceb-gnrd`); it
   re-applies the stored limits to the Entity-Manager Pid objects every 30 s.
   The page talks to it through bmcweb's `dbus-rest` option.
+  Adaptive mode uses fixed limits (30 % to 100 %); there is no minimum-speed
+  setting.  The same control is exposed as two IPMI OEM commands, netfn 0x30:
+  `0x01` Get (flag byte, then mode/duty/RPM-low/RPM-high for SYS_FAN0..5) and
+  `0x02` Set (fan 0-5 or 0xFF, mode, duty, persist).  They are implemented by
+  the `ceb-gnrd-ipmi-fan` ipmid provider (pulled in by `ceb-gnrd-ipmi`) and
+  whitelisted in `ceb-gnrd-ipmi-whitelist.conf`.  Not compiled or verified.
 
 ### RTC and log time
 
@@ -242,7 +246,7 @@ should appear after flashing the updated image.
 * All four are written to the SEL: voltages and temperatures by
   phosphor-sel-logger's threshold monitor (a board patch,
   `0001-ceb-gnrd-log-non-recoverable-threshold-events.patch`, makes it handle
-  the HardShutdown level as upper/lower non-recoverable), the watchdog by its
+  the private NonRecoverable interface as upper/lower non-recoverable), the watchdog by its
   watchdog monitor and the BIOS failure by the alert service itself.
 * The SEL is a rollover log: `ceb-gnrd-sel-rollover` keeps the newest 2000
   records of `/var/log/ipmi_sel` and drops the oldest when it grows past 2100

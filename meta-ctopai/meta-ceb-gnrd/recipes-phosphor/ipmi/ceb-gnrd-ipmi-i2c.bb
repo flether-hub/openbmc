@@ -7,6 +7,8 @@ inherit allarch python3native
 
 # Runtime provider named in VIRTUAL-RUNTIME_phosphor-ipmi-providers.
 RPROVIDES:${PN} += "ceb-gnrd-ipmi"
+# The OEM fan control commands ship with the board IPMI provider.
+RDEPENDS:${PN} += "ceb-gnrd-ipmi-fan"
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = "file://generate_i2c_allowlist.py"

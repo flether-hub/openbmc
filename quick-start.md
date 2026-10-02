@@ -166,7 +166,7 @@ qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
 
 > **QEMU 里 ping 的限制**：QEMU 的 `user` 网络（slirp）是虚拟的 NAT 网络。① 它默认不转发 ICMP，ping 外网大多不通，但 TCP/UDP（`curl`、`nslookup`）是通的，验证外网请用 `curl` 而不是 `ping`；② 192.168.185.0/24 整个网段都在 QEMU 内部，宿主机的真实地址（如 192.168.185.84）在里面是不存在的，虚拟机访问宿主机用 `host=` 指定的 192.168.185.1，DNS 是 192.168.185.3。
 
-> **QEMU 里测 U-Boot 的 TFTP 启动**：服务器地址和物理板子不同（QEMU 里是 192.168.185.1，需要 `tftp=` 参数），详见本章 “4. U-Boot 通过 TFTP 加载镜像”。
+> **U-Boot 启动方式与 TFTP**：U-Boot 固定从本地 SPI 闪存启动，TFTP 只用于手动网络启动调试和 `run netupdate` 更新闪存；QEMU 里的服务器地址和物理板子不同（192.168.185.1，需要 `tftp=` 参数），详见本章 “4. U-Boot 的 TFTP 使用”。
 
 > ⚠️ **待验证**：上面的网卡对应关系按 QEMU 的网卡分配规则推断，网页打不开时先在 BMC 控制台里看 `ip addr show eth0` 是否有 `192.168.185.200`。如果你之前用的是旧版三网卡写法（`-net nic -net nic -net nic,netdev=net0`），那条命令对应的是旧的 MAC 映射，请改用本节的写法。
 ### 2. 访问 OpenBMC 服务
@@ -216,20 +216,19 @@ systemctl status xyz.openbmc_project.EntityManager.service
 ip addr
 ```
 
-### 4. U-Boot 通过 TFTP 加载镜像（虚拟机与物理主板的区别）
+### 4. U-Boot 的 TFTP 使用（虚拟机与物理主板的区别）
 
-**启动顺序（已写入 U-Boot 默认 `bootcmd`）**：先从 TFTP 服务器取 `fitImage`，取到就 `bootm` 启动；取不到或启动失败，继续从本地 SPI 闪存启动（`run bootspi`）。
+**启动方式**：U-Boot 的默认 `bootcmd` 固定为 `run bootspi`，只从本地 SPI 闪存加载内核，不会自动走网络。TFTP 只在你手动操作时使用：手动网络启动（调试内核用）和 `run netupdate`（更新闪存，见 4.5）。
 
 | 项目 | 物理主板 | QEMU 虚拟机 |
 |---|---|---|
 | TFTP 服务器地址 | **192.168.185.84**（Ubuntu 主机，U-Boot 默认 `serverip`） | **192.168.185.1**（QEMU 虚拟网络里的“宿主机”，`host=` 指定） |
 | TFTP 服务由谁提供 | Ubuntu 上的 `tftpd-hpa`（目录 `/srv/tftp`） | QEMU 自带，启动命令里加 `tftp=/srv/tftp` |
 | 网络 | 必须和 Ubuntu 在同一局域网（经交换机），192.168.185.0/24 | QEMU 的 `-nic user` 虚拟网络，只在虚拟机内部有效 |
-| 默认自动启动能否走 TFTP | 能（`serverip` 就是 .84） | 不能：.84 在虚拟网络里不存在，ARP 超时后回退到本地 flash |
-| 要手动做什么 | 无 | 打断自动启动后手动 `setenv serverip 192.168.185.1` |
+| 手动 TFTP 前要做什么 | 无（`serverip` 默认就是 .84） | 手动 `setenv serverip 192.168.185.1` |
 | `mii`、PHY 寄存器、RGMII 时序 | 真实硬件，**必须上板验证** | 模拟的（所有 PHY 地址都应答，页寄存器读出全 0），不能代表真实板子 |
 
-**镜像**：`fitImage` 只含内核、设备树和 initramfs，网络启动只替换这一部分，根文件系统仍用本地闪存的 rofs。文件在 `build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/fitImage`，文件名必须保持 `fitImage`。
+**镜像**：`fitImage` 只含内核、设备树和 initramfs，手动网络启动只替换这一部分，根文件系统仍用本地闪存的 rofs。文件在 `build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/fitImage`，文件名必须保持 `fitImage`。
 
 #### 4.1 在 Ubuntu 上准备 TFTP 服务（物理主板和 QEMU 都用同一个目录）
 
@@ -252,7 +251,7 @@ cd /tmp && tftp 127.0.0.1 -c get fitImage && ls -l fitImage
 
 每次重新编译后，要重新复制 `fitImage`。
 
-#### 4.2 QEMU 虚拟机里测试
+#### 4.2 QEMU 虚拟机里手动网络启动
 
 QEMU 启动命令里给第二个网卡加 `tftp=/srv/tftp`：
 
@@ -274,12 +273,12 @@ bootm 0x83000000
 
 成功的标志：`TFTP from server 192.168.185.1`，一排 `#`，`Bytes transferred = 5656980`（字节数应与 `fitImage` 大小一致），然后 `## Loading kernel from FIT Image at 83000000` 并进入 Linux。`/srv/tftp/fitImage` 要对运行 QEMU 的用户可读。
 
-> 如果不手动改 `serverip` 直接让它自动启动，会看到 `Loading: *` 之后 `ARP Retry count exceeded`，再回退到本地 flash 启动，这是预期行为。
+> 在 QEMU 里不改 `serverip`（还是 192.168.185.84）直接 `tftpboot`，会停在 `Loading: *`，最后 `ARP Retry count exceeded`，因为 .84 在虚拟网络里不存在。
 
-#### 4.3 物理主板上测试
+#### 4.3 物理主板上手动网络启动
 
 1. Ubuntu 的网口配好 `192.168.185.84/24`，BMC 的网口和它在同一局域网（经交换机或直连）。
-2. 烧入新编译的 U-Boot 和镜像后，**第一次要重置 U-Boot 环境**（环境存在闪存里，旧的 `bootcmd` 会盖住新默认值），并设置 MAC（不设会每次启动随机）：
+2. 烧入新编译的 U-Boot 和镜像后，**第一次要重置 U-Boot 环境**（环境存在闪存里；如果以前保存过带 `tftpboot` 的旧 `bootcmd`，会盖住新默认值，板子仍会先走网络），并设置 MAC（不设会每次启动随机）：
 
 ```
 env default -a
@@ -288,8 +287,8 @@ saveenv
 reset
 ```
 
-   `env default -a` 不可用时，手动设置：`setenv ipaddr 192.168.185.200; setenv netmask 255.255.255.0; setenv gatewayip 192.168.185.1; setenv serverip 192.168.185.84; setenv bootcmd 'setenv tftptimeout 2000\; setenv tftptimeoutcountmax 2\; if tftpboot 0x83000000 fitImage\; then bootm 0x83000000\; fi\; run bootspi'; saveenv`（分号要写成 `\;`）。
-3. 重启后串口日志应出现 `TFTP from server 192.168.185.84; our IP address is 192.168.185.200`、`Bytes transferred`，然后启动网络镜像。服务器不在时先 ARP 超时，再自动回退到本地 flash。
+   `env default -a` 不可用时，手动设置：`setenv bootcmd 'run bootspi'; setenv ipaddr 192.168.185.200; setenv netmask 255.255.255.0; setenv gatewayip 192.168.185.1; setenv serverip 192.168.185.84; saveenv`。
+3. 重启后应直接从本地闪存启动，不出现 TFTP。要手动网络启动时，在 `Hit any key to stop autoboot` 时按任意键，然后执行 `tftpboot 0x83000000 fitImage` 和 `bootm 0x83000000`，串口日志里应出现 `TFTP from server 192.168.185.84; our IP address is 192.168.185.200` 和 `Bytes transferred`。
 4. 出问题时的排查（**只适用于物理板子**）：
    * Ubuntu：`ip -br addr`（地址在接 BMC 的网卡上）、`sudo ufw status`（放开 UDP 69）、`sudo journalctl -u tftpd-hpa -f`（看有没有收到请求）。
    * 抓包（局域网流量大，用 BMC 的 MAC 过滤）：`sudo tcpdump -i <网卡> -n -e ether host 02:00:00:00:00:01`。
@@ -531,7 +530,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | eSPI | 仅 Peripheral 通道；驱动带复位恢复、错误计数和 debugfs 日志 ⚠️（见下） |
 | RTC / 时间 | AST2600 内部 RTC（无电池）已关闭，板上 NCT3015Y 是 `rtc0`；内核开机校时，`ceb-gnrd-rtc-sync` 兜底（最多等 `/dev/rtc0` 30 秒，QEMU 里没有 RTC 会等满）；BMC 系统时间和 SEL 时间默认来自 RTC |
 | 主机 KCS | 设备树 `&kcs3` 带 `aspeed,lpc-io-reg = <0xca2>`（驱动必需），未配 SerIRQ；需要 eSPI 外设通道就绪、BIOS 把 KCS 端口设为 0xCA2 才通 ⚠️ |
-| U-Boot | 默认先 TFTP（192.168.185.84）取 `fitImage`，失败回退本地 flash；默认网络参数与 Linux eth0 一致；`run netupdate` 通过 TFTP 更新闪存里的内核和 rofs（见第四章 4.5）；NC-SI 口在 U-Boot 里禁用 |
+| U-Boot | 固定从本地 SPI 闪存启动（`bootcmd = run bootspi`）；默认网络参数与 Linux eth0 一致（用于手动 TFTP）；`run netupdate` 通过 TFTP 更新闪存里的内核和 rofs（见第四章 4.5）；NC-SI 口在 U-Boot 里禁用 |
 | PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备；传感器有输入/输出电压、输入/输出功率和 PSUn_Temp（取 pmbus 的 temp2）⚠️ |
 
 ### 2. GPIO 行为
@@ -554,12 +553,12 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * **已移除**（无后台支持）：转储页的“System dump”选项（只保留 BMC dump）、固件页的“备份镜像”卡片和“切换为运行”（BMC 只有一个镜像区）、概览页“电源信息”卡片（功耗读数和功率上限依赖 DCMI 电源支持，本板不提供）、SNMP Alerts、清除密钥、LDAP、资源管理/电源、“仅重置服务器选项”、清单页的 DIMM/风扇/电源/处理器/组件表。
 * **转储**：只有 BMC dump（`phosphor-debug-collector`）；转储页走 bmcweb 的 Redfish Dump 服务，需要编译选项 `redfish-dump-log`（已在 `bmcweb_%.bbappend` 里启用，缺了这个选项转储页没有后端）。
 * **虚拟媒体**：网页只提供“从浏览器读取镜像文件”（走 bmcweb 的 /vm/0/0 WebSocket → jsnbd → nbd → USB mass storage → 主机 VL805 USB 口）；“从外部服务器读取镜像文件”（CIFS/HTTPS）需要已停止维护的 virtual-media 服务，镜像里没有，网页默认也不显示。上板验证：网页选一个 ISO 点开始，主机里应出现一个 USB 光盘/U 盘；BMC 上 `ls /sys/kernel/config/usb_gadget/`、`ls /dev/nbd0`。
-* **U-Boot 启动顺序**：先从 TFTP 服务器 192.168.185.84 取 `fitImage`，取不到或启动失败再从本地 SPI 闪存启动；U-Boot 默认网络参数与 Linux 的 eth0 一致（192.168.185.200/24，网关 192.168.185.1）。虚拟机与物理主板的区别、环境重置、排查步骤详见第四章 “4. U-Boot 通过 TFTP 加载镜像”。
+* **U-Boot 启动方式**：固定从本地 SPI 闪存启动（`bootcmd = run bootspi`），不自动走网络；U-Boot 默认网络参数与 Linux 的 eth0 一致（192.168.185.200/24，网关 192.168.185.1，TFTP 服务器 192.168.185.84），只用于手动 TFTP 启动调试和 `run netupdate`。虚拟机与物理主板的区别、环境重置、排查步骤详见第四章 “4. U-Boot 的 TFTP 使用”。
 * **时间和 SEL**：BMC 系统时间默认从板上 RTC（NCT3015Y）读取，SEL 时间戳用系统时间。AST2600 内部 RTC 已关闭，NCT3015Y 是 `rtc0`。
 * **SEL 记录**：电压、温度（含 CPU_MAX_TEMP / DIMM_MAX_TEMP，含不可恢复级别）、watchdog 超时、BIOS 启动失败（600 秒）、电源按键都会写 SEL。SEL 为 rollover：约保留最新 2000 条，满了自动丢弃最老的。
 * **SSH / SCP**：BMC 用 dropbear 提供 SSH（22 端口），已带 `openssh-sftp-server` 和 `openssh-scp`，`scp` 新旧协议都可用，例如 `scp -P 2222 file root@127.0.0.1:/tmp/`（QEMU）。
 * **SOL**：硬件上只能接收（CPU 串口输出接 BMC UART3 的 RX，TXD3 不接管脚），网页、SSH、IPMI 的 SOL 都不能向主机输入；网页提示为只读模式，终端禁用输入。
-* **风扇控制**：6 个风扇可单独或统一设置；可选“BMC 重启后保留这些设置”（保存到 `/var/lib/ceb-gnrd`，重启和断电重启后恢复），不勾选则 BMC 重启后回到自适应。该功能依赖 bmcweb 的 `dbus-rest`。
+* **风扇控制**：6 个风扇可单独或统一设置，模式只有“自适应”（最低 30%、最高 100%，固定默认值，页面不再有最低转速滑块）和“固定转速”；风扇下拉框不再显示 `@odata.id`/`@odata.type`；页面下方有命令框，随选择实时给出等价的 ipmitool OEM 命令。OEM 命令（netfn 0x30，只用两条，ipmitool 不用改，KCS/LAN 都可用，已加入白名单）：`ipmitool raw 0x30 0x01` 读取（返回 1 字节“重启后保留”标志 + 每个风扇 4 字节：模式 0 自适应/1 固定、占空比 %（0xFF 未知）、RPM 低字节、RPM 高字节）；`ipmitool raw 0x30 0x02 <风扇0-5或0xFF全部> <模式> <占空比十六进制> <保留0/1>` 设置（例如 `ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01` = 全部风扇固定 60% 并保留；需要 Admin 权限）。**这部分（含新增的 C++ OEM 库）没有编译、没有验证**。可选“BMC 重启后保留这些设置”（保存到 `/var/lib/ceb-gnrd`，重启和断电重启后恢复），不勾选则 BMC 重启后回到自适应。该功能依赖 bmcweb 的 `dbus-rest`。
 * **升级后保留**：普通固件升级不会清读写分区；需要清读写分区的升级会按白名单保存时区、主机名、SSH 主机密钥、网站证书和风扇设置。恢复出厂则全部清除（MAC 不受影响）。
 
 ### 4. IPMI
@@ -567,9 +566,9 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * `mc info`：Device ID 32，Device Revision 2，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。
 * 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常；温度读不到（主机已开机）时风扇 60%（temp-max 发布 70 ℃，两条曲线在 70 ℃ 都是 60%），风扇读到几个都不影响（FailSafePercent=30）。
 * 主机侧 IPMI 走 KCS3（见上）；LAN 通道 1 是 eth0（RMCP+ 只绑 eth0），通道 2 是 NC-SI 的 eth1。
-* SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-rollover` 保持 rollover，sel-logger 加了补丁，把“不可恢复”（HardShutdown）级别也记成 SEL 事件；告警灯的四种告警都有 SEL 记录。
+* SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-rollover` 保持 rollover，sel-logger 加了补丁，把“不可恢复”事件也记成 SEL（CPU/DIMM 最高温的 UNR 放在我们自己的接口上，不用 HardShutdown，所以不会触发任何自动关机）；告警灯的四种告警都有 SEL 记录。
 * DCMI（`ipmitool dcmi power reading`、`dcmi get_temp_reading`）：**未配置**，`power_reading.json` 的路径为空，`dcmi_sensors.json` 为空数组，命令会报不支持或没有内容。
-* 电压阈值：规格表里的上下限（标称 ±15%）按 Critical 级别配置（`lower critical` / `upper critical`），所以 `ipmitool sensor` 的 LC / UC 列能显示；越限时 sel-logger 直接记成 Critical 事件，告警灯随之点亮。CPU/DIMM 最高温度的 UNC / UC / UNR 里，UNR 在这个版本的 ipmid 里不显示。
+* 电压阈值：规格表里的上下限（标称 ±15%）按 Critical 级别配置（`lower critical` / `upper critical`），所以 `ipmitool sensor` 的 LC / UC 列能显示；越限时 sel-logger 直接记成 Critical 事件，告警灯随之点亮。CPU/DIMM 最高温度的 UNC / UC / UNR 都能显示：UNR 在我们自己的接口 `xyz.openbmc_project.CebGnrd.Threshold.NonRecoverable` 上，ipmid 加了补丁读取它。**BMC 不会因为任何阈值自动关机**：不使用 HardShutdown / SoftShutdown 接口，并且镜像里去掉了会据此关机的 phosphor-fan 的 sensor-monitor。
 * FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式和占位默认值（`CHASSIS_PART_NUMBER`、`PRODUCT_NAME` 等），直接回车就用默认值，输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成的镜像约 280 字节），再用 `ipmitool fru print 0` 核对。
 * 白名单：`Master Write-Read` 仅限 PCIe 槽位总线 i2c-0 至 i2c-5（本板没有 slot 2 的总线）。
 
@@ -598,11 +597,11 @@ ipmitool mc info                               # Manufacturer Name CTOPAI，Prod
 | PSU | 插 1 个和 2 个模块各验证：`journalctl -u ceb-gnrd-psu-detect`；`ipmitool sdr` 里应有 PSUn_Temp，`ls /sys/class/hwmon/*/temp*_input` 核对 temp2 确实是电源温度 |
 | 电源按键 | `journalctl -u ceb-gnrd-power-button-log -f`；`ipmitool sel list \| tail -3` |
 | 告警灯 | 电压越限、温度超 Upper Critical、watchdog 超时、BIOS 启动超过 600 秒各验证一次（四种共用一个灯，前两种恢复后灭，后两种重启 BMC 才灭） |
-| 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings` |
+| 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings`；OEM 命令：`ipmitool raw 0x30 0x01`、`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`（再读一次确认），失败时 `journalctl -u phosphor-ipmi-host` |
 | KCS | BMC：`ls /dev/ipmi-kcs3`、`journalctl -u phosphor-ipmi-kcs@ipmi-kcs3`；主机侧：`ipmitool -I open mc info` |
 | NC-SI | 主机上电后 `ip -br addr show eth1`、`journalctl -t ceb-gnrd-ncsi`（看有没有重试）；主机关机后接口应被关闭 |
 | SEL / 时间 | 制造电压和温度越限，`ipmitool sel list` 里应有事件和解除事件；SEL 超过 2100 条后确认最老的被删；断电重启后 `date`、`ipmitool sel time get` 应保持 RTC 的时间 |
-| U-Boot 网络启动 | 第一次要 `env default -a; setenv ethaddr ...; saveenv`；日志里看 `TFTP from server 192.168.185.84`；`run netupdate` 后 `reset` |
+| U-Boot | 第一次要 `env default -a; setenv ethaddr ...; saveenv`，确认 `printenv bootcmd` 是 `run bootspi`；`run netupdate` 后 `reset` |
 | BMC 状态 | `obmcutil state`（`Device Available` 取决于 BMC 是否为 Ready） |
 
 ---

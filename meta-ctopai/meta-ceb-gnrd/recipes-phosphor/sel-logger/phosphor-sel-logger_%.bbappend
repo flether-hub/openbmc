@@ -8,9 +8,9 @@ PACKAGECONFIG:append:ceb-gnrd = " \
     log-alarm \
     "
 
-# Entity-Manager Severity 4 thresholds (voltages) and the CPU/DIMM maximum
-# temperature sensors use the HardShutdown threshold interface; log those as
-# upper/lower non-recoverable SEL events as well.
+# The CPU/DIMM maximum temperature sensors publish their upper non-recoverable
+# threshold on a private interface, never on HardShutdown (nothing may power the
+# system off).  Log its assertions as upper/lower non-recoverable SEL events.
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-log-non-recoverable-threshold-events.patch"
 
