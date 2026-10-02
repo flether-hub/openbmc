@@ -532,8 +532,8 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | 主机 KCS | 设备树 `&kcs3` 带 `aspeed,lpc-io-reg = <0xca2>`（驱动必需），未配 SerIRQ；需要 eSPI 外设通道就绪、BIOS 把 KCS 端口设为 0xCA2 才通 ⚠️ |
 | U-Boot | 固定从本地 SPI 闪存启动（`bootcmd = run bootspi`）；默认网络参数与 Linux eth0 一致（用于手动 TFTP）；`run netupdate` 通过 TFTP 更新闪存里的内核和 rofs（见第四章 4.5）；NC-SI 口在 U-Boot 里禁用 |
 | PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备；传感器有输入/输出电压、输入/输出功率和 PSUn_Temp（取 pmbus 的 temp2）⚠️ |
-| SD / eMMC | 本板没有，U-Boot 和 Linux 设备树都把 emmc、sdhci 相关节点设为 disabled，开机日志里不再有 mmc0: Failed to initialize a non-removable card |
-| 硬件看门狗 | AST2600 WDT1 由 systemd 喂狗（RuntimeWatchdogSec=120s）；内核打开了预超时调节器（CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC），用来消除 Failed to set watchdog pretimeout_governor 提示，不改变看门狗复位行为 ⚠️（若该驱动不支持预超时，提示仍会存在，属无害） |
+| SD / eMMC | 本板没有，U-Boot 和 Linux 设备树都把 `emmc`、`sdhci` 相关节点设为 disabled，开机日志里不再有 `mmc0: Failed to initialize a non-removable card` |
+| 硬件看门狗 | AST2600 WDT1 由 systemd 喂狗（`RuntimeWatchdogSec=120s`），复位类型 `soc`（只复位 SoC，不是整颗芯片，避免 GPIO 回到上电状态让 CPLD/主机侧信号抖动 ⚠️ 上板要确认复位期间这些电平稳定）。`aspeed_wdt` 不支持预超时，所以 `systemd-conf` 的 `50-ceb-gnrd-watchdog.conf` 清掉了 meta-phosphor 设的 `RuntimeWatchdogPreSec` 和 `RuntimeWatchdogPreGovernor=panic`，否则每次开机都会有 `Failed to set watchdog pretimeout_governor` 提示。内核崩溃：`CONFIG_PANIC_ON_OOPS` + `CONFIG_PANIC_TIMEOUT=5`，5 秒后重启；打开了 Magic SysRq（`echo c > /proc/sysrq-trigger` 可以制造崩溃做测试，串口 BREAK 不能触发）。服务卡死：`ceb-gnrd-health-monitor` 每 30 秒探测对象映射器、Entity-Manager、ipmid、状态管理、bmcweb、风扇设置、温度最大值，连续失败 3 次重启该服务并写 SEL，同一服务 15 分钟内重启 3 次或映射器/Entity-Manager 重启后仍无应答就强制重启 BMC（每小时最多 3 次）；`ceb-gnrd-wdt-reset-log` 在没有干净关机标记而 `bootstatus` 显示看门狗复位时写 SEL（在 U-Boot 里 `reset` 也会被记一次）。以上新增部分没有编译、没有验证 |
 
 ### 2. GPIO 行为
 
@@ -661,8 +661,8 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 | 启动日志里有 `mmc0: Failed to initialize a non-removable card` | EVB 设备树启用了 eMMC/SD；本板没有，U-Boot 和 Linux 设备树里都把 `emmc`、`sdhci` 相关节点禁用 |
 | `patch-fuzz` 警告出现在 `phosphor-ipmi-host` | 手写补丁的上下文不对；按真实源码重新生成补丁（`0001` 已重新生成） |
 | `os-release.bb: git describe --dirty ... No names found` | openbmc 仓库没有带注释的 tag；`git tag -a v2.0.0 -m "CEB-GNRD 2.0.0"`（必须用 `-a`），固件版本号仍由 `DISTRO_VERSION` 决定 |
-| `do_rootfs: Group render has never been defined` | 某个包的文件属组是 `render`，镜像里没有这个组；无害，忽略 |
-| `systemd: Failed to set watchdog pretimeout_governor to 'panic'` | 内核没有预超时调节器；已打开 `CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC`，若驱动不支持预超时仍会提示，无害 |
+| `do_rootfs: Group render has never been defined` | 来自 `rootfs-postcommands.bbclass` 的 `systemd_sysusers_check`，核对 `/usr/lib/sysusers.d/*.conf` 声明的组是否都在 `/etc/group`。`render` 组本来由 `udev` 包创建，但 meta-phosphor 的 `systemd_%.bbappend` 有意把 `udev` 从 `USERADD_PACKAGES` 里去掉（为了让 udev 不依赖 `shadow`，能放进 initramfs，BMC 没有 `/dev/dri`），所以这个告警是预期的，无影响，忽略 |
+| `systemd: Failed to set watchdog pretimeout_governor to 'panic'` | `aspeed_wdt` 不支持预超时，内核不提供 `pretimeout_governor`（打开 `CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC` 没有用）；`systemd-conf` 里的 `50-ceb-gnrd-watchdog.conf` 清掉 meta-phosphor 的 `RuntimeWatchdogPreSec` / `RuntimeWatchdogPreGovernor` 设置 |
 
 ### 3. 修改网页补丁的建议流程
 

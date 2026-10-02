@@ -192,10 +192,23 @@ Platform features
 
 * The AST2600 SD/eMMC controllers are disabled in the U-Boot and Linux device
   trees (the EVB include enables them); the board has neither.
-* `CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC` is enabled so that systemd's
-  `RuntimeWatchdogPreGovernor=panic` is accepted.  The 2 minute hardware watchdog
-  reset is unchanged; if the driver has no pre-timeout the message remains and is
-  harmless.
+* Hardware watchdog: WDT1 resets the SoC only (`aspeed,reset-type = "soc"`, not
+  the whole chip, so GPIOs keep their state; check on the board).  systemd feeds it
+  (`RuntimeWatchdogSec=120s`).  `aspeed_wdt` has no pre-timeout, so `systemd-conf`
+  installs `50-ceb-gnrd-watchdog.conf`, which clears meta-phosphor's
+  `RuntimeWatchdogPreSec` / `RuntimeWatchdogPreGovernor=panic` (otherwise systemd
+  logs "Failed to set watchdog pretimeout_governor" at every boot).
+* A kernel oops becomes a panic (`CONFIG_PANIC_ON_OOPS`) and a panic restarts the
+  BMC after 5 s (`CONFIG_PANIC_TIMEOUT=5`).  Magic SysRq is enabled (not from the
+  serial BREAK) so that `echo c > /proc/sysrq-trigger` can test this.
+* `ceb-gnrd-health-monitor` probes the object mapper, Entity-Manager, ipmid, the
+  BMC state manager, bmcweb, fan settings and CPU/DIMM max temperature every 30 s
+  (D-Bus Peer.Ping or HTTPS), restarts a service after 3 failures with a SEL
+  record, and reboots the BMC if the mapper or Entity-Manager stays down or a
+  service needs 3 restarts in 15 minutes (at most 3 forced reboots per hour).
+  `ceb-gnrd-wdt-reset-log` writes a SEL record when `bootstatus` shows a
+  watchdog reset without the clean-shutdown marker (an `reset` typed in U-Boot is
+  also reported once).  Neither has been built or run yet.
 * `phosphor-ipmi-host` has a drop-in (`10-ceb-gnrd-wait-sensors.conf`) that waits
   up to 90 s until the number of D-Bus sensors has been stable for 8 s.  Started
   earlier, ipmid read the sensors before their threshold interfaces existed and
