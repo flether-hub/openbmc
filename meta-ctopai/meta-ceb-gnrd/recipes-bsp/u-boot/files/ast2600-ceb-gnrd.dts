@@ -59,6 +59,14 @@
 /* GPIOM1/NDCD1 is reserved for the Linux BIOS-flash ownership GPIO. */
 &uart1 { status = "disabled"; };
 
+/* This board has no eMMC and no SD card: the EVB device tree enables them, which
+ * makes U-Boot probe (and print messages about) MMC devices that do not exist. */
+&emmc { status = "disabled"; };
+&emmc_slot0 { status = "disabled"; };
+&sdhci { status = "disabled"; };
+&sdhci_slot0 { status = "disabled"; };
+&sdhci_slot1 { status = "disabled"; };
+
 /* BIOS SPI1 is updated only from OpenBMC Linux, in single-bit mode. */
 &spi1 { status = "disabled"; };
 
