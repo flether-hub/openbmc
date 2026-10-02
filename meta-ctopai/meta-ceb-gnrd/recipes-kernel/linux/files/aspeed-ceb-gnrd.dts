@@ -204,7 +204,11 @@
 
 &mac0 { status = "disabled"; };
 &mac3 { status = "disabled"; };
+/* The EVB include enables all four MDIO buses.  Only mdio1 (physical MAC2,
+ * RTL8211FS) is used; the others claim pins that I2C12 needs (L26). */
+&mdio0 { status = "disabled"; };
 &mdio2 { status = "disabled"; };
+&mdio3 { status = "disabled"; };
 
 /* AST2600 Firmware SPI (FMC) hosts the 64 MiB Winbond W25Q512JVFIQ.
  * Explicitly mux the dedicated FWSPID signals and quad DQ2/DQ3 pads.
@@ -303,7 +307,10 @@
         &pinctrl_adc14_default &pinctrl_adc15_default>;
 };
 
-/* Six fan headers are wired to PWM/TACH channels 0..5. */
+/* Six fan headers are wired to PWM/TACH channels 0..5.  The aspeed-g6-pwm-tach
+ * driver needs "tach-ch" and "pwms" in each fan child (PWM period 40000 ns =
+ * 25 kHz); the older "reg" / "aspeed,fan-tach-ch" form makes it fail with
+ * "Failed to create fan -22". */
 &pwm_tach {
     status = "okay";
     pinctrl-names = "default";
@@ -314,34 +321,34 @@
         &pinctrl_tach2_default &pinctrl_tach3_default
         &pinctrl_tach4_default &pinctrl_tach5_default>;
 
-    fan@0 {
-        reg = <0>;
-        aspeed,fan-tach-ch = /bits/ 8 <0>;
+    fan-0 {
+        tach-ch = /bits/ 8 <0>;
+        pwms = <&pwm_tach 0 40000 0>;
     };
 
-    fan@1 {
-        reg = <1>;
-        aspeed,fan-tach-ch = /bits/ 8 <1>;
+    fan-1 {
+        tach-ch = /bits/ 8 <1>;
+        pwms = <&pwm_tach 1 40000 0>;
     };
 
-    fan@2 {
-        reg = <2>;
-        aspeed,fan-tach-ch = /bits/ 8 <2>;
+    fan-2 {
+        tach-ch = /bits/ 8 <2>;
+        pwms = <&pwm_tach 2 40000 0>;
     };
 
-    fan@3 {
-        reg = <3>;
-        aspeed,fan-tach-ch = /bits/ 8 <3>;
+    fan-3 {
+        tach-ch = /bits/ 8 <3>;
+        pwms = <&pwm_tach 3 40000 0>;
     };
 
-    fan@4 {
-        reg = <4>;
-        aspeed,fan-tach-ch = /bits/ 8 <4>;
+    fan-4 {
+        tach-ch = /bits/ 8 <4>;
+        pwms = <&pwm_tach 4 40000 0>;
     };
 
-    fan@5 {
-        reg = <5>;
-        aspeed,fan-tach-ch = /bits/ 8 <5>;
+    fan-5 {
+        tach-ch = /bits/ 8 <5>;
+        pwms = <&pwm_tach 5 40000 0>;
     };
 };
 
