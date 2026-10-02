@@ -10,10 +10,15 @@ PACKAGECONFIG:append:ceb-gnrd = " imjournal"
 
 # The Redfish event log (web "Event logs") is /var/log/redfish, written from
 # journal entries that carry a REDFISH_MESSAGE_ID.
-SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-redfish.conf"
-FILES:${PN}:append:ceb-gnrd = " ${sysconfdir}/rsyslog.d/ceb-gnrd-redfish.conf"
+SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-redfish.conf file://rsyslog-override.conf"
+FILES:${PN}:append:ceb-gnrd = " \
+    ${sysconfdir}/rsyslog.d/ceb-gnrd-redfish.conf \
+    ${systemd_system_unitdir}/rsyslog.service.d/rsyslog-override.conf \
+    "
 
 do_install:append:ceb-gnrd() {
     install -D -m 0644 ${UNPACKDIR}/ceb-gnrd-redfish.conf \
         ${D}${sysconfdir}/rsyslog.d/ceb-gnrd-redfish.conf
+    install -D -m 0644 ${UNPACKDIR}/rsyslog-override.conf \
+        ${D}${systemd_system_unitdir}/rsyslog.service.d/rsyslog-override.conf
 }
