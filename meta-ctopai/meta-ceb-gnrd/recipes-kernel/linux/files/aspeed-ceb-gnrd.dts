@@ -125,7 +125,8 @@
 
 /* Reserve AST2600 GPIOW0-W7 for the Xeon 6 host eSPI connection.
  * ESPI selects W0-W5/W7; W6/AD7 is the separate ESPIALT group, so both
- * pinctrl groups are required. Virtual Wire and Flash Access stay disabled.
+ * pinctrl groups are required. The driver makes the Peripheral and Virtual Wire
+ * channels ready; OOB and Flash Access stay unused.
  */
 &{/ahb} {
     espi: espi@1e6ee000 {
@@ -140,10 +141,24 @@
     };
 };
 
-/* SOL is receive-only: the CPU serial output is cross-connected to AST2600
- * UART3 RX (GPIOL5/RXD3).  The BMC cannot send characters to the host, so only
- * the RX pin is muxed and TXD3 (GPIOL4) is left as an undriven GPIO input.
- * UART5 remains the BMC debug console on ttyS4. */
+/* Host serial console (SOL): AST2600 VUART1, which the host sees as COM1
+ * (I/O 0x3F8) through the eSPI Peripheral channel.  It is bidirectional.  The BIOS
+ * polls its line status register, so it must stay enabled or the BIOS can hang
+ * waiting for "transmitter empty".  Linux names it ttyS5; udev (udev-aspeed-vuart)
+ * adds the ttyVUART0 symlink that obmc-console uses.  The SerIRQ (IRQ4) only helps
+ * host input: eSPI delivers it through a Virtual Wire (the channel is ready, but
+ * whether the VUART interrupt really becomes an IRQ wire is untested), so check
+ * on the board that typing in SOL reaches the host. */
+&vuart1 {
+    status = "okay";
+    aspeed,lpc-io-reg = <0x3f8>;
+    aspeed,lpc-interrupts = <4 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+/* UART3 RX (GPIOL5/RXD3) is cross-connected to the CPU serial output.  It is no
+ * longer the SOL source (VUART1 is); it stays muxed as receive-only and TXD3
+ * (GPIOL4) is an undriven GPIO input.  UART5 remains the BMC debug console on
+ * ttyS4. */
 &uart3 {
     status = "okay";
     pinctrl-names = "default";

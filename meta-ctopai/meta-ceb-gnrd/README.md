@@ -110,15 +110,19 @@ Platform features
 * The board wires AST2600 eSPI to the Xeon 6 host. GPIOW0-W7 are dedicated to
   this connection: `pinctrl_espi_default` covers W0-W5/W7 and the separate
   `pinctrl_espialt_default` covers W6/AD7; both are selected by the eSPI node.
-  This board does not use Virtual Wire or Flash Access. OOB is not required for
-  KCS/IPMI, POST code or UART3 SOL.
+  The Peripheral and Virtual Wire channels are enabled (the host, an Intel PCH,
+  always uses Virtual Wire); Flash Access is not used. OOB is not required for
+  KCS/IPMI, POST code or the VUART SOL (the VUART is configured by the BMC).
 * The pinned `linux-aspeed` revision (`c0538446`) lacks the AST2600 eSPI
   controller driver. The board carries a focused driver
   (`0001-soc-aspeed-add-AST2600-eSPI-peripheral-ready-driver.patch`; its
   Makefile line is part of the same patch) and enables
-  `CONFIG_ASPEED_ESPI`. It enables only the Peripheral channel, asserts
-  Peripheral Software Ready, resets the block and the peripheral channel on a
-  host eSPI reset and sets ready again, counts channel errors/aborts, logs
+  `CONFIG_ASPEED_ESPI`. It enables the Peripheral and Virtual Wire channels:
+  it asserts Peripheral and Virtual Wire Software Ready and the slave boot
+  done / status system events (`ESPI098` bits 20 and 23, which the host
+  waits for), resets the block on a host eSPI reset and sets all of that again
+  (the wires themselves, GPIO and system events, stay in hardware mode, there
+  is no software mode and no Virtual Wire interrupt), counts channel errors/aborts, logs
   state changes (rate limited) and offers a debugfs `regs` dump. Check
   `dmesg | grep -i espi` first if the host cannot reach the BMC.
   `CONFIG_ASPEED_LPC_SIO` does not exist in this kernel and is not added.
@@ -127,8 +131,8 @@ Platform features
 * Host IPMI: ASPEED KCS BMC, IPMI and raw cdev options, `phosphor-ipmi-kcs`
   with its default `ipmi-kcs3` device. The device tree enables `&kcs3` with
   `aspeed,lpc-io-reg = <0xca2>`; the kernel driver does not probe without that
-  property. No SerIRQ is configured (eSPI without virtual wires); the host
-  polls the status register. The BIOS must set its BMC KCS port to 0xCA2.
+  property. No SerIRQ is configured for KCS: the host polls the status
+  register. The BIOS must set its BMC KCS port to 0xCA2.
 * GPIOP7 (`BMC_HBLED#`) starts off. A board service enables the kernel LED
   heartbeat trigger once the eSPI Peripheral driver binds and sets `SW_READY`.
 
@@ -397,7 +401,7 @@ should appear after flashing the updated image.
 * The web UI is patched at build time (`recipes-phosphor/webui/files`, listed in
   `webui-vue_%.bbappend`): languages (0001-0002), fan control page (0003),
   removal of SNMP, key clear, LDAP and the resource-management power page
-  (0004), read-only SOL (0005), KVM full screen (0006), BMC-only factory reset
+  (0004), KVM full screen (0006), BMC-only factory reset
   (0007), inventory limited to system, BMC and chassis (0008), removal of the
   overview power card (0009), no backup image card (0010) and BMC dump only
   (0011), no Virtual TPM / RTAD switches (0012).  The firmware page has no
@@ -431,13 +435,24 @@ should appear after flashing the updated image.
 
 ### Host serial-over-LAN
 
-* SOL is receive-only. The CPU serial output is cross-connected to AST2600 UART3
-  RX (`GPIOL5/RXD3`); only RX is muxed (`pinctrl_rxd3_default`), `GPIOL4/TXD3`
-  is left undriven, so nothing typed in the web, SSH or IPMI SOL reaches the
-  host. The web page says so and disables terminal input.
-* `obmc-console` uses `ttyS2` (UART3) as `OBMC_CONSOLE_HOST_TTY` with the port
-  specific `server.ttyS2.conf` (115200 baud, default socket name so bmcweb and
-  IPMI SOL connect). The BIOS serial redirection must use 115200 as well.
+* SOL uses the AST2600 VUART1: the host sees it as COM1 (I/O `0x3F8`) over the
+  eSPI Peripheral channel, so it is bidirectional (`&vuart1` in the device tree,
+  `CONFIG_SERIAL_8250_ASPEED_VUART`). `obmc-console` uses `ttyVUART0` (symlink
+  from `udev-aspeed-vuart`, VUART1 at `0x1E787000`) as `OBMC_CONSOLE_HOST_TTY`
+  with `server.ttyVUART0.conf` (default socket name so bmcweb and IPMI SOL
+  connect). The BIOS serial redirection must be set to COM1.
+* Why VUART: the BIOS detected the AST2600 SuperIO, routed COM1 to eSPI and
+  polled the line status register `0x3FD` forever; with no working COM1 behind
+  it the register read `00` ("transmitter not empty") and the BIOS hung. A running
+  VUART answers that register. Something must read the VUART data (obmc-console
+  does), or its buffer fills, the register goes back to "not empty" and the BIOS
+  can hang again.
+* UART3 RX (`GPIOL5/RXD3`, receive-only) stays muxed but is no longer the SOL
+  source. The web SOL page is the stock one (typing is allowed); the old read-only
+  patch `0005` was removed.
+* The AST2600 SuperIO (I/O `0x2E/0x2F`) is left enabled: the BIOS finds it and
+  routes COM1 to the VUART. (`SCU510[3]` would disable it, but only a power-on
+  reset clears that bit and the BIOS may then not use COM1 at all.)
 * UART5 (`ttyS4`, 115200 baud, balls C8/D8) is the local BMC debug console;
   U-Boot and Linux use it.
 

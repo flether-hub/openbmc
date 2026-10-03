@@ -203,7 +203,7 @@ interfaces:
 
   management:
     web: bmcweb user, sensor, event log, FRU, network, power, fan and update APIs
-    sol: obmc-console on AST2600 UART3 (ttyS2), receive-only (CPU serial output cross-connected to UART3 RX; TXD3 not muxed, the BMC cannot send input to the host); web SOL is read-only
+    sol: obmc-console on AST2600 VUART1 (ttyVUART0, host COM1 0x3F8 over eSPI), bidirectional; UART3 RX stays muxed but is not the SOL source; the web SOL page accepts input
     debug_console: AST2600 UART5 TXD5/RXD5 on package balls C8/D8, BMC_UART5_DEBUG_TXD/RXD; U-Boot stdout-path and SPL bootph-all use UART5; Linux SERIAL_CONSOLES ttyS4 at 115200 baud
     vga_display: AST2600 GFX DAC provides the CPU display output through BMC_VGA_B/G/R, HSYNC and VSYNC; schematic DDC clock/data are fixed-function VGA pins
     kvm: obmc-ikvm/bmcweb video capture via AST2600 VGA-video path and USB HID

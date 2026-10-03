@@ -888,8 +888,7 @@
   "pageSerialOverLan": {
     "accessDeniedAriaLabel": "Serial Over LAN access denied",
     "alert": {
-      "disconnectedAlertMessage": "系统必须开机才能连接。",
-      "readOnlyMessage": "SOL 为只读模式：只能查看 CPU 串口输出，无法输入内容来控制控制台。"
+      "disconnectedAlertMessage": "系统必须开机才能连接。"
     },
     "connected": "已连接",
     "disconnected": "断开连接",

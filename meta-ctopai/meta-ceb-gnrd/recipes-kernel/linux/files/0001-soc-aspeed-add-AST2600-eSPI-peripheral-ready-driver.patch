@@ -3,13 +3,17 @@ Subject: [PATCH] soc: aspeed: add AST2600 eSPI peripheral I/O enablement
 
 The AST2600 routes eSPI peripheral I/O cycles to its integrated legacy I/O
 blocks. Set Peripheral Software Ready so host PUT_IOWR/PUT_IORD cycles can be
-accepted by that hardware path. Do not initialize Virtual Wire, OOB, or Flash.
+accepted by that hardware path. Also set Virtual Wire Software Ready and the
+slave boot done / status system events after every eSPI reset, so the host
+(Intel PCH) finds the Virtual Wire channel usable. OOB and Flash are not
+initialized.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
- drivers/soc/aspeed/Kconfig                    |  8 ++++
-
- 2 files changed, 291 insertions(+)
+ drivers/soc/aspeed/Kconfig                    |   8 +++
+ drivers/soc/aspeed/Makefile                   |   1 +
+ drivers/soc/aspeed/aspeed-espi-peripheral.c | 307 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 316 insertions(+)
  create mode 100644 drivers/soc/aspeed/aspeed-espi-peripheral.c
 
 diff --git a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
@@ -24,7 +28,7 @@ diff --git a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
 +	default n
 +	help
 +	  Enable AST2600 eSPI Peripheral I/O cycles for host LPC-compatible
-+	  accesses. This driver deliberately does not enable VW, OOB, or Flash.
++	  accesses. It enables the Peripheral and Virtual Wire channels, not OOB or Flash.
 +
  config ASPEED_SBC
  	bool "ASPEED Secure Boot Controller driver"
@@ -42,11 +46,13 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/soc/aspeed/aspeed-espi-peripheral.c
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,307 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
-+ * AST2600 eSPI Peripheral channel initialization.
++ * AST2600 eSPI Peripheral and Virtual Wire channel initialization.
 + * Peripheral I/O cycles are routed by the AST2600 hardware to its I/O blocks.
++ * The Virtual Wire channel is made ready here; the wires themselves (GPIO and
++ * system events) are handled by the hardware, no software mode is used.
 + *
 + * Besides marking the Peripheral channel ready, this driver reports what the
 + * eSPI controller sees: every reset, every Peripheral transfer abort/error and
@@ -74,6 +80,7 @@ index 000000000000..111111111111
 +#define  ESPI_CTRL_PERIF_NP_TX_DMA_EN	BIT(19)
 +#define  ESPI_CTRL_PERIF_PC_TX_DMA_EN	BIT(17)
 +#define  ESPI_CTRL_PERIF_PC_RX_DMA_EN	BIT(16)
++#define  ESPI_CTRL_VW_SW_RDY		BIT(3)
 +#define  ESPI_CTRL_PERIF_SW_RDY		BIT(1)
 +#define ESPI_STS			0x004
 +#define ESPI_INT_STS			0x008
@@ -93,6 +100,9 @@ index 000000000000..111111111111
 +					 ESPI_INT_PERIF_NP_TX_ERR | \
 +					 ESPI_INT_PERIF_PC_TX_ERR)
 +#define  ESPI_INT_PERIF			(ESPI_INT_PERIF_ERR | BIT(3) | BIT(1) | BIT(0))
++#define ESPI_SYSEVT			0x098
++#define  ESPI_SYSEVT_SLAVE_BOOT_STS	BIT(23)
++#define  ESPI_SYSEVT_SLAVE_BOOT_DONE	BIT(20)
 +#define ESPI_CTRL2			0x080
 +#define  ESPI_CTRL2_MCYC_RD_DIS_WDT	BIT(11)
 +#define  ESPI_CTRL2_MCYC_WR_DIS_WDT	BIT(10)
@@ -137,10 +147,11 @@ index 000000000000..111111111111
 +		  ESPI_CTRL_PERIF_PC_TX_SW_RST | ESPI_CTRL_PERIF_PC_RX_SW_RST;
 +	u32 reg;
 +
++	/* The queue reset bits are active low (0 = reset, 1 = running): reset, then release. */
 +	reg = readl(espi->regs + ESPI_CTRL);
-+	writel(reg | rst, espi->regs + ESPI_CTRL);
-+	udelay(1);
 +	writel(reg & ~rst, espi->regs + ESPI_CTRL);
++	udelay(1);
++	writel(reg | rst, espi->regs + ESPI_CTRL);
 +}
 +
 +static void aspeed_espi_peripheral_ready(struct aspeed_espi_peripheral *espi)
@@ -172,12 +183,25 @@ index 000000000000..111111111111
 +	reg = readl(espi->regs + ESPI_CTRL) | ESPI_CTRL_PERIF_SW_RDY;
 +	writel(reg, espi->regs + ESPI_CTRL);
 +
++	/*
++	 * Virtual Wire channel.  The host always enables it, and the PCH waits for
++	 * the slave boot done / status wires before it goes on.  A reset of this block
++	 * clears all of this, so it is set again here after every reset.  The VW GPIO
++	 * "software mode" (ESPI_CTRL bit 9) is left off: nothing here consumes it and
++	 * the hardware handles the GPIO wires.
++	 */
++	reg = readl(espi->regs + ESPI_CTRL) | ESPI_CTRL_VW_SW_RDY;
++	writel(reg, espi->regs + ESPI_CTRL);
++	reg = readl(espi->regs + ESPI_SYSEVT) |
++	      ESPI_SYSEVT_SLAVE_BOOT_STS | ESPI_SYSEVT_SLAVE_BOOT_DONE;
++	writel(reg, espi->regs + ESPI_SYSEVT);
++
 +	atomic_inc(&espi->ready_count);
 +	dev_info(espi->dev,
-+		 "Peripheral channel SW_READY set (#%d): CTRL=0x%08x CTRL2=0x%08x STS=0x%08x GEN_CAP=0x%08x CH0_CAP=0x%08x\n",
++		 "Peripheral + Virtual Wire channels SW_READY set (#%d): CTRL=0x%08x CTRL2=0x%08x STS=0x%08x SYSEVT=0x%08x GEN_CAP=0x%08x CH0_CAP=0x%08x\n",
 +		 atomic_read(&espi->ready_count),
 +		 readl(espi->regs + ESPI_CTRL), readl(espi->regs + ESPI_CTRL2),
-+		 readl(espi->regs + ESPI_STS),
++		 readl(espi->regs + ESPI_STS), readl(espi->regs + ESPI_SYSEVT),
 +		 readl(espi->regs + ESPI_GEN_CAP_N_CONF),
 +		 readl(espi->regs + ESPI_CH0_CAP_N_CONF));
 +}
@@ -215,10 +239,13 @@ index 000000000000..111111111111
 +			 atomic_read(&espi->resets), status,
 +			 readl(espi->regs + ESPI_STS));
 +
-+		/* Clears all interrupt enables and status, as the vendor driver does. */
-+		reset_control_assert(espi->reset);
-+		reset_control_deassert(espi->reset);
-+
++		/*
++		 * Only the Peripheral queues are reset, not the whole controller: the host
++		 * starts its configuration cycles right after it releases the reset, and a
++		 * controller reset would drop the channel configuration under it.  The
++		 * status is acknowledged here, ready() clears and re-arms the rest.
++		 */
++		writel(ESPI_INT_RST_DEASSERT, espi->regs + ESPI_INT_STS);
 +		aspeed_espi_peripheral_sw_reset(espi);
 +		aspeed_espi_peripheral_ready(espi);
 +	}
@@ -236,6 +263,7 @@ index 000000000000..111111111111
 +	seq_printf(m, "ESPI_INT_STS  0x%08x\n", readl(espi->regs + ESPI_INT_STS));
 +	seq_printf(m, "ESPI_INT_EN   0x%08x\n", readl(espi->regs + ESPI_INT_EN));
 +	seq_printf(m, "ESPI_CTRL2    0x%08x\n", readl(espi->regs + ESPI_CTRL2));
++	seq_printf(m, "ESPI_SYSEVT   0x%08x\n", readl(espi->regs + ESPI_SYSEVT));
 +	seq_printf(m, "GEN_CAP       0x%08x\n", readl(espi->regs + ESPI_GEN_CAP_N_CONF));
 +	seq_printf(m, "CH0_CAP       0x%08x\n", readl(espi->regs + ESPI_CH0_CAP_N_CONF));
 +	seq_printf(m, "eSPI resets   %d\n", atomic_read(&espi->resets));
@@ -299,7 +327,7 @@ index 000000000000..111111111111
 +	dev_info(dev, "probe: irq=%d CTRL=0x%08x STS=0x%08x\n", irq,
 +		 readl(espi->regs + ESPI_CTRL), readl(espi->regs + ESPI_STS));
 +
-+	ret = devm_request_irq(dev, irq, aspeed_espi_peripheral_irq, IRQF_SHARED,
++	ret = devm_request_irq(dev, irq, aspeed_espi_peripheral_irq, 0,
 +			       dev_name(dev), espi);
 +	if (ret)
 +		return dev_err_probe(dev, ret, "failed to request IRQ %d\n", irq);
@@ -324,7 +352,7 @@ index 000000000000..111111111111
 +};
 +module_platform_driver(aspeed_espi_peripheral_driver);
 +
-+MODULE_DESCRIPTION("ASPEED AST2600 eSPI Peripheral channel driver");
++MODULE_DESCRIPTION("ASPEED AST2600 eSPI Peripheral and Virtual Wire channel driver");
 +MODULE_LICENSE("GPL");
 -- 
 2.43.0

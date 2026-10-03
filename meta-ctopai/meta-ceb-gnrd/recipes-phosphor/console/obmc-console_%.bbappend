@@ -1,5 +1,6 @@
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
-# Port specific configuration for the physical host UART (OBMC_CONSOLE_HOST_TTY
-# = ttyS2).  Without it the generic VUART style obmc-console.conf is used.
-SRC_URI:append:ceb-gnrd = " file://server.ttyS2.conf"
+# Port specific configuration for the host serial console (OBMC_CONSOLE_HOST_TTY =
+# ttyVUART0): the upstream one without console-id, so the socket keeps the default
+# name that bmcweb and IPMI SOL connect to.
+SRC_URI:append:ceb-gnrd = " file://server.ttyVUART0.conf"
