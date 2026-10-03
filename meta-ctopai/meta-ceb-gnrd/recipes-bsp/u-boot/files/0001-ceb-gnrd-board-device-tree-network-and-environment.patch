@@ -10,6 +10,10 @@ default network settings to the Linux eth0 values (192.168.185.200/24, gateway
 (ast2600-ceb-gnrd.dts) and include/configs/ceb-gnrd-env.h are new files that the
 recipe installs next to this patch.
 
+The boot command (bootspi) also sets SCU510[3] (disable LPC/eSPI decoding of the
+SuperIO 0x2E/0x4E address, AST2600 datasheet) so the host BIOS does not find a BMC
+SuperIO.  SCU510 is only cleared by a power-on reset.
+
 Upstream-Status: Inappropriate [CEB-GNRD board-specific configuration]
 ---
 diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
@@ -54,7 +58,8 @@ diff --git a/include/configs/evb_ast2600a1_spl.h b/include/configs/evb_ast2600a1
 @@ -30,7 +31,7 @@
  #define CONFIG_EXTRA_ENV_SETTINGS	\
  	"loadaddr=" __stringify(CONFIG_SYS_LOAD_ADDR) "\0"	\
- 	"bootspi=fdt addr 20100000 && fdt header get fitsize totalsize && cp.b 20100000 ${loadaddr} ${fitsize} && bootm; echo Error loading kernel FIT image\0"	\
+-	"bootspi=fdt addr 20100000 && fdt header get fitsize totalsize && cp.b 20100000 ${loadaddr} ${fitsize} && bootm; echo Error loading kernel FIT image\0"	\
++	"bootspi=mw.l 0x1e6e2000 0x1688a8a8; mw.l 0x1e6e2510 0x8; fdt addr 20100000 && fdt header get fitsize totalsize && cp.b 20100000 ${loadaddr} ${fitsize} && bootm; echo Error loading kernel FIT image\0"	\
 +	CEB_GNRD_ENV "verify=yes\0"	\
 -	"verify=yes\0"	\
  	""

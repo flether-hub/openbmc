@@ -54,4 +54,5 @@ RDEPENDS:${PN}-system = " \
     ceb-gnrd-psu-detect \
     ceb-gnrd-rtc-sync \
     ceb-gnrd-sel-logrotate \
+    ceb-gnrd-superio \
     "

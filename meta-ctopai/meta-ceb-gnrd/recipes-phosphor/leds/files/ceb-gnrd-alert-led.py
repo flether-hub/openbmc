@@ -208,6 +208,47 @@ def sel_add(message, path, data=(0x00, 0xFF, 0xFF)):
     return False
 
 
+INTRUSION_INTERFACE = "xyz.openbmc_project.Chassis.Intrusion"
+INTRUSION_NORMAL = "Normal"
+# IPMI sensor type 0x05 (Physical Security), event offset 0x00 (General Chassis
+# Intrusion): the SEL event data byte 1 carries the offset.
+INTRUSION_SEL_DATA = (0x00, 0xFF, 0xFF)
+INTRUSION_SEL_PATH = "/xyz/openbmc_project/sensors/physical_security/Chassis_Intrusion"
+_intrusion_object = None
+
+
+def intrusion_status():
+    """Status of the chassis intrusion sensor (dbus-sensors intrusionsensor,
+    hwmon intrusion0_alarm): "Normal", "HardwareIntrusion", ...  None when the
+    sensor object does not exist (no hardware, or the service is not up yet)."""
+    global _intrusion_object
+    try:
+        if _intrusion_object is None:
+            result = busctl(
+                "--json=short", "call", MAPPER, MAPPER_PATH, MAPPER_INTERFACE,
+                "GetSubTree", "sias", "/", "0", "1", INTRUSION_INTERFACE,
+            )
+            payload = unwrap_reply(json.loads(result.stdout)["data"])
+            if isinstance(payload, dict):
+                payload = list(payload.items())
+            for path, services in payload:
+                if isinstance(services, dict):
+                    services = list(services.items())
+                if services:
+                    _intrusion_object = (services[0][0], path)
+                    break
+            if _intrusion_object is None:
+                return None
+        service, path = _intrusion_object
+        result = busctl(
+            "--json=short", "get-property", service, path, INTRUSION_INTERFACE, "Status",
+        )
+        return str(unwrap_variant(json.loads(result.stdout)))
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+        LOG.debug("Chassis intrusion status unavailable: %s", exc)
+        _intrusion_object = None
+        return None
+
 CHASSIS_STATE_SERVICE = "xyz.openbmc_project.State.Chassis"
 CHASSIS_STATE_PATH = "/xyz/openbmc_project/state/chassis0"
 CHASSIS_POWER_ON = "xyz.openbmc_project.State.Chassis.PowerState.On"
@@ -313,6 +354,7 @@ def main():
     temperature_alarm = False
     led_state = None
     led_set_at = 0.0
+    intrusion_last = None
     sd_notify("READY=1")
 
     while True:
@@ -348,6 +390,15 @@ def main():
                     "/xyz/openbmc_project/state/host0",
                 )
 
+        # Chassis intrusion: one SEL record (and, through sel-logger, one Redfish
+        # event) when the sensor leaves Normal.  It does not light the alert LED.
+        status = intrusion_status()
+        if status is not None:
+            if status != INTRUSION_NORMAL and status != intrusion_last:
+                LOG.error("Chassis intrusion detected (%s)", status)
+                if not sel_add("Chassis intrusion detected", INTRUSION_SEL_PATH, INTRUSION_SEL_DATA):
+                    status = intrusion_last  # retry on the next cycle
+            intrusion_last = status
         watchdog_failed = watchdog_failed or os.path.exists(WATCHDOG_LATCH)
         voltage_state = any_alarm(VOLTAGE_ROOT, voltage_alarm_property)
         if voltage_state is not None:

@@ -8,9 +8,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
  drivers/hwmon/Kconfig                  |   9 +
  drivers/hwmon/Makefile                 |   1 +
- drivers/hwmon/aspeed-chassis.c         | 142 +++++++++++++++++++++++
+ drivers/hwmon/aspeed-chassis.c         | 108 +++++++++++++++++++++
  arch/arm/boot/dts/aspeed/aspeed-g6.dtsi |   7 +
- 4 files changed, 158 insertions(+)
+ 4 files changed, 124 insertions(+)
 
 diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
 --- a/drivers/hwmon/Kconfig
@@ -46,158 +46,102 @@ new file mode 100644
 index 000000000000..000000000000
 --- /dev/null
 +++ b/drivers/hwmon/aspeed-chassis.c
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,108 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Copyright (C) 2021 ASPEED Technology Inc.
 + *
-+ * CHASSIS driver for the Aspeed SoC
++ * AST2600 chassis intrusion (CHASI#) latch, exposed as hwmon intrusion0_alarm.
++ * The latch is polled (dbus-sensors reads it periodically), so the interrupt
++ * is left masked.  Writing 0 to intrusion0_alarm clears the latch.
 + */
-+#include <linux/errno.h>
-+#include <linux/delay.h>
++#include <linux/bits.h>
 +#include <linux/hwmon.h>
 +#include <linux/hwmon-sysfs.h>
 +#include <linux/io.h>
 +#include <linux/kernel.h>
 +#include <linux/module.h>
-+#include <linux/of_platform.h>
-+#include <linux/of_device.h>
++#include <linux/mod_devicetable.h>
 +#include <linux/platform_device.h>
-+#include <linux/sysfs.h>
-+#include <linux/interrupt.h>
 +
-+/* #define USE_INTERRUPTS */
-+/******************************************************************************/
-+union chassis_ctrl_register {
-+	u32 value;
-+	struct {
-+		uint32_t intrusion_status_clear : 1; /*[0]*/
-+		uint32_t intrusion_int_enable : 1; /*[1]*/
-+		uint32_t intrusion_status : 1; /*[2]*/
-+		uint32_t battery_power_good : 1; /*[3]*/
-+		uint32_t chassis_raw_status : 1; /*[4]*/
-+		uint32_t reserved0 : 3; /*[5-7]*/
-+		uint32_t io_power_status_clear : 1; /*[8]*/
-+		uint32_t io_power_int_enable : 1; /*[9]*/
-+		uint32_t core_power_status : 1; /*[10]*/
-+		uint32_t reserved1 : 5; /*[11-15]*/
-+		uint32_t core_power_status_clear : 1; /*[16]*/
-+		uint32_t core_power_int_enable : 1; /*[17]*/
-+		uint32_t io_power_status : 1; /*[18]*/
-+		uint32_t reserved2 : 13; /*[19-31]*/
-+	} fields;
-+};
++#define CHASSIS_CTRL_INTRUSION_CLEAR	BIT(0)
++#define CHASSIS_CTRL_INTRUSION_INT_EN	BIT(1)
++#define CHASSIS_CTRL_INTRUSION_STATUS	BIT(2)
++#define CHASSIS_CTRL_IO_POWER_INT_EN	BIT(9)
++#define CHASSIS_CTRL_CORE_POWER_INT_EN	BIT(17)
 +
 +struct aspeed_chassis {
-+	struct device *dev;
 +	void __iomem *base;
-+	int irq;
 +	const struct attribute_group *groups[2];
 +};
 +
-+static ssize_t
-+intrusion_store(struct device *dev, struct device_attribute *attr,
-+		const char *buf, size_t count)
++static ssize_t intrusion0_alarm_show(struct device *dev,
++				     struct device_attribute *attr, char *buf)
 +{
-+	unsigned long val;
 +	struct aspeed_chassis *chassis = dev_get_drvdata(dev);
-+	union chassis_ctrl_register chassis_ctrl;
++
++	return sysfs_emit(buf, "%d\n",
++			  !!(readl(chassis->base) & CHASSIS_CTRL_INTRUSION_STATUS));
++}
++
++static ssize_t intrusion0_alarm_store(struct device *dev,
++				      struct device_attribute *attr,
++				      const char *buf, size_t count)
++{
++	struct aspeed_chassis *chassis = dev_get_drvdata(dev);
++	unsigned long val;
++	u32 ctrl;
 +
 +	if (kstrtoul(buf, 10, &val) < 0 || val != 0)
 +		return -EINVAL;
 +
-+	chassis_ctrl.value = readl(chassis->base);
-+	chassis_ctrl.fields.intrusion_status_clear = 1;
-+	writel(chassis_ctrl.value, chassis->base);
-+	chassis_ctrl.fields.intrusion_status_clear = 0;
-+	writel(chassis_ctrl.value, chassis->base);
++	/* The clear bit must be pulsed: set, then release. */
++	ctrl = readl(chassis->base);
++	writel(ctrl | CHASSIS_CTRL_INTRUSION_CLEAR, chassis->base);
++	writel(ctrl & ~CHASSIS_CTRL_INTRUSION_CLEAR, chassis->base);
 +	return count;
 +}
 +
-+static ssize_t intrusion_show(struct device *dev, struct device_attribute *attr,
-+			      char *buf)
-+{
-+	struct sensor_device_attribute *sensor_attr = to_sensor_dev_attr(attr);
-+	int index = sensor_attr->index;
-+	struct aspeed_chassis *chassis = dev_get_drvdata(dev);
-+	union chassis_ctrl_register chassis_ctrl;
-+	u8 ret;
++static DEVICE_ATTR_RW(intrusion0_alarm);
 +
-+	chassis_ctrl.value = readl(chassis->base);
-+	switch (index) {
-+	case 0:
-+		ret = chassis_ctrl.fields.core_power_status;
-+		break;
-+	case 1:
-+		ret = chassis_ctrl.fields.io_power_status;
-+		break;
-+	case 2:
-+		ret = chassis_ctrl.fields.intrusion_status;
-+		break;
-+	default:
-+		return -EINVAL;
-+	}
-+
-+	return sprintf(buf, "%d\n", ret);
-+}
-+
-+static SENSOR_DEVICE_ATTR_RO(core_power, intrusion, 0);
-+static SENSOR_DEVICE_ATTR_RO(io_power, intrusion, 1);
-+static SENSOR_DEVICE_ATTR_RW(intrusion0_alarm, intrusion, 2);
-+
-+static struct attribute *intrusion_dev_attrs[] = {
-+	&sensor_dev_attr_core_power.dev_attr.attr,
-+	&sensor_dev_attr_io_power.dev_attr.attr,
-+	&sensor_dev_attr_intrusion0_alarm.dev_attr.attr, NULL
++static struct attribute *aspeed_chassis_attrs[] = {
++	&dev_attr_intrusion0_alarm.attr,
++	NULL
 +};
-+
-+static const struct attribute_group intrusion_dev_group = {
-+	.attrs = intrusion_dev_attrs,
-+	.is_visible = NULL,
-+};
-+
-+static void aspeed_chassis_int_ctrl(struct aspeed_chassis *chassis, bool ctrl)
-+{
-+	union chassis_ctrl_register chassis_ctrl;
-+
-+	chassis_ctrl.value = readl(chassis->base);
-+	chassis_ctrl.fields.intrusion_int_enable = ctrl;
-+	chassis_ctrl.fields.io_power_int_enable = ctrl;
-+	chassis_ctrl.fields.core_power_int_enable = ctrl;
-+	writel(chassis_ctrl.value, chassis->base);
-+}
-+
-+static const struct of_device_id aspeed_chassis_of_table[] = {
-+	{ .compatible = "aspeed,ast2600-chassis" },
-+	{}
-+};
-+MODULE_DEVICE_TABLE(of, aspeed_chassis_of_table);
++ATTRIBUTE_GROUPS(aspeed_chassis);
 +
 +static int aspeed_chassis_probe(struct platform_device *pdev)
 +{
 +	struct device *dev = &pdev->dev;
 +	struct aspeed_chassis *priv;
 +	struct device *hwmon;
++	u32 ctrl;
 +
 +	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 +	if (!priv)
 +		return -ENOMEM;
 +
-+	priv->dev = dev;
 +	priv->base = devm_platform_ioremap_resource(pdev, 0);
 +	if (IS_ERR(priv->base))
 +		return PTR_ERR(priv->base);
 +
-+	/* Poll the latched bit through hwmon; the interrupt path is not needed. */
-+	aspeed_chassis_int_ctrl(priv, false);
++	/* Polled only: keep the latch interrupts masked. */
++	ctrl = readl(priv->base);
++	ctrl &= ~(CHASSIS_CTRL_INTRUSION_INT_EN | CHASSIS_CTRL_IO_POWER_INT_EN |
++		  CHASSIS_CTRL_CORE_POWER_INT_EN);
++	writel(ctrl, priv->base);
 +
-+	priv->groups[0] = &intrusion_dev_group;
-+	priv->groups[1] = NULL;
 +	hwmon = devm_hwmon_device_register_with_groups(dev, "aspeed_chassis",
-+						       priv, priv->groups);
-+
++						       priv,
++						       aspeed_chassis_groups);
 +	return PTR_ERR_OR_ZERO(hwmon);
 +}
++
++static const struct of_device_id aspeed_chassis_of_table[] = {
++	{ .compatible = "aspeed,ast2600-chassis" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, aspeed_chassis_of_table);
 +
 +static struct platform_driver aspeed_chassis_driver = {
 +	.probe = aspeed_chassis_probe,
@@ -206,7 +150,6 @@ index 000000000000..000000000000
 +		.of_match_table = aspeed_chassis_of_table,
 +	},
 +};
-+
 +module_platform_driver(aspeed_chassis_driver);
 +
 +MODULE_AUTHOR("ASPEED Technology Inc.");
