@@ -1,8 +1,10 @@
 #!/bin/sh
 # CEB-GNRD functional check + log collection.  Run it ON THE BMC:
 #
-#   ceb-gnrd-check                       # prints PASS / FAIL per item, writes the files below
-#   CEB_ENV=board ceb-gnrd-check         # force the environment (qemu | board)
+#   ceb-gnrd-check 0                     # virtual machine (QEMU)
+#   ceb-gnrd-check 1                     # physical board
+#   ceb-gnrd-check                       # no argument: detect the environment itself
+#   (prints PASS / FAIL per item and writes the files below)
 #   CEB_CHECK_NO_FAN_WRITE=1 ceb-gnrd-check   # do not change fan settings (section 4)
 #
 # The script detects whether it runs in QEMU (ast2600-evb) or on the real board and
@@ -10,8 +12,9 @@
 #   board  : the hardware is there, so fans, PECI, RTC, eSPI, KCS, POST code, VUART,
 #            intrusion sensor ... must work.  Items that also need the host powered on
 #            are checked only while the chassis is On, otherwise they are "skip".
-#   qemu   : no fans, PECI, RTC, host or eSPI; those items are "info" or "skip", and
-#            a few (no /dev/rtc0) must show the absent state.
+#   qemu   : no fans, PECI, board RTC chip or host.  The SoC blocks (eSPI registers,
+#            KCS, LPC snoop, VUART, intrusion latch) exist there too, so the software
+#            chain around them is checked; the hardware-dependent items are "skip".
 #   both   : software that runs the same everywhere (services, IPMI, Redfish, web,
 #            OEM fan commands, SEL / Redfish log chain, restart policy ...).
 #
@@ -20,7 +23,7 @@
 #   /tmp/ceb-gnrd-check/*.log            journal, dmesg, units, D-Bus trees ...
 #   /tmp/ceb-gnrd-check.tar.gz           all of the above in one file
 #
-# The QEMU expectations come from real QEMU runs.  The board expectations have not
+# The QEMU expectations come from real QEMU runs (the last one: 80 PASS with the old board expectations).  The board expectations have not
 # been run on a board yet: a FAIL there is a lead to look at, not a verdict.
 # Everything runs with BusyBox sh.
 
@@ -36,15 +39,19 @@ sec() { printf '\n===== %s =====\n' "$*" | tee -a "$REPORT"; }
 
 # ---- environment detection ----
 detect_env() {
+    case "$1" in
+        0) ENV=qemu;  WHY="argument 0"; return ;;
+        1) ENV=board; WHY="argument 1"; return ;;
+    esac
     if [ -n "$CEB_ENV" ]; then ENV=$CEB_ENV; WHY="CEB_ENV override"; return; fi
-    mac=$(cat /sys/class/net/eth0/address 2>/dev/null)
-    case "$mac" in
-        52:54:00:*) ENV=qemu; WHY="eth0 MAC $mac is the QEMU default prefix"; return ;;
+    macs=$(cat /sys/class/net/*/address 2>/dev/null | tr '\n' ' ')
+    case " $macs" in
+        *" 52:54:00:"*) ENV=qemu; WHY="a network interface has a QEMU MAC (52:54:00:..): $macs"; return ;;
     esac
     if dmesg 2>/dev/null | grep -qi 'qemu'; then ENV=qemu; WHY="qemu found in dmesg"; return; fi
-    ENV=board; WHY="eth0 MAC '$mac', no QEMU marker"
+    ENV=board; WHY="no QEMU MAC (52:54:00:..) among: $macs"
 }
-detect_env
+detect_env "$1"
 say "environment: $ENV ($WHY)"
 
 host_on() {
@@ -146,7 +153,7 @@ board_on "CPU_MAX_TEMP reads a real value (PECI) with the chassis on" "ipmitool 
 board_on "DIMM_MAX_TEMP reads a real value (PECI) with the chassis on" "ipmitool sensor get DIMM_MAX_TEMP" 'Sensor Reading *: *[0-9]'
 board    "six fan tach sensors exist" "ipmitool sensor | grep -c -i -E 'fan'" '^ *([6-9]|[1-9][0-9])$'
 board_on "PECI CPU is on the PECI bus" "ls /sys/bus/peci/devices" 'peci'
-board    "ADC IIO device exists" "ls /sys/bus/iio/devices" 'iio:device'
+check    "ADC IIO device exists" "ls /sys/bus/iio/devices" 'iio:device'
 env_info "full sensor list" "ipmitool sensor"
 
 sec "3. IPMI general"
@@ -187,7 +194,7 @@ else
           "ipmitool raw 0x30 0x02 0xFF 0x00 0x00 0x00; ls /var/lib/ceb-gnrd/fan-settings.json 2>&1" 'No such file'
     check "OEM rejects an invalid fan" "ipmitool raw 0x30 0x02 0x09 0x00 0x00 0x00 2>&1" 'Invalid data field'
 fi
-board "PWM/TACH hwmon device exists" "ls /sys/class/hwmon/*/name | xargs cat" 'pwm|tach|g6'
+check "PWM/TACH hwmon device exists" "ls /sys/class/hwmon/*/name | xargs cat" 'pwm|tach|g6'
 env_info "BMC software version objects" "busctl tree xyz.openbmc_project.Software.BMC.Updater --list; busctl tree xyz.openbmc_project.Software.Version --list; busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias /xyz/openbmc_project/software 0 1 xyz.openbmc_project.Software.Version"
 env_info "fan tach / PWM objects" "busctl tree xyz.openbmc_project.fansensor --list; ls /xyz 2>/dev/null; ls /sys/class/hwmon"
 env_info "fan-settings journal" "journalctl -u ceb-gnrd-fan-settings -b --no-pager | tail -n 20"
@@ -206,9 +213,8 @@ check "web UI is served" "curl -sk https://127.0.0.1/ | head -n 5" '(html|HTML)'
 
 sec "6. Time, RTC, flash layout"
 check "RTC sync unit ran" "systemctl is-active ceb-gnrd-rtc-sync" 'active'
-board "RTC device /dev/rtc0 exists (NCT3018Y)" "ls -l /dev/rtc0" 'rtc0'
-board "RTC can be read" "hwclock -r" '[0-9]'
-qemu  "no /dev/rtc0 in QEMU" "ls /dev/rtc0 2>&1" 'No such file'
+check "RTC device /dev/rtc0 exists" "ls -l /dev/rtc0" 'rtc0'
+board "RTC (NCT3018Y) can be read" "hwclock -r" '[0-9]'
 env_info "time and RTC" "date; ls -l /dev/rtc0; hwclock -r"
 check "MTD partitions u-boot/kernel/rofs/rwfs" "cat /proc/mtd" 'rwfs'
 check "rwfs is mounted and persistent" "df -h /var/lib | tail -n 1" 'cow|overlay|ubi|mtd'
@@ -219,14 +225,12 @@ sec "7. Other BMC functions"
 check "fault and identify LEDs exist (sysfs)" "ls /sys/class/leds/" 'fault'
 check "enclosure_fault LED group is on D-Bus" "busctl --system get-property xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted" '^b (true|false)$'
 check "network: eth0 exists" "ip -br link show eth0" 'eth0'
-board "network: eth0 link is up with an IPv4 address" "ip -br addr show eth0" 'UP .*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
+check "network: eth0 link is up with an IPv4 address" "ip -br addr show eth0" 'UP .*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
 check "chassis intrusion service is running" "systemctl is-active xyz.openbmc_project.intrusionsensor" '^active$'
-board "chassis intrusion hwmon attribute exists (CHASI# latch)" "ls /sys/class/hwmon/hwmon*/intrusion0_alarm" 'intrusion0_alarm'
-board "chassis intrusion D-Bus object exists" \
+check "chassis intrusion hwmon attribute exists (CHASI# latch)" "ls /sys/class/hwmon/hwmon*/intrusion0_alarm" 'intrusion0_alarm'
+check "chassis intrusion D-Bus object exists" \
       "busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias / 0 1 xyz.openbmc_project.Chassis.Intrusion" 'Intrusion'
-qemu  "no chassis intrusion object in QEMU (no CHASI# hardware)" \
-      "busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias / 0 1 xyz.openbmc_project.Chassis.Intrusion 2>&1" '(as 0|not found|Failed)'
-board "BMC heartbeat LED is blinking (eSPI driver bound)" "cat /sys/class/leds/bmc-heartbeat/trigger" '\[heartbeat\]'
+check "BMC heartbeat LED is blinking (eSPI driver bound)" "cat /sys/class/leds/bmc-heartbeat/trigger" '\[heartbeat\]'
 env_info "NC-SI" "dmesg | grep -i ncsi | tail -n 5"
 env_info "LEDs" "ls /sys/class/leds; busctl tree xyz.openbmc_project.LED.GroupManager --list"
 env_info "host / chassis state" "obmcutil state 2>&1"
@@ -235,20 +239,19 @@ env_info "GPIO lines in use" "gpioinfo 2>&1 | grep -i -E 'used|BMC_' | head -n 6
 
 sec "8. Host interface: eSPI, KCS, POST code, VUART / SOL"
 check "obmc-console (SOL) unit exists" "systemctl list-units --all --no-legend 'obmc-console*' | wc -l" '^ *[1-9]'
-board "host VUART is ttyVUART0 (udev symlink, VUART1 0x1E787000)" "ls -l /dev/ttyVUART0" 'ttyVUART0 -> '
-board "obmc-console@ttyVUART0 is active" "systemctl is-active obmc-console@ttyVUART0" '^active$'
-board "VUART host address is COM1 0x3F8" "cat /sys/devices/platform/ahb/ahb:apb/1e787000.serial/lpc_address" '0x0*3f8'
-board "eSPI Peripheral driver marked the channel ready" "dmesg | grep -i espi" 'SW_READY set'
-board "no eSPI Peripheral errors / aborts since boot" "dmesg | grep -c -E 'PERIF_(NP|PC)_(TX|RX)_(ERR|ABT)'" '^ *0$'
-board "KCS3 device for host IPMI exists" "ls /dev/ipmi-kcs3" 'ipmi-kcs3'
-board "LPC snoop device for port 0x80 exists" "ls /dev/aspeed-lpc-snoop0" 'snoop0'
-board "POST code object is on D-Bus" \
+check "host VUART is ttyVUART0 (udev symlink, VUART1 0x1E787000)" "ls -l /dev/ttyVUART0" 'ttyVUART0 -> '
+check "obmc-console@ttyVUART0 is active" "systemctl is-active obmc-console@ttyVUART0" '^active$'
+board "VUART host address is COM1 0x3F8 (QEMU does not model it and reads 0x0)" "cat /sys/devices/platform/ahb/ahb:apb/1e787000.serial/lpc_address" '0x0*3f8'
+check "eSPI Peripheral driver marked the channel ready" "dmesg | grep -i espi" 'SW_READY set'
+check "no eSPI Peripheral errors / aborts since boot" "dmesg | grep -c -E 'PERIF_(NP|PC)_(TX|RX)_(ERR|ABT)'" '^ *0$'
+check "KCS3 device for host IPMI exists" "ls /dev/ipmi-kcs3" 'ipmi-kcs3'
+check "LPC snoop device for port 0x80 exists" "ls /dev/aspeed-lpc-snoop0" 'snoop0'
+check "POST code object is on D-Bus" \
       "busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias /xyz/openbmc_project/State/Boot 0 0" 'PostCode'
 board_on "POST code of the current boot is not empty" \
       "busctl get-property xyz.openbmc_project.State.Boot.PostCode0 /xyz/openbmc_project/State/Boot/PostCode0 xyz.openbmc_project.State.Boot.PostCode CurrentBootCycleCount" 'u [1-9]'
 board_on "BIOS has signalled POST complete (OperatingSystemState Standby)" \
       "busctl get-property xyz.openbmc_project.State.OperatingSystem /xyz/openbmc_project/state/host0 xyz.openbmc_project.State.OperatingSystem.Status OperatingSystemState" 'Standby'
-qemu  "no host serial device in QEMU (no VUART path to a host)" "ls /dev/ttyVUART0 2>&1" '(No such file|ttyVUART0)'
 env_info "eSPI / KCS / snoop / VUART kernel messages" "dmesg | grep -i -E 'espi|kcs|snoop|vuart|serial' | tail -n 40"
 env_info "VUART sysfs" "ls /sys/devices/platform/ahb/ahb:apb/1e787000.serial 2>&1; cat /sys/devices/platform/ahb/ahb:apb/1e787000.serial/lpc_address /sys/devices/platform/ahb/ahb:apb/1e787000.serial/sirq 2>&1"
 env_info "eSPI debugfs registers" "for f in \$(find /sys/kernel/debug -name regs 2>/dev/null | grep -i espi); do echo \$f; cat \$f; done"
