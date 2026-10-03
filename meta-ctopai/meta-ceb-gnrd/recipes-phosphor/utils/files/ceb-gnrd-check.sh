@@ -232,10 +232,15 @@ check "rsyslog reload works (ExecReload drop-in for Delete all in the web Event 
       "systemctl show rsyslog -p ExecReload" 'kill'
 check "Redfish event log rule installed" "ls /etc/rsyslog.d/" 'ceb-gnrd-redfish.conf'
 check "IPMI Get Device ID (raw)" "ipmitool raw 0x06 0x01" '^ *[0-9a-f]{2} '
+# phosphor-ipmi-net is bound to eth0, so 127.0.0.1 is not answered: use the address of
+# eth0.  If the default cipher suite is refused, cipher suite 3 is tried.
+ETH0IP="ip=\$(ip -4 -o addr show eth0 | awk '{print \$4}' | cut -d/ -f1 | head -n 1); echo ip=\$ip;"
+IPMILAN="ipmitool -I lanplus -H \$ip -U root -P $PW"
+check "phosphor-ipmi-net listens on UDP 623" "grep -i -E ':026F ' /proc/net/udp /proc/net/udp6" ':026F'
 check "IPMI over LAN (RMCP+, phosphor-ipmi-net) answers" \
-      "ipmitool -I lanplus -H 127.0.0.1 -U root -P $PW mc info" 'Manufacturer ID *: *6659'
+      "$ETH0IP $IPMILAN mc info || $IPMILAN -C 3 mc info" 'Manufacturer ID *: *6659'
 check "IPMI SOL is configured over LAN" \
-      "ipmitool -I lanplus -H 127.0.0.1 -U root -P $PW sol info 1" 'Enabled'
+      "$ETH0IP $IPMILAN sol info 1 || $IPMILAN -C 3 sol info 1" 'Enabled'
 check "chassis power restore policy is readable" "ipmitool chassis policy list" 'always-off|always-on|previous|no-change'
 check "SEL add through phosphor-sel-logger shows up in ipmitool sel list" \
       "b=\$(ipmitool sel elist | wc -l); busctl call xyz.openbmc_project.Logging.IPMI /xyz/openbmc_project/Logging/IPMI xyz.openbmc_project.Logging.IPMI IpmiSelAdd ssaybq 'ceb-gnrd-check test event' /xyz/openbmc_project/sensors/temperature/CPU_MAX_TEMP 3 0x00 0xFF 0xFF true 0x0020 >/dev/null; sleep 4; a=\$(ipmitool sel elist | wc -l); echo before=\$b after=\$a; [ \$a -gt \$b ] && echo grew" '^grew$'
