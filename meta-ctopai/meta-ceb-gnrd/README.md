@@ -209,10 +209,14 @@ Platform features
   BMC after 5 s (`CONFIG_PANIC_TIMEOUT=5`).  Magic SysRq is enabled (not from the
   serial BREAK) so that `echo c > /proc/sysrq-trigger` can test this.
 * Service recovery uses the standard systemd / OpenBMC mechanisms
-  (`ceb-gnrd-health`): a drop-in `10-ceb-gnrd-restart.conf` gives the object
-  mapper, Entity-Manager, bmcweb, ipmid and this layer's fan-settings,
-  temp-max and alert-led services `Restart=always`, a start limit (5 starts in
-  5 minutes) and `OnFailure=obmc-bmc-service-quiesce@0.target`, which makes
+  (`ceb-gnrd-health`).  This layer's own fan-settings, temp-max and alert-led
+  services get a drop-in with `Restart=always` and a start limit (5 starts in 5
+  minutes) and nothing else: systemd runs `OnFailure=` at every failure, also one
+  that is followed by an automatic restart (seen on the VM: one SIGKILL of
+  temp-max quiesced and rebooted the BMC), so they must not have it.  The object
+  mapper, Entity-Manager, bmcweb and ipmid get the same plus
+  `OnFailure=obmc-bmc-service-quiesce@0.target`, so the first failure of one of
+  them (it is restarted too, but the BMC reboots anyway) makes
   phosphor-state-manager put the BMC into Quiesced; the option
   `auto-reboot-on-bmc-quiesce` (`phosphor-state-manager_%.bbappend`) then reboots
   it.  Upstream puts no limit on these reboots; `ceb-gnrd-quiesce-reboot-limit.sh`

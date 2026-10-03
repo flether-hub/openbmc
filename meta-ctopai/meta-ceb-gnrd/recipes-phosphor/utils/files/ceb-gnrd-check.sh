@@ -3,10 +3,11 @@
 #
 #   ceb-gnrd-check 0                     # virtual machine (QEMU)
 #   ceb-gnrd-check 1                     # physical board
-#   ceb-gnrd-check                       # no argument: detect the environment itself
+#   ceb-gnrd-check                       # no argument: same as 0 (virtual machine)
 #   (prints PASS / FAIL per item and writes the files below)
 #   CEB_CHECK_NO_FAN_WRITE=1 ceb-gnrd-check   # do not change fan settings (section 4)
-#   CEB_CHECK_NO_DISRUPT=1   ceb-gnrd-check   # do not kill a service to test its restart
+#   CEB_CHECK_KILL=1         ceb-gnrd-check   # also kill ceb-gnrd-temp-max and see it restart
+#                                              # (this test rebooted the BMC once: off by default)
 #   CEB_CHECK_CLEAR_LOGS=1   ceb-gnrd-check   # also run the destructive Redfish ClearLog
 #                                              # test on the board (QEMU always runs it)
 #
@@ -43,6 +44,13 @@ PASS=0; FAIL=0; SKIP=0; TRYOK=0; TRYNO=0
 FAILS=$DIR/fails.txt
 : > "$FAILS"
 
+MARK=/var/lib/ceb-gnrd/check-running.txt
+mkdir -p /var/lib/ceb-gnrd 2>/dev/null
+# mark "name": remember which item is running, in persistent storage (/tmp is lost
+# at a reboot), so that a BMC reboot in the middle of a test shows on the next run
+# which item was running.
+mark() { printf '%s\n' "$1" > "$MARK" 2>/dev/null; sync; }
+
 say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
 sec() { printf '\n===== %s =====\n' "$*" | tee -a "$REPORT"; }
 
@@ -53,14 +61,12 @@ detect_env() {
         1) ENV=board; WHY="argument 1"; return ;;
     esac
     if [ -n "$CEB_ENV" ]; then ENV=$CEB_ENV; WHY="CEB_ENV override"; return; fi
-    macs=$(cat /sys/class/net/*/address 2>/dev/null | tr '\n' ' ')
-    case " $macs" in
-        *" 52:54:00:"*) ENV=qemu; WHY="a network interface has a QEMU MAC (52:54:00:..): $macs"; return ;;
-    esac
-    if dmesg 2>/dev/null | grep -qi 'qemu'; then ENV=qemu; WHY="qemu found in dmesg"; return; fi
-    ENV=board; WHY="no QEMU MAC (52:54:00:..) among: $macs"
+    ENV=qemu; WHY="no argument: the default is the virtual machine, use 1 for the board"
 }
 detect_env "$1"
+if [ -s "$MARK" ]; then
+    say "NOTE: the previous run did not finish (the BMC may have rebooted). It was running: $(cat "$MARK")"
+fi
 say "environment: $ENV ($WHY)"
 
 host_on() {
@@ -87,6 +93,7 @@ note_fail() {
 
 # check "name" "command" "extended regex the output must match"
 check() {
+    mark "$1  [$2]"
     out=$(run "$2" 2>&1)
     printf '\n$ %s\n%s\n' "$2" "$out" >> "$REPORT"
     if printf '%s\n' "$out" | grep -Eq "$3"; then
@@ -101,6 +108,7 @@ check() {
 
 # info "name" "command"   -- only recorded, never fails
 info() {
+    mark "$1  [$2]"
     printf '\n$ %s\n' "$2" >> "$REPORT"
     run "$2" >> "$REPORT" 2>&1
     say "[info] $1"
@@ -115,6 +123,7 @@ SHELL_ERR="(sh: .*(not found|syntax error|unexpected|bad number|Illegal option)|
 # cannot match without the hardware (not counted), but the command itself must run:
 # a shell error here would also break the board run, so that one is a FAIL.
 rehearse() {
+    mark "$1  [$2]"
     out=$(run "$2" 2>&1)
     printf '\n$ %s\n%s\n' "$2" "$out" >> "$REPORT"
     if printf '%s\n' "$out" | grep -Eq "$SHELL_ERR"; then
@@ -153,7 +162,7 @@ else
     check "no unexpected failed units (obmc-read-eeprom is expected without the FRU EEPROM)" \
           "systemctl --failed --no-legend | grep -v obmc-read-eeprom | wc -l" '^ *0$'
 fi
-check "device tree is the CEB-GNRD one" "cat /proc/device-tree/model" 'CEB-GNRD'
+check "device tree is the CEB-GNRD one" "tr -d '\000' < /proc/device-tree/model" 'CEB-GNRD'
 check "BMC state is Ready" \
       "busctl get-property xyz.openbmc_project.State.BMC /xyz/openbmc_project/state/bmc0 xyz.openbmc_project.State.BMC CurrentBMCState" 'Ready'
 for u in bmcweb phosphor-ipmi-host phosphor-ipmi-net@eth0 xyz.openbmc_project.EntityManager \
@@ -175,10 +184,14 @@ check "hardware watchdog armed by systemd (RuntimeWatchdogSec=120s)" \
 check "watchdog device exists" "ls /dev/watchdog*" 'watchdog'
 check "critical services restart then quiesce (StartLimit + OnFailure drop-in)" \
       "systemctl show bmcweb -p OnFailure -p Restart" 'quiesce'
+check "own services restart only, no OnFailure (a single crash must not reboot the BMC)" \
+      "systemctl show ceb-gnrd-temp-max ceb-gnrd-fan-settings ceb-gnrd-alert-led -p OnFailure -p Restart" 'Restart=always'
+check "own services have an empty OnFailure=" \
+      "systemctl show ceb-gnrd-temp-max ceb-gnrd-fan-settings ceb-gnrd-alert-led -p OnFailure | grep -c 'OnFailure=.'" '^ *0$'
 check "BMC reboot after quiesce is limited (ExecCondition drop-in)" \
       "systemctl show phosphor-bmc-quiesce-reboot.service -p ExecCondition" 'reboot-limit'
-if [ -n "$CEB_CHECK_NO_DISRUPT" ]; then
-    skip "a killed service is restarted by systemd" "CEB_CHECK_NO_DISRUPT is set"
+if [ -z "$CEB_CHECK_KILL" ]; then
+    skip "a killed service is restarted by systemd" "it rebooted the BMC once; set CEB_CHECK_KILL=1 to run it"
 else
     check "a killed service is restarted by systemd (Restart=always on ceb-gnrd-temp-max)" \
           "systemctl kill -s KILL ceb-gnrd-temp-max; sleep 8; systemctl is-active ceb-gnrd-temp-max" '^active$'
@@ -391,6 +404,7 @@ if [ "$ENV" = qemu ]; then
 else
     say "copy it off the board with:  scp root@<bmc-ip>:/tmp/ceb-gnrd-check.tar.gz ."
 fi
+rm -f "$MARK"
 if [ "$FAIL" -gt 0 ]; then
     # Everything below is printed on the console so it can be copied and pasted as it is.
     printf '\n===== FAIL details: copy from here to the end =====\n' | tee -a "$REPORT"

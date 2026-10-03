@@ -8,6 +8,7 @@ inherit allarch systemd
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = " \
     file://10-ceb-gnrd-restart.conf \
+    file://10-ceb-gnrd-restart-own.conf \
     file://ceb-gnrd-wdt-reset-log.sh \
     file://ceb-gnrd-wdt-reset-log.service \
     file://ceb-gnrd-quiesce-reboot-limit.sh \
@@ -30,6 +31,10 @@ RESTART_UNITS = " \
     xyz.openbmc_project.EntityManager.service \
     bmcweb.service \
     phosphor-ipmi-host.service \
+    "
+# Own services: restart only, no OnFailure= (it fires at every failure, so a single
+# crash would reboot the BMC).
+OWN_UNITS = " \
     ceb-gnrd-fan-settings.service \
     ceb-gnrd-temp-max.service \
     ceb-gnrd-alert-led.service \
@@ -49,6 +54,11 @@ do_install() {
     for unit in ${RESTART_UNITS}; do
         install -d ${D}${systemd_system_unitdir}/${unit}.d
         install -m 0644 ${UNPACKDIR}/10-ceb-gnrd-restart.conf \
+            ${D}${systemd_system_unitdir}/${unit}.d/10-ceb-gnrd-restart.conf
+    done
+    for unit in ${OWN_UNITS}; do
+        install -d ${D}${systemd_system_unitdir}/${unit}.d
+        install -m 0644 ${UNPACKDIR}/10-ceb-gnrd-restart-own.conf \
             ${D}${systemd_system_unitdir}/${unit}.d/10-ceb-gnrd-restart.conf
     done
 }
