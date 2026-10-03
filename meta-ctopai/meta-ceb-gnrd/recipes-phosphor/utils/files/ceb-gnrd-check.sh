@@ -93,7 +93,8 @@ diag_cmds() {
         printf '%s\n' "systemctl --failed --no-pager" \
             "for u in \$(systemctl --failed --no-legend | awk '{print \$2}'); do echo == \$u; journalctl -u \$u -b --no-pager -n 12; done" ;;
     *"IPMI over LAN"*|*"IPMI SOL"*|*"UDP 623"*)
-        printf '%s\n' "ip -br addr" "grep -i -E ':026F ' /proc/net/udp /proc/net/udp6" \
+        printf '%s\n' "busctl tree xyz.openbmc_project.Settings --list | grep -i -E 'sol|ipmi'" \
+            "journalctl -b --no-pager | grep -i 'Sol Config' | tail -n 5" "ip -br addr""grep -i -E ':026F ' /proc/net/udp /proc/net/udp6" \
             "systemctl status phosphor-ipmi-net@eth0 --no-pager -n 15" \
             "journalctl -u phosphor-ipmi-net@eth0 -b --no-pager -n 20" \
             "ipmitool user list 1" "ipmitool channel getaccess 1 1" \
@@ -326,6 +327,8 @@ IPMILAN="ipmitool -I lanplus -H \$ip -U root -P $PW"
 check "phosphor-ipmi-net listens on UDP 623" "grep -i -E ':026F ' /proc/net/udp /proc/net/udp6" ':026F'
 check "IPMI over LAN (RMCP+, phosphor-ipmi-net) answers" \
       "$ETH0IP $IPMILAN mc info || $IPMILAN -C 3 mc info" 'Manufacturer ID *: *6659'
+check "IPMI SOL settings object exists on D-Bus (/xyz/openbmc_project/ipmi/sol/eth0)" \
+      "busctl tree xyz.openbmc_project.Settings --list | grep -i /ipmi/sol" 'ipmi/sol/eth0'
 check "IPMI SOL is configured over LAN" \
       "$ETH0IP $IPMILAN sol info 1 || $IPMILAN -C 3 sol info 1" 'Enabled'
 check "chassis power restore policy is readable" "ipmitool chassis policy list" 'always-off|always-on|previous|no-change'
