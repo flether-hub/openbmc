@@ -262,10 +262,10 @@ check "SSH port 22 listening" "grep -E ':0016 [0-9A-F:]+ 0A' /proc/net/tcp /proc
 check "HTTPS port 443 listening" "grep -E ':01BB [0-9A-F:]+ 0A' /proc/net/tcp /proc/net/tcp6" ':01BB'
 check "x86-power-control owns the host / chassis / OS state and button names" \
       "busctl list --no-legend | grep -c -E 'xyz.openbmc_project.(State.Host|State.Chassis|State.OperatingSystem|Chassis.Buttons)( |$)'" '^ *[4-9]$'
-check "button definitions installed (gpio_defs.json)" "ls /etc/default/obmc/gpio/gpio_defs.json" 'gpio_defs.json'
+check "button definitions installed (gpio_defs.json)" "ls /etc/default/obmc/gpio/gpio_defs.json >/dev/null 2>&1 && echo found" '^found$'
 check "hardware watchdog armed by systemd (RuntimeWatchdogSec=120s)" \
       "systemctl show -p RuntimeWatchdogUSec" '(2min|120000000)'
-check "watchdog device exists" "ls /dev/watchdog*" 'watchdog'
+check "watchdog device exists" "ls /dev/watchdog* >/dev/null 2>&1 && echo found" '^found$'
 check "critical services restart then quiesce (StartLimit + OnFailure drop-in)" \
       "systemctl show bmcweb -p OnFailure -p Restart" 'quiesce'
 check "own services restart only, no OnFailure (a single crash must not reboot the BMC)" \
@@ -398,7 +398,8 @@ check "web UI is served" "curl -sk https://127.0.0.1/ | head -n 5" '(html|HTML)'
 
 sec "6. Time, RTC, flash layout"
 check "RTC sync unit ran" "systemctl is-active ceb-gnrd-rtc-sync" 'active'
-check "RTC device /dev/rtc0 exists" "ls -l /dev/rtc0" 'rtc0'
+board "RTC device /dev/rtc0 exists (battery-backed NCT3018Y)" "[ -e /dev/rtc0 ] && echo found" '^found$'
+qemu  "no /dev/rtc0 in QEMU (the SoC RTC is disabled, the RTC chip is not emulated)" "[ ! -e /dev/rtc0 ] && echo absent" '^absent$'
 board "RTC (NCT3018Y) can be read" "hwclock -r" '[0-9]'
 env_info "time and RTC" "date; ls -l /dev/rtc0; hwclock -r"
 check "MTD partitions u-boot/kernel/rofs/rwfs" "cat /proc/mtd" 'rwfs'
@@ -417,7 +418,7 @@ check "enclosure_fault LED group can be cleared again" \
 check "network: eth0 exists" "ip -br link show eth0" 'eth0'
 check "network: eth0 link is up with an IPv4 address" "ip -br addr show eth0" 'UP .*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
 check "chassis intrusion service is running" "systemctl is-active xyz.openbmc_project.intrusionsensor" '^active$'
-check "chassis intrusion hwmon attribute exists (CHASI# latch)" "ls /sys/class/hwmon/hwmon*/intrusion0_alarm" 'intrusion0_alarm'
+check "chassis intrusion hwmon attribute exists (CHASI# latch)" "ls /sys/class/hwmon/hwmon*/intrusion0_alarm >/dev/null 2>&1 && echo found" '^found$'
 check "chassis intrusion D-Bus object exists" \
       "busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias / 0 1 xyz.openbmc_project.Chassis.Intrusion" 'Intrusion'
 check "BMC heartbeat LED is blinking (eSPI driver bound)" "cat /sys/class/leds/bmc-heartbeat/trigger" '\[heartbeat\]'
@@ -451,8 +452,8 @@ board_on "eSPI reset from the host was handled (driver restarted the channels)" 
 env_info "eSPI registers ESPI000 / 004 / 098 / 0A0 / 0A4 (devmem)" \
          "for r in 0x1e6ee000 0x1e6ee004 0x1e6ee098 0x1e6ee0a0 0x1e6ee0a4; do echo \$r: \$(devmem \$r 32 2>&1); done"
 check "no eSPI Peripheral errors / aborts since boot" "dmesg | grep -c -E 'PERIF_(NP|PC)_(TX|RX)_(ERR|ABT)'" '^ *0$'
-check "KCS3 device for host IPMI exists" "ls /dev/ipmi-kcs3" 'ipmi-kcs3'
-check "LPC snoop device for port 0x80 exists" "ls /dev/aspeed-lpc-snoop0" 'snoop0'
+check "KCS3 device for host IPMI exists" "ls /dev/ipmi-kcs3 >/dev/null 2>&1 && echo found" '^found$'
+check "LPC snoop device for port 0x80 exists" "ls /dev/aspeed-lpc-snoop0 >/dev/null 2>&1 && echo found" '^found$'
 check "POST code object is on D-Bus" \
       "busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias /xyz/openbmc_project/State/Boot 0 0" 'PostCode'
 board_on "POST code of the current boot is not empty" \
