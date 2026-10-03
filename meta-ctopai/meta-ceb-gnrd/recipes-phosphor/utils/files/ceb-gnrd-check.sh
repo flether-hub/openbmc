@@ -81,13 +81,96 @@ run() {
     if command -v timeout >/dev/null 2>&1; then timeout 40 sh -c "$1"; else sh -c "$1"; fi
 }
 
-# note_fail "name" "command" "output" "why": keep the details for the FAIL block at the end
+# diag_cmds "name of the failed check": the commands that usually explain that failure,
+# one per line.  They are run when the check fails and their output goes into the FAIL
+# details at the end, so no log has to be collected by hand.
+diag_cmds() {
+    case "$1" in
+    "unit "*" is active")
+        u=${1#unit }; u=${u% is active}
+        printf '%s\n' "systemctl status $u --no-pager -n 20" "journalctl -u $u -b --no-pager -n 25" ;;
+    *"failed units"*)
+        printf '%s\n' "systemctl --failed --no-pager" \
+            "for u in \$(systemctl --failed --no-legend | awk '{print \$2}'); do echo == \$u; journalctl -u \$u -b --no-pager -n 12; done" ;;
+    *"IPMI over LAN"*|*"IPMI SOL"*|*"UDP 623"*)
+        printf '%s\n' "ip -br addr" "grep -i -E ':026F ' /proc/net/udp /proc/net/udp6" \
+            "systemctl status phosphor-ipmi-net@eth0 --no-pager -n 15" \
+            "journalctl -u phosphor-ipmi-net@eth0 -b --no-pager -n 20" \
+            "ipmitool user list 1" "ipmitool channel getaccess 1 1" \
+            "ipmitool -I lanplus -H 127.0.0.1 -U root -P $PW -vvv mc info 2>&1 | tail -n 20" ;;
+    *"IPMI"*|*"SEL"*|*"rsyslog"*|*"event log"*|*"Redfish event"*|*"ClearLog"*|*"REDFISH_MESSAGE_ID"*)
+        printf '%s\n' "systemctl status rsyslog --no-pager -n 15" "journalctl -u rsyslog -b --no-pager -n 20" \
+            "ls -l /var/log/ipmi_sel* /var/log/redfish* /etc/rsyslog.d" \
+            "journalctl -u xyz.openbmc_project.Logging.IPMI -b --no-pager -n 20" \
+            "journalctl -u phosphor-ipmi-host -b --no-pager -n 20" "ipmitool sel info" ;;
+    *"Redfish"*|*"bmcweb"*|*"web UI"*|*"fan-settings D-Bus"*)
+        printf '%s\n' "systemctl status bmcweb --no-pager -n 15" "journalctl -u bmcweb -b --no-pager -n 25" \
+            "curl -sk -i -u root:$PW https://127.0.0.1/redfish/v1/ | head -n 15" ;;
+    *"OEM"*|*"pid"*|*"Pid"*|*"fan"*|*"Fan"*)
+        printf '%s\n' "journalctl -u phosphor-pid-control -b --no-pager -n 25" \
+            "journalctl -u ceb-gnrd-fan-settings -b --no-pager -n 25" \
+            "busctl tree xyz.openbmc_project.EntityManager --list | grep -i -E 'fan|pid'" \
+            "ls /sys/class/hwmon; cat /sys/class/hwmon/*/name" ;;
+    *"sensor"*|*"voltage"*|*"CPU_MAX"*|*"DIMM_MAX"*|*"STBY"*|*"NonRecoverable"*|*"ADC"*)
+        printf '%s\n' "ipmitool sensor | head -n 40" "journalctl -u ceb-gnrd-temp-max -b --no-pager -n 20" \
+            "journalctl -u xyz.openbmc_project.EntityManager -b --no-pager -n 20" \
+            "busctl tree xyz.openbmc_project.ADCSensor --list | head -n 30" ;;
+    *"intrusion"*|*"Intrusion"*|*"PhysicalSecurity"*)
+        printf '%s\n' "ls -l /sys/class/hwmon/*/intrusion0_alarm" "cat /sys/class/hwmon/*/intrusion0_alarm" \
+            "journalctl -u xyz.openbmc_project.intrusionsensor -b --no-pager -n 20" \
+            "busctl tree xyz.openbmc_project.IntrusionSensor --list" ;;
+    *"RTC"*|*"rtc"*)
+        printf '%s\n' "ls -l /dev/rtc*" "dmesg | grep -i rtc | tail -n 15" "journalctl -u ceb-gnrd-rtc-sync -b --no-pager -n 20" \
+            "i2cdetect -y 9" ;;
+    *"VUART"*|*"ttyVUART0"*|*"obmc-console"*|*"SOL"*)
+        printf '%s\n' "ls -l /dev/ttyVUART0 /dev/ttyS*" "cat /proc/tty/driver/serial" \
+            "systemctl status obmc-console@ttyVUART0 --no-pager -n 15" \
+            "journalctl -u obmc-console@ttyVUART0 -b --no-pager -n 20" \
+            "dmesg | grep -i -E 'vuart|ttyS5|serial' | tail -n 15" \
+            "udevadm info -q property -n /dev/ttyS5 2>&1 | head -n 15" ;;
+    *"eSPI"*|*"ESPI"*|*"Virtual Wire"*)
+        printf '%s\n' "dmesg | grep -i espi | tail -n 25" \
+            "for r in 0x1e6ee000 0x1e6ee004 0x1e6ee098 0x1e6ee0a0 0x1e6ee0a4; do echo \$r: \$(devmem \$r 32 2>&1); done" \
+            "for f in \$(find /sys/kernel/debug -name regs 2>/dev/null | grep -i espi); do echo \$f; cat \$f; done" ;;
+    *"KCS"*|*"snoop"*|*"POST code"*|*"POST complete"*)
+        printf '%s\n' "ls -l /dev/ipmi-kcs* /dev/aspeed-lpc-snoop*" "dmesg | grep -i -E 'kcs|snoop' | tail -n 15" \
+            "journalctl -u phosphor-ipmi-kcs@ipmi-kcs3 -b --no-pager -n 15" \
+            "busctl tree xyz.openbmc_project.State.Boot.PostCode0 --list" \
+            "busctl list --no-legend | grep -i -E 'postcode|State.Boot|OperatingSystem'" ;;
+    *"LED"*|*"heartbeat"*)
+        printf '%s\n' "ls /sys/class/leds" "cat /sys/class/leds/bmc-heartbeat/trigger" \
+            "busctl tree xyz.openbmc_project.LED.GroupManager --list" \
+            "journalctl -u phosphor-led-manager -b --no-pager -n 15" \
+            "journalctl -u ceb-gnrd-alert-led -b --no-pager -n 20" ;;
+    *"watchdog"*|*"quiesce"*|*"OnFailure"*|*"restart"*)
+        printf '%s\n' "systemctl show -p RuntimeWatchdogUSec -p WatchdogDevice" "ls -l /dev/watchdog*" \
+            "dmesg | grep -i -E 'wdt|watchdog' | tail -n 10" \
+            "systemctl show bmcweb ceb-gnrd-temp-max -p Restart -p OnFailure -p StartLimitBurst" ;;
+    *"MTD"*|*"flash"*|*"rwfs"*)
+        printf '%s\n' "cat /proc/mtd" "df -h" "mount | grep -E 'rwfs|overlay|mtd'" ;;
+    *"network"*|*"eth0"*)
+        printf '%s\n' "ip -br addr" "ip -br link" "dmesg | grep -i -E 'ftgmac|ncsi|eth0' | tail -n 15" ;;
+    esac
+}
+
+# note_fail "name" "command" "output" "why": keep the details for the FAIL block at the
+# end, followed by the output of the diagnostic commands that belong to this check
 note_fail() {
     {
         printf '### %s\n' "$1"
         printf '$ %s\n' "$2"
         [ -n "$4" ] && printf '(%s)\n' "$4"
-        printf '%s\n\n' "$3" | head -n 40 | cut -c1-220
+        printf '%s\n' "$3" | head -n 40 | cut -c1-220
+        d=$(diag_cmds "$1")
+        if [ -n "$d" ]; then
+            printf -- '--- diagnostics ---\n'
+            printf '%s\n' "$d" | while IFS= read -r c; do
+                [ -n "$c" ] || continue
+                printf '$ %s\n' "$c"
+                run "$c" 2>&1 | head -n 25 | cut -c1-200
+            done
+        fi
+        printf '\n'
     } >> "$FAILS"
 }
 
@@ -205,6 +288,10 @@ if [ "$ENV" = board ]; then
 else
     check "at least 18 sensors" "ipmitool sensor | wc -l" '^ *(1[89]|[2-9][0-9]|[1-9][0-9][0-9])$'
 fi
+check "no duplicate i2c client registration (-16) in dmesg (a device declared in the DT and in Entity-Manager)" \
+      "dmesg | grep -c 'Failed to register i2c client.*(-16)'" '^ *0$'
+board "four board temperature sensors exist (EnvTemp_Inlet/Outlet, BoardTemp_PCIe/M2)" \
+      "ipmitool sensor | grep -c -E 'EnvTemp_Inlet|EnvTemp_Outlet|BoardTemp_PCIe|BoardTemp_M2'" '^ *4$'
 check "CPU_MAX_TEMP and DIMM_MAX_TEMP present" "ipmitool sensor | grep -c -E 'CPU_MAX_TEMP|DIMM_MAX_TEMP'" '^ *2$'
 # P12V_SYS and the other *_SYS rails are only read with the chassis on, so they are unavailable in QEMU.
 check "STBY voltage sensor shows upper critical" "ipmitool sensor get P1V8_STBY" 'Upper Critical'

@@ -452,26 +452,12 @@
     pinctrl-names = "default";
     pinctrl-0 = <&pinctrl_i2c7_default>;
 
-    /* Four NST175H-QSPR sensors; strap code is the low address bits. */
-    inlet-temp@48 {
-        compatible = "national,lm75";
-        reg = <0x48>;
-    };
-
-    outlet-temp@49 {
-        compatible = "national,lm75";
-        reg = <0x49>;
-    };
-
-    pcie-temp@4a {
-        compatible = "national,lm75";
-        reg = <0x4a>;
-    };
-
-    m2-temp@4b {
-        compatible = "national,lm75";
-        reg = <0x4b>;
-    };
+    /* Four NST175H-QSPR sensors at 0x48-0x4b (strap code = low address bits):
+     * EnvTemp_Inlet, EnvTemp_Outlet, BoardTemp_PCIe, BoardTemp_M2.  They are not
+     * declared here: the Entity-Manager configuration (Type LM75A) makes
+     * dbus-sensors create the devices itself.  Declaring them in both places made
+     * every Entity-Manager scan log "Failed to register i2c client lm75a at 0x4x
+     * (-16)", because the kernel already owned the address. */
 };
 
 &i2c7 {

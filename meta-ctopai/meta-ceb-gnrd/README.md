@@ -295,7 +295,10 @@ uses the AST2600 dedicated CHASI# intrusion input through the intrusion hwmon
 latch (`0002-hwmon-add-AST2600-chassis-intrusion-driver.patch`).
 
 * Four NST175H-QSPR temperature sensors on I2C7 (Linux `i2c-6`): inlet `0x48`,
-  outlet `0x49`, PCIe `0x4a`, M.2 `0x4b`, measurement only.
+  outlet `0x49`, PCIe `0x4a`, M.2 `0x4b`, measurement only.  They are created by
+  Entity-Manager / dbus-sensors (Type `LM75A`), not declared in the device tree
+  (declaring them in both places logged `Failed to register i2c client lm75a ...
+  (-16)` at every scan).
 * ADC: both ADC engines use the 2.5 V internal reference. `D3V0_BAT0` is
   read as built (R542/Q39 not populated, so the 3 V battery saturates the
   input) until the schematic is corrected.
