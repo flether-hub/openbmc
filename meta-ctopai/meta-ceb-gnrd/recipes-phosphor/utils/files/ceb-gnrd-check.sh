@@ -6,13 +6,18 @@
 #   ceb-gnrd-check                       # no argument: detect the environment itself
 #   (prints PASS / FAIL per item and writes the files below)
 #   CEB_CHECK_NO_FAN_WRITE=1 ceb-gnrd-check   # do not change fan settings (section 4)
+#   CEB_CHECK_NO_DISRUPT=1   ceb-gnrd-check   # do not kill a service to test its restart
+#   CEB_CHECK_CLEAR_LOGS=1   ceb-gnrd-check   # also run the destructive Redfish ClearLog
+#                                              # test on the board (QEMU always runs it)
 #
 # The script detects whether it runs in QEMU (ast2600-evb) or on the real board and
 # checks each item against what that environment should show:
 #   board  : the hardware is there, so fans, PECI, RTC, eSPI, KCS, POST code, VUART,
 #            intrusion sensor ... must work.  Items that also need the host powered on
 #            are checked only while the chassis is On, otherwise they are "skip".
-#   qemu   : no fans, PECI, board RTC chip or host.  The SoC blocks (eSPI registers,
+#   qemu   : no fans, PECI, board RTC chip or host.  The board checks are *rehearsed*
+#            here ([try ]): the command runs, a wrong value is expected, but a shell
+#            error inside it counts as FAIL, so script bugs show up before the board run.  The SoC blocks (eSPI registers,
 #            KCS, LPC snoop, VUART, intrusion latch) exist there too, so the software
 #            chain around them is checked; the hardware-dependent items are "skip".
 #   both   : software that runs the same everywhere (services, IPMI, Redfish, web,
@@ -23,8 +28,10 @@
 #   /tmp/ceb-gnrd-check/*.log            journal, dmesg, units, D-Bus trees ...
 #   /tmp/ceb-gnrd-check.tar.gz           all of the above in one file
 #
-# The QEMU expectations come from real QEMU runs (the last one: 80 PASS with the old board expectations).  The board expectations have not
+# The QEMU expectations come from real QEMU runs.  The board expectations have not
 # been run on a board yet: a FAIL there is a lead to look at, not a verdict.
+# When anything fails, the failed commands with their output and the relevant logs
+# are printed again at the very end, so the console text alone is enough to report it.
 # Everything runs with BusyBox sh.
 
 PW=${BMC_PASSWORD:-0penBmc}
@@ -32,7 +39,9 @@ DIR=/tmp/ceb-gnrd-check
 rm -rf "$DIR"; mkdir -p "$DIR"
 REPORT=$DIR/report.txt
 : > "$REPORT"
-PASS=0; FAIL=0; SKIP=0
+PASS=0; FAIL=0; SKIP=0; TRYOK=0; TRYNO=0
+FAILS=$DIR/fails.txt
+: > "$FAILS"
 
 say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
 sec() { printf '\n===== %s =====\n' "$*" | tee -a "$REPORT"; }
@@ -61,9 +70,24 @@ host_on() {
 if host_on; then HOST=on; else HOST=off; fi
 say "host chassis power: $HOST"
 
+# run "command": every command gets a time limit so one hung tool cannot block the run
+run() {
+    if command -v timeout >/dev/null 2>&1; then timeout 40 sh -c "$1"; else sh -c "$1"; fi
+}
+
+# note_fail "name" "command" "output" "why": keep the details for the FAIL block at the end
+note_fail() {
+    {
+        printf '### %s\n' "$1"
+        printf '$ %s\n' "$2"
+        [ -n "$4" ] && printf '(%s)\n' "$4"
+        printf '%s\n\n' "$3" | head -n 40 | cut -c1-220
+    } >> "$FAILS"
+}
+
 # check "name" "command" "extended regex the output must match"
 check() {
-    out=$(sh -c "$2" 2>&1)
+    out=$(run "$2" 2>&1)
     printf '\n$ %s\n%s\n' "$2" "$out" >> "$REPORT"
     if printf '%s\n' "$out" | grep -Eq "$3"; then
         PASS=$((PASS+1)); say "[PASS] $1"
@@ -71,25 +95,46 @@ check() {
         FAIL=$((FAIL+1))
         say "[FAIL] $1   expected /$3/"
         say "       got: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)"
+        note_fail "$1" "$2" "$out" "expected /$3/"
     fi
 }
 
 # info "name" "command"   -- only recorded, never fails
 info() {
     printf '\n$ %s\n' "$2" >> "$REPORT"
-    sh -c "$2" >> "$REPORT" 2>&1
+    run "$2" >> "$REPORT" 2>&1
     say "[info] $1"
 }
 
 skip() { SKIP=$((SKIP+1)); say "[skip] $1   ($2)"; }
 
-# board "name" "command" "regex"      -- checked on the board only, qemu: skip
-board() {
-    if [ "$ENV" = board ]; then check "$1" "$2" "$3"; else skip "$1" "board only"; fi
+# Shell mistakes in a command (not a wrong value): these are bugs of this script.
+SHELL_ERR="(sh: .*(not found|syntax error|unexpected|bad number|Illegal option)|command not found|syntax error|bad number|arithmetic syntax|unknown operand|bad substitution|applet not found|unterminated)"
+
+# rehearse "name" "command" "regex"   -- a board check run in QEMU.  The value usually
+# cannot match without the hardware (not counted), but the command itself must run:
+# a shell error here would also break the board run, so that one is a FAIL.
+rehearse() {
+    out=$(run "$2" 2>&1)
+    printf '\n$ %s\n%s\n' "$2" "$out" >> "$REPORT"
+    if printf '%s\n' "$out" | grep -Eq "$SHELL_ERR"; then
+        FAIL=$((FAIL+1)); say "[FAIL] $1   (script error while rehearsing a board check)"
+        say "       got: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)"
+        note_fail "$1" "$2" "$out" "script error while rehearsing a board check"
+    elif printf '%s\n' "$out" | grep -Eq "$3"; then
+        TRYOK=$((TRYOK+1)); say "[try ] $1   (command runs, value matches)"
+    else
+        TRYNO=$((TRYNO+1)); say "[try ] $1   (command runs, value needs the real hardware)"
+    fi
 }
-# board_on "name" "command" "regex"   -- board and host chassis On only
+
+# board "name" "command" "regex"      -- checked on the board; rehearsed in QEMU
+board() {
+    if [ "$ENV" = board ]; then check "$1" "$2" "$3"; else rehearse "$1" "$2" "$3"; fi
+}
+# board_on "name" "command" "regex"   -- board with the host chassis On; rehearsed in QEMU
 board_on() {
-    if [ "$ENV" != board ]; then skip "$1" "board only"
+    if [ "$ENV" != board ]; then rehearse "$1" "$2" "$3"
     elif [ "$HOST" != on ]; then skip "$1" "needs the host powered on"
     else check "$1" "$2" "$3"; fi
 }
@@ -108,6 +153,7 @@ else
     check "no unexpected failed units (obmc-read-eeprom is expected without the FRU EEPROM)" \
           "systemctl --failed --no-legend | grep -v obmc-read-eeprom | wc -l" '^ *0$'
 fi
+check "device tree is the CEB-GNRD one" "cat /proc/device-tree/model" 'CEB-GNRD'
 check "BMC state is Ready" \
       "busctl get-property xyz.openbmc_project.State.BMC /xyz/openbmc_project/state/bmc0 xyz.openbmc_project.State.BMC CurrentBMCState" 'Ready'
 for u in bmcweb phosphor-ipmi-host phosphor-ipmi-net@eth0 xyz.openbmc_project.EntityManager \
@@ -131,6 +177,12 @@ check "critical services restart then quiesce (StartLimit + OnFailure drop-in)" 
       "systemctl show bmcweb -p OnFailure -p Restart" 'quiesce'
 check "BMC reboot after quiesce is limited (ExecCondition drop-in)" \
       "systemctl show phosphor-bmc-quiesce-reboot.service -p ExecCondition" 'reboot-limit'
+if [ -n "$CEB_CHECK_NO_DISRUPT" ]; then
+    skip "a killed service is restarted by systemd" "CEB_CHECK_NO_DISRUPT is set"
+else
+    check "a killed service is restarted by systemd (Restart=always on ceb-gnrd-temp-max)" \
+          "systemctl kill -s KILL ceb-gnrd-temp-max; sleep 8; systemctl is-active ceb-gnrd-temp-max" '^active$'
+fi
 check "BMC local debug console is ttyS4 (UART5)" \
       "cat /proc/cmdline" 'ttyS4'
 
@@ -166,6 +218,23 @@ check "SEL logrotate timer is active" "systemctl is-active ceb-gnrd-sel-logrotat
 check "rsyslog reload works (ExecReload drop-in for Delete all in the web Event logs)" \
       "systemctl show rsyslog -p ExecReload" 'kill'
 check "Redfish event log rule installed" "ls /etc/rsyslog.d/" 'ceb-gnrd-redfish.conf'
+check "IPMI Get Device ID (raw)" "ipmitool raw 0x06 0x01" '^ *[0-9a-f]{2} '
+check "IPMI over LAN (RMCP+, phosphor-ipmi-net) answers" \
+      "ipmitool -I lanplus -H 127.0.0.1 -U root -P $PW mc info" 'Manufacturer ID *: *6659'
+check "IPMI SOL is configured over LAN" \
+      "ipmitool -I lanplus -H 127.0.0.1 -U root -P $PW sol info 1" 'Enabled'
+check "chassis power restore policy is readable" "ipmitool chassis policy list" 'always-off|always-on|previous|no-change'
+check "SEL add through phosphor-sel-logger shows up in ipmitool sel list" \
+      "b=\$(ipmitool sel elist | wc -l); busctl call xyz.openbmc_project.Logging.IPMI /xyz/openbmc_project/Logging/IPMI xyz.openbmc_project.Logging.IPMI IpmiSelAdd ssaybq 'ceb-gnrd-check test event' /xyz/openbmc_project/sensors/temperature/CPU_MAX_TEMP 3 0x00 0xFF 0xFF true 0x0020 >/dev/null; sleep 4; a=\$(ipmitool sel elist | wc -l); echo before=\$b after=\$a; [ \$a -gt \$b ] && echo grew" '^grew$'
+check "a journal entry with REDFISH_MESSAGE_ID reaches /var/log/redfish (rsyslog imjournal + rule)" \
+      "b=\$(cat /var/log/redfish 2>/dev/null | wc -l); python3 -c \"import socket;s=socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM);s.sendto(b'MESSAGE=ceb-gnrd-check test\\nREDFISH_MESSAGE_ID=OpenBMC.0.1.SELEntryAdded\\nREDFISH_MESSAGE_ARGS=ceb-gnrd-check test\\n',  '/run/systemd/journal/socket')\"; sleep 4; a=\$(cat /var/log/redfish 2>/dev/null | wc -l); echo before=\$b after=\$a; [ \$a -gt \$b ] && echo grew" '^grew$'
+if [ "$ENV" = qemu ] || [ -n "$CEB_CHECK_CLEAR_LOGS" ]; then
+    # Deletes the Redfish event log: only in QEMU, or on the board with CEB_CHECK_CLEAR_LOGS=1.
+    check "Redfish ClearLog works (the web Delete all button)" \
+          "curl -sk -o /dev/null -w '%{http_code}' -u root:$PW -X POST -H 'Content-Type: application/json' -d '{}' https://127.0.0.1/redfish/v1/Systems/system/LogServices/EventLog/Actions/LogService.ClearLog" '^20[0-9]$'
+else
+    skip "Redfish ClearLog works" "it deletes the event log; set CEB_CHECK_CLEAR_LOGS=1 to run it on the board"
+fi
 env_info "SEL entries (last 20)" "ipmitool sel list | tail -n 20"
 env_info "FRU" "ipmitool fru print"
 env_info "LAN channel 1" "ipmitool lan print 1"
@@ -195,6 +264,8 @@ else
     check "OEM rejects an invalid fan" "ipmitool raw 0x30 0x02 0x09 0x00 0x00 0x00 2>&1" 'Invalid data field'
 fi
 check "PWM/TACH hwmon device exists" "ls /sys/class/hwmon/*/name | xargs cat" 'pwm|tach|g6'
+check "CPU and DIMM max temp sensors carry the NonRecoverable threshold interface (ceb-gnrd-temp-max)" \
+      "busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias /xyz/openbmc_project/sensors 0 1 com.ctopai.CebGnrd.Threshold.NonRecoverable" 'CPU_MAX_TEMP.*DIMM_MAX_TEMP|DIMM_MAX_TEMP.*CPU_MAX_TEMP'
 env_info "BMC software version objects" "busctl tree xyz.openbmc_project.Software.BMC.Updater --list; busctl tree xyz.openbmc_project.Software.Version --list; busctl call xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper xyz.openbmc_project.ObjectMapper GetSubTreePaths sias /xyz/openbmc_project/software 0 1 xyz.openbmc_project.Software.Version"
 env_info "fan tach / PWM objects" "busctl tree xyz.openbmc_project.fansensor --list; ls /xyz 2>/dev/null; ls /sys/class/hwmon"
 env_info "fan-settings journal" "journalctl -u ceb-gnrd-fan-settings -b --no-pager | tail -n 20"
@@ -209,6 +280,12 @@ check "event log answers" \
 check "Chassis resource answers" "curl -sk -u root:$PW https://127.0.0.1/redfish/v1/Chassis" 'Members'
 check "fan-settings D-Bus method reachable through bmcweb" \
       "curl -sk -u root:$PW -X POST -H 'Content-Type: application/json' -d '{\"data\":[]}' https://127.0.0.1/xyz/openbmc_project/ceb_gnrd/fan_settings/action/GetFans" '"status": *"ok"'
+for p in Systems/system Managers/bmc AccountService SessionService UpdateService; do
+    check "Redfish /redfish/v1/$p answers 200" \
+          "curl -sk -o /dev/null -w '%{http_code}' -u root:$PW https://127.0.0.1/redfish/v1/$p" '^200$'
+done
+check "Redfish Chassis exposes PhysicalSecurity (intrusion sensor)" \
+      "c=\$(curl -sk -u root:$PW https://127.0.0.1/redfish/v1/Chassis | grep -o '/redfish/v1/Chassis/[^\"]*' | head -n 1); echo \$c; curl -sk -u root:$PW https://127.0.0.1\$c | grep -c PhysicalSecurity" '^[1-9]'
 check "web UI is served" "curl -sk https://127.0.0.1/ | head -n 5" '(html|HTML)'
 
 sec "6. Time, RTC, flash layout"
@@ -224,6 +301,11 @@ env_info "u-boot environment" "fw_printenv bootcmd bootargs ipaddr serverip"
 sec "7. Other BMC functions"
 check "fault and identify LEDs exist (sysfs)" "ls /sys/class/leds/" 'fault'
 check "enclosure_fault LED group is on D-Bus" "busctl --system get-property xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted" '^b (true|false)$'
+LEDG="xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted"
+check "enclosure_fault LED group can be asserted" \
+      "busctl --system set-property $LEDG b true; busctl --system get-property $LEDG" '^b true$'
+check "enclosure_fault LED group can be cleared again" \
+      "busctl --system set-property $LEDG b false; busctl --system get-property $LEDG" '^b false$'
 check "network: eth0 exists" "ip -br link show eth0" 'eth0'
 check "network: eth0 link is up with an IPv4 address" "ip -br addr show eth0" 'UP .*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
 check "chassis intrusion service is running" "systemctl is-active xyz.openbmc_project.intrusionsensor" '^active$'
@@ -240,9 +322,26 @@ env_info "GPIO lines in use" "gpioinfo 2>&1 | grep -i -E 'used|BMC_' | head -n 6
 sec "8. Host interface: eSPI, KCS, POST code, VUART / SOL"
 check "obmc-console (SOL) unit exists" "systemctl list-units --all --no-legend 'obmc-console*' | wc -l" '^ *[1-9]'
 check "host VUART is ttyVUART0 (udev symlink, VUART1 0x1E787000)" "ls -l /dev/ttyVUART0" 'ttyVUART0 -> '
+check "VUART tty can be configured (stty)" "stty -F /dev/ttyVUART0 -a" 'speed|baud'
 check "obmc-console@ttyVUART0 is active" "systemctl is-active obmc-console@ttyVUART0" '^active$'
 board "VUART host address is COM1 0x3F8 (QEMU does not model it and reads 0x0)" "cat /sys/devices/platform/ahb/ahb:apb/1e787000.serial/lpc_address" '0x0*3f8'
-check "eSPI Peripheral driver marked the channel ready" "dmesg | grep -i espi" 'SW_READY set'
+check "eSPI driver marked the Peripheral and Virtual Wire channels ready" "dmesg | grep -i espi" 'Virtual Wire channels SW_READY set'
+check "VUART1 is a registered 8250 port at 0x1E787000" "cat /proc/tty/driver/serial" 'mmio:0x1E787000'
+check "obmc-console server listens on its socket" "grep -a obmc-console /proc/net/unix" 'obmc-console'
+board "VUART SerIRQ is IRQ4" "cat /sys/devices/platform/ahb/ahb:apb/1e787000.serial/sirq" '^ *4$'
+# ESPI000 (0x1E6EE000): bit3 VW SW ready, bit1 Peripheral SW ready, bits 27:24 queue resets
+# (active low, must be 1 = running), bits 2 / 0 channel ready (only once the host enabled
+# the channel).  ESPI098: bit23 slave boot status, bit20 slave boot done.  Needs /dev/mem.
+board "ESPI000: VW and Peripheral SW ready set, queues not held in reset" \
+      "v=\$(devmem 0x1e6ee000 32); echo \$v; [ \$(( v & 0x0f00000a )) -eq \$(( 0x0f00000a )) ] && echo ok" '^ok$'
+board "ESPI098: slave boot done and status set (the host waits for them)" \
+      "v=\$(devmem 0x1e6ee098 32); echo \$v; [ \$(( v & 0x00900000 )) -eq \$(( 0x00900000 )) ] && echo ok" '^ok$'
+board_on "ESPI000: VW and Peripheral channels report ready (host enabled them)" \
+      "v=\$(devmem 0x1e6ee000 32); echo \$v; [ \$(( v & 5 )) -eq 5 ] && echo ok" '^ok$'
+board_on "eSPI reset from the host was handled (driver restarted the channels)" \
+      "dmesg | grep -c 'eSPI_RESET# deasserted'" '^ *[1-9]'
+env_info "eSPI registers ESPI000 / 004 / 098 / 0A0 / 0A4 (devmem)" \
+         "for r in 0x1e6ee000 0x1e6ee004 0x1e6ee098 0x1e6ee0a0 0x1e6ee0a4; do echo \$r: \$(devmem \$r 32 2>&1); done"
 check "no eSPI Peripheral errors / aborts since boot" "dmesg | grep -c -E 'PERIF_(NP|PC)_(TX|RX)_(ERR|ABT)'" '^ *0$'
 check "KCS3 device for host IPMI exists" "ls /dev/ipmi-kcs3" 'ipmi-kcs3'
 check "LPC snoop device for port 0x80 exists" "ls /dev/aspeed-lpc-snoop0" 'snoop0'
@@ -282,11 +381,33 @@ tar czf /tmp/ceb-gnrd-check.tar.gz -C /tmp ceb-gnrd-check 2>/dev/null
 sec "Summary"
 say "environment: $ENV, host power: $HOST"
 say "PASS=$PASS  FAIL=$FAIL  SKIP=$SKIP"
+if [ "$ENV" = qemu ]; then
+    say "board checks rehearsed here: $TRYOK match, $TRYNO need the real hardware (only a shell error in them counts as FAIL)"
+fi
 say "report : $REPORT"
 say "bundle : /tmp/ceb-gnrd-check.tar.gz"
 if [ "$ENV" = qemu ]; then
     say "copy it out of QEMU with:  scp -P 2222 root@127.0.0.1:/tmp/ceb-gnrd-check.tar.gz ."
 else
     say "copy it off the board with:  scp root@<bmc-ip>:/tmp/ceb-gnrd-check.tar.gz ."
+fi
+if [ "$FAIL" -gt 0 ]; then
+    # Everything below is printed on the console so it can be copied and pasted as it is.
+    printf '\n===== FAIL details: copy from here to the end =====\n' | tee -a "$REPORT"
+    {
+        echo "env=$ENV ($WHY) host=$HOST kernel=$(uname -r) $(grep -E '^VERSION_ID' /etc/os-release)"
+        echo "FAIL=$FAIL PASS=$PASS"
+        echo
+        cat "$FAILS"
+        echo "### failed units"
+        systemctl --failed --no-legend --no-pager 2>&1 | cut -c1-200
+        echo
+        echo "### journal errors this boot (last 30)"
+        journalctl -b -p err --no-pager 2>&1 | tail -n 30 | cut -c1-220
+        echo
+        echo "### kernel messages about eSPI / VUART / KCS / snoop / failures (last 30)"
+        dmesg 2>&1 | grep -i -E 'espi|vuart|kcs|snoop|fail|error|warn' | tail -n 30 | cut -c1-220
+        echo "===== end of FAIL details ====="
+    } | tee -a "$REPORT"
 fi
 [ "$FAIL" -eq 0 ]
