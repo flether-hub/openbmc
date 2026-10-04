@@ -9,8 +9,10 @@ PercentComplete of the Redfish update task that bmcweb returns, polled every
 the step is named from the progress value that the board's bios-update.sh
 reports (waiting for the server to be off, switching the flash, reading,
 erasing, writing, verifying, returning the flash, force-off pulse, power-on),
-and the page reports success or the step that failed.  A BMC update still ends
-with the BMC reboot and the refresh reminder.
+and the page reports success or the step that failed.  A BMC update ends
+with a time based bar while the BMC reboots and writes its flash; the page
+checks every 5 s whether the BMC answers again and then reloads itself (the
+login page appears when the session did not survive the update).
 
 Regions: for a BIOS package the page lists the regions of the board's fixed
 BIOS flash layout as check boxes.  nac0/nac1 (settings and MAC addresses of
@@ -32,7 +34,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
              :state="getValidationState(v$.file)"
              aria-describedby="image-file-help-block"
              @input="onFileUpload($event)"
-@@ -23,19 +23,113 @@
+@@ -23,19 +23,120 @@
            </form-file>
          </b-form-group>
  
@@ -121,6 +123,13 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        <p class="mt-1 mb-0 small">
 +          {{ $t('pageFirmware.progress.step') }}:
 +          {{ $t('pageFirmware.progress.' + progress.stage) }}
++          <span v-if="progress.remaining">
++            ({{
++              $t('pageFirmware.progress.remaining', {
++                time: progress.remaining,
++              })
++            }})
++          </span>
 +        </p>
 +      </div>
      </div>
@@ -147,10 +156,11 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
    </div>
  </template>
  
-@@ -49,8 +143,125 @@
+@@ -49,8 +150,133 @@
  
  import FormFile from '@/components/Global/FormFile';
  import ModalUpdateFirmware from './FirmwareModalUpdateFirmware';
++import Axios from 'axios';
 +import api from '@/store/api';
  import i18n from '@/i18n';
  
@@ -173,6 +183,13 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +  [100, 'stageBiosDone'],
 +];
 +const POLL_MS = 2000;
++// BMC update: expected time from the staged image to the BMC answering again
++// (reboot, writing kernel/rofs/rwfs to flash, boot), the check interval, how
++// long to wait for the BMC to go down, and when to give up.
++const BMC_REBOOT_ESTIMATE_S = 300;
++const BMC_CHECK_MS = 5000;
++const BMC_WAIT_DOWN_S = 180;
++const BMC_REBOOT_LIMIT_S = 900;
 +// Redfish TaskState values that end a task without success
 +const TASK_FAILED = ['Exception', 'Killed', 'Cancelled', 'Interrupted'];
 +
@@ -273,7 +290,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
  export default {
    components: { FormFile, ModalUpdateFirmware },
    mixins: [BVToastMixin, LoadingBarMixin, VuelidateMixin],
-@@ -77,8 +288,36 @@
+@@ -77,8 +303,39 @@
        file: null,
        isServerPowerOffRequired:
          import.meta.env.VITE_SERVER_OFF_REQUIRED === 'true',
@@ -287,9 +304,12 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        percent: 0,
 +        stage: 'stageUpload',
 +        state: 'running',
++        remaining: '',
 +      },
 +      pollTimer: null,
 +      pollErrors: 0,
++      // BMC reboot after a BMC update: { timer, start, seenDown, checking }
++      reboot: null,
      };
    },
 +  computed: {
@@ -310,12 +330,13 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
    validations() {
      return {
        file: {
-@@ -89,36 +328,195 @@
+@@ -89,35 +346,263 @@
    created() {
      this.$store.dispatch('firmware/getUpdateServiceSettings');
    },
 +  beforeUnmount() {
 +    this.stopPolling();
++    this.stopRebootMonitor();
 +  },
    methods: {
 -    updateFirmware() {
@@ -337,22 +358,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        percent: 0,
 +        stage: 'stageUpload',
 +        state: 'running',
++        remaining: '',
 +      };
-+      // A BMC update ends with a BMC reboot that the page cannot follow, so the
-+      // original reminder to refresh stays; a BIOS update reports its own end.
-+      const timerId =
-+        this.progress.purpose === 'Host'
-+          ? null
-+          : setTimeout(() => {
-+              this.endLoader();
-+              this.infoToast(
-+                i18n.global.t('pageFirmware.toast.verifyUpdateMessage'),
-+                {
-+                  title: i18n.global.t('pageFirmware.toast.verifyUpdate'),
-+                  refreshAction: true,
-+                },
-+              );
-+            }, 360000);
        this.infoToast(i18n.global.t('pageFirmware.toast.updateStartedMessage'), {
          title: i18n.global.t('pageFirmware.toast.updateStarted'),
          timestamp: true,
@@ -362,10 +369,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +      if (this.progress.purpose === 'Host' && this.biosRegions.length) {
 +        image = await this.withRegionSelection(this.file);
 +      }
-+      this.dispatchWorkstationUpload(image, timerId);
++      this.dispatchWorkstationUpload(image);
      },
 -    dispatchWorkstationUpload(timerId) {
-+    dispatchWorkstationUpload(image, timerId) {
++    dispatchWorkstationUpload(image) {
        this.$store
          .dispatch('firmware/uploadFirmware', {
 -          image: this.file,
@@ -383,16 +390,19 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +          const taskUri = response?.data?.['@odata.id'];
 +          this.progress.percent = 0;
 +          this.progress.stage = 'stageVerify';
-+          if (taskUri) this.startPolling(taskUri, timerId);
++          if (taskUri) {
++            this.startPolling(taskUri);
++          } else if (this.progress.purpose !== 'Host') {
++            this.startRebootMonitor(false);
++          }
          })
          .catch(({ message }) => {
            this.endLoader();
            this.errorToast(message);
 -          clearTimeout(timerId);
-+          if (timerId) clearTimeout(timerId);
 +          this.progress.state = 'failed';
-         });
-     },
++        });
++    },
 +    // The package with bios-regions.txt (the regions to write) appended.
 +    async withRegionSelection(file) {
 +      try {
@@ -411,32 +421,27 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        return file;
 +      }
 +    },
-+    startPolling(taskUri, timerId) {
++    startPolling(taskUri) {
 +      this.stopPolling();
 +      this.pollErrors = 0;
-+      this.pollTimer = setInterval(
-+        () => this.pollTask(taskUri, timerId),
-+        POLL_MS,
-+      );
++      this.pollTimer = setInterval(() => this.pollTask(taskUri), POLL_MS);
 +    },
 +    stopPolling() {
 +      if (this.pollTimer) clearInterval(this.pollTimer);
 +      this.pollTimer = null;
 +    },
-+    async pollTask(taskUri, timerId) {
++    async pollTask(taskUri) {
 +      let task;
 +      try {
 +        ({ data: task } = await api.get(taskUri, { cache: false }));
 +        this.pollErrors = 0;
 +      } catch (error) {
-+        // A BMC update reboots the BMC: from then on nothing answers.
-+        if (++this.pollErrors >= 3 || this.progress.purpose === 'BMC') {
++        if (this.progress.purpose === 'Host') {
++          if (++this.pollErrors >= 3) this.finish(false);
++        } else {
++          // A BMC update reboots the BMC: from then on nothing answers.
 +          this.stopPolling();
-+          if (this.progress.purpose !== 'Host') {
-+            this.progress.stage = 'stageBmcReboot';
-+          } else {
-+            this.finish(false, timerId);
-+          }
++          this.startRebootMonitor(true);
 +        }
 +        return;
 +      }
@@ -444,11 +449,17 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +      this.progress.percent = Math.max(0, Math.min(100, percent));
 +      this.progress.stage = this.stageOf(this.progress.percent);
 +      if (task?.TaskState === 'Completed') {
-+        this.progress.percent = 100;
-+        this.progress.stage = this.stageOf(100);
-+        this.finish(true, timerId);
++        if (this.progress.purpose === 'Host') {
++          this.progress.percent = 100;
++          this.progress.stage = this.stageOf(100);
++          this.finish(true);
++        } else {
++          // the image is staged; the BMC now reboots and writes it to flash
++          this.stopPolling();
++          this.startRebootMonitor(false);
++        }
 +      } else if (TASK_FAILED.includes(task?.TaskState)) {
-+        this.finish(false, timerId);
++        this.finish(false);
 +      }
 +    },
 +    stageOf(percent) {
@@ -459,16 +470,95 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        }
 +        return stage;
 +      }
-+      if (percent >= 100) return 'stageBmcReboot';
 +      return percent > 0 ? 'stageBmcStage' : 'stageVerify';
 +    },
-+    finish(success, timerId) {
++    // After a BMC update the BMC reboots, writes the new image to its flash and
++    // boots it.  Show a time based bar (BMC_REBOOT_ESTIMATE_S) while checking
++    // every few seconds whether this BMC answers again, then reload the page;
++    // the login page appears if the session did not survive the update.
++    startRebootMonitor(alreadyDown) {
++      this.stopRebootMonitor();
++      this.reboot = {
++        timer: null,
++        start: Date.now(),
++        seenDown: alreadyDown,
++        checking: false,
++      };
++      this.progress.percent = 0;
++      this.progress.stage = alreadyDown
++        ? 'stageBmcRebooting'
++        : 'stageBmcWaitReboot';
++      this.reboot.timer = setInterval(() => this.checkBmc(), BMC_CHECK_MS);
++    },
++    stopRebootMonitor() {
++      if (this.reboot?.timer) clearInterval(this.reboot.timer);
++      if (this.reboot) this.reboot.timer = null;
++    },
++    async checkBmc() {
++      const reboot = this.reboot;
++      if (!reboot?.timer || reboot.checking) return;
++      const elapsed = (Date.now() - reboot.start) / 1000;
++      this.progress.percent = Math.min(
++        99,
++        Math.round((elapsed * 100) / BMC_REBOOT_ESTIMATE_S),
++      );
++      const left = Math.max(0, Math.round(BMC_REBOOT_ESTIMATE_S - elapsed));
++      this.progress.remaining = `${Math.floor(left / 60)}:${String(
++        left % 60,
++      ).padStart(2, '0')}`;
++      if (elapsed > BMC_REBOOT_LIMIT_S) {
++        this.stopRebootMonitor();
++        this.finish(false);
++        return;
++      }
++      reboot.checking = true;
++      let up = false;
++      try {
++        // the service root needs no login; skip the page's own interceptors
++        await Axios.get('/redfish/v1', {
++          timeout: BMC_CHECK_MS - 500,
++          params: { t: Date.now() },
+         });
++        up = true;
++      } catch (error) {
++        up = false;
++      }
++      reboot.checking = false;
++      if (!reboot.timer) return;
++      if (!up) {
++        reboot.seenDown = true;
++        this.progress.stage = 'stageBmcRebooting';
++      } else if (reboot.seenDown) {
++        this.stopRebootMonitor();
++        this.progress.percent = 100;
++        this.progress.remaining = '';
++        this.progress.stage = 'stageBmcBack';
++        this.progress.state = 'done';
++        this.endLoader();
++        setTimeout(() => window.location.reload(), 3000);
++      } else if (elapsed > BMC_WAIT_DOWN_S) {
++        // still answering long after the image was staged: no reboot happened
++        this.stopRebootMonitor();
++        this.progress.percent = 100;
++        this.progress.remaining = '';
++        this.progress.state = 'done';
++        this.endLoader();
++        this.infoToast(
++          i18n.global.t('pageFirmware.toast.verifyUpdateMessage'),
++          {
++            title: i18n.global.t('pageFirmware.toast.verifyUpdate'),
++            refreshAction: true,
++          },
++        );
++      }
++    },
++    finish(success) {
 +      this.stopPolling();
 +      this.endLoader();
 +      this.progress.state = success ? 'done' : 'failed';
++      this.progress.remaining = '';
 +      const stage = this.$t('pageFirmware.progress.' + this.progress.stage);
 +      if (this.progress.purpose === 'Host') {
-+        if (timerId) clearTimeout(timerId);
 +        if (success) {
 +          this.successToast(this.$t('pageFirmware.progress.biosDone'));
 +        } else {
@@ -478,7 +568,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        }
 +        this.$store.dispatch('firmware/getFirmwareInformation');
 +      } else if (!success) {
-+        if (timerId) clearTimeout(timerId);
 +        this.errorToast(this.$t('pageFirmware.progress.failedAt', { stage }));
 +      }
 +    },
@@ -517,11 +606,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        (r) => r.name === this.nacConfirm.name,
 +      );
 +      if (region) region.selected = true;
-+    },
+     },
      onSubmitUpload() {
        this.v$.$touch();
-       if (this.v$.$invalid) return;
-@@ -127,6 +525,7 @@
+@@ -127,6 +612,7 @@
      onFileUpload(file) {
        this.file = file;
        this.v$.file.$touch();
@@ -569,7 +657,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
            console.log(error);
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -375,6 +375,38 @@
+@@ -375,6 +375,41 @@
              "verifySwitchMessage": "Refresh the application to verify the running and backup images switched.",
              "verifyUpdate": "Verify update",
              "verifyUpdateMessage": "Refresh the application to verify firmware updated successfully"
@@ -594,7 +682,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +            "stagePowerOn": "Powering the server on",
 +            "stageBiosDone": "BIOS update completed",
 +            "stageBmcStage": "Writing the image to the update area",
-+            "stageBmcReboot": "The BMC reboots to apply the update; refresh the page in a few minutes",
++            "stageBmcWaitReboot": "Image staged, waiting for the BMC to reboot",
++            "stageBmcRebooting": "The BMC is writing the new firmware and rebooting; the page reloads when it is back",
++            "stageBmcBack": "The BMC is back, reloading the page",
++            "remaining": "about {time} left",
 +            "biosDone": "BIOS update completed and the server was powered on.",
 +            "failedAt": "Firmware update failed at: {stage}"
 +        },
