@@ -12,7 +12,17 @@ the BMC firmware is changed for this.
 | BIOS flash (SPI1, 64 MiB) and its select GPIO | `run-qemu.sh` (`~/qemu-bios.bin`); `host-sim.py` warns when the BMC takes the flash while the host is on |
 | NC-SI port (MAC3, eth1) | `run-qemu.sh` (QEMU answers NC-SI, DHCP 10.0.2.x) |
 | 4 temperature sensors (I2C7 0x48-0x4b) | `run-qemu.sh` (tmp105), `host-sim.py` command `temp` |
-| FRU EEPROM (I2C11 0x50-0x53, 1 KiB) | `run-qemu.sh`, block 0x50 kept in `~/qemu-ceb-gnrd/fru.bin` |
+| FRU EEPROM (I2C11 0x50-0x53, 1 KiB) | `run-qemu.sh`, the four blocks kept in `~/qemu-ceb-gnrd/fru0.bin` .. `fru3.bin` |
+| PSU slots (I2C8 0x58-0x5a) | `run-qemu.sh`, QEMU's adm1272 PMBus model at 0x58 and 0x59 (presence detection and PMBus driver; the readings are not those of a CRPS supply), 0x5a empty |
+
+To load a FRU image into the EEPROM (the BMC reads it at boot), on the BMC:
+
+```
+cat fru.bin > /sys/bus/i2c/devices/10-0050/eeprom
+```
+
+then reboot the BMC.  `ipmitool fru write` does not write the EEPROM on
+OpenBMC, it only updates the inventory.
 | PCIe slot I2C buses (I2C1-6) | `run-qemu.sh`, a 256-byte EEPROM at 0x50 on each |
 
 Not emulated, test on the board: eSPI (VUART/SOL, KCS, POST codes, Virtual Wire),
