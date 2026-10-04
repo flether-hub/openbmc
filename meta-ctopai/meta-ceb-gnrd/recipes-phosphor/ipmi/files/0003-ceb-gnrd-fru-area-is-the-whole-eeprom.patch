@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] storagecommands: report the whole EEPROM as the FRU inventory area
+
+Get FRU Inventory Area Info returned the length of the stored FRU image, so
+'ipmitool fru write' truncated any larger image to that length.  Report the
+size of the EEPROM (from sysfs) and pad the image read from fru-device with
+0xFF up to it.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+diff --git a/dbus-sdr/storagecommands.cpp b/dbus-sdr/storagecommands.cpp
+index 6de099c..5377635 100644
+--- a/dbus-sdr/storagecommands.cpp
++++ b/dbus-sdr/storagecommands.cpp
+@@ -31,6 +31,8 @@
+ #include <sdbusplus/timer.hpp>
+ #include <xyz/openbmc_project/ObjectMapper/common.hpp>
+ 
++#include <array>
++#include <cstdio>
+ #include <filesystem>
+ #include <fstream>
+ #include <functional>
+@@ -233,6 +235,18 @@ void replaceCacheFru(
+     recalculateHashes();
+ }
+ 
++// Size of the EEPROM behind a FRU device, 0 if it has no eeprom file.  The FRU
++// inventory area is the whole EEPROM, not only the part holding the image.
++static size_t getEepromSize(uint16_t bus, uint8_t addr)
++{
++    std::array<char, 64> path{};
++    std::snprintf(path.data(), path.size(), "/sys/bus/i2c/devices/%u-%04x/eeprom",
++                  static_cast<unsigned>(bus), static_cast<unsigned>(addr));
++    std::error_code ec;
++    auto size = std::filesystem::file_size(path.data(), ec);
++    return ec ? 0 : static_cast<size_t>(size);
++}
++
+ std::pair<ipmi::Cc, std::vector<uint8_t>> getFru(ipmi::Context::ptr ctx,
+                                                  uint8_t devId)
+ {
+@@ -265,6 +279,15 @@ std::pair<ipmi::Cc, std::vector<uint8_t>> getFru(ipmi::Context::ptr ctx,
+         return {ipmi::ccResponseError, {}};
+     }
+ 
++    // Report the whole EEPROM as the FRU inventory area, so that a FRU image
++    // larger than the stored one can be written (ipmitool never writes more than
++    // the reported size).
++    size_t eepromSize = getEepromSize(cacheBus, cacheAddr);
++    if (fru.size() < eepromSize)
++    {
++        fru.resize(eepromSize, 0xFF);
++    }
++
+     fruCache.clear();
+     lastDevId = devId;
+     fruCache = fru;

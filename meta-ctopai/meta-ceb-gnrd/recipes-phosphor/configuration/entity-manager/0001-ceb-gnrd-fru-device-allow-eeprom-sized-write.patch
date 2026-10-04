@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] fru-device: allow a FRU image as large as the EEPROM
+
+WriteFru rejected every image larger than 512 bytes.  For a device with an
+eeprom file allow the size of the EEPROM.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+diff --git a/src/fru_device/fru_device.cpp b/src/fru_device/fru_device.cpp
+index 46e8ce2..228b150 100644
+--- a/src/fru_device/fru_device.cpp
++++ b/src/fru_device/fru_device.cpp
+@@ -1043,7 +1043,18 @@ bool writeFruByteData(bool is16Bit, int file, uint8_t address, uint16_t index,
+ bool writeFRU(uint8_t bus, uint8_t address, const std::vector<uint8_t>& fru)
+ {
+     std::flat_map<std::string, std::string, std::less<>> tmp;
+-    if (fru.size() > maxFruSize)
++    // an EEPROM can hold an image as large as the EEPROM itself
++    size_t maxSize = maxFruSize;
++    if (hasEepromFile(bus, address))
++    {
++        std::error_code sizeEc;
++        auto eepromSize = fs::file_size(getEepromPath(bus, address), sizeEc);
++        if (!sizeEc && eepromSize > maxSize)
++        {
++            maxSize = static_cast<size_t>(eepromSize);
++        }
++    }
++    if (fru.size() > maxSize)
+     {
+         lg2::error("Invalid fru.size() during writeFRU");
+         return false;
