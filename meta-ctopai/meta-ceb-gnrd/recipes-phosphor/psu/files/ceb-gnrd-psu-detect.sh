@@ -10,6 +10,9 @@
 BUS=7
 ADDRS="0x58 0x59 0x5a"
 POLL_SECONDS=5
+# A module is only removed after this many polls in a row without an answer
+# (one failed transfer, e.g. while the module is busy, must not drop it).
+MISS_LIMIT=3
 SYSFS=/sys/bus/i2c/devices/i2c-$BUS
 
 log() {
@@ -18,8 +21,11 @@ log() {
 }
 
 # STATUS_BYTE (0x78) is mandatory in PMBus, so a present module always answers.
+# -f: once the pmbus driver is bound to the module, i2cget without it refuses
+# with "Device or resource busy", which looked like a missing module and made
+# this monitor delete and re-create the device on every poll.
 is_present() {
-    i2cget -y "$BUS" "$1" 0x78 b >/dev/null 2>&1
+    i2cget -f -y "$BUS" "$1" 0x78 b >/dev/null 2>&1
 }
 
 # Bus address in the form used by the kernel device directory, e.g. 7-0058.
@@ -57,10 +63,17 @@ do
         else
             have=0
         fi
+        miss=$(cat "/tmp/ceb-gnrd-psu-miss$addr" 2>/dev/null || echo 0)
         if is_present "$addr"; then
+            echo 0 > "/tmp/ceb-gnrd-psu-miss$addr"
             [ "$have" -eq 0 ] && add_device "$addr"
-        else
-            [ "$have" -eq 1 ] && remove_device "$addr"
+        elif [ "$have" -eq 1 ]; then
+            miss=$((miss + 1))
+            echo "$miss" > "/tmp/ceb-gnrd-psu-miss$addr"
+            if [ "$miss" -ge "$MISS_LIMIT" ]; then
+                echo 0 > "/tmp/ceb-gnrd-psu-miss$addr"
+                remove_device "$addr"
+            fi
         fi
     done
     sleep "$POLL_SECONDS"
