@@ -35,11 +35,21 @@ Platform features
   The Linux and U-Boot device trees must keep these offsets; `netupdate` in
   U-Boot (below) uses the same numbers.
 * There is a single image bank. The web UI does not show a backup image.
-* A normal firmware update does not clear `rwfs`. An update that does clear it
-  keeps the whitelist in `recipes-phosphor/initrdscripts/files/ceb-gnrd-whitelist`
-  (time zone, host name, SSH host keys, web certificates, fan settings). A
-  factory reset clears everything. MAC addresses live in the U-Boot
-  environment partition, which updates do not touch.
+* A firmware update (`*.static.mtd.tar`: image-u-boot, image-kernel,
+  image-rofs, image-rwfs) is staged in `/run/initramfs` and written by the
+  initramfs update script when the BMC reboots:
+  * kernel and rofs are replaced;
+  * rwfs is rewritten, and only the files of the OpenBMC whitelist (users and
+    passwords, IPMI password, network, DNS, settings) and of
+    `recipes-phosphor/initrdscripts/files/ceb-gnrd-whitelist` (time zone, host
+    name, SSH host keys, web certificates, fan settings) are restored; the SEL
+    and event logs are lost;
+  * U-Boot is **not** rewritten (`ceb-gnrd-update-skip-u-boot.sh`, a power loss
+    while it is written would leave a board that does not boot); create
+    `/run/initramfs/update-u-boot` before the reboot to update it on purpose;
+  * the U-Boot environment (MAC addresses) is not part of the package.
+
+  A factory reset clears everything in rwfs.
 
 ### U-Boot
 
