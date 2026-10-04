@@ -8,6 +8,8 @@
 #     sh bmc-hw-dump.sh            dump into /tmp/bmc-hw-<host>-<time>.tar.gz
 #     sh bmc-hw-dump.sh -s         also scan the I2C buses (i2cdetect -r, see below)
 #     sh bmc-hw-dump.sh -n         do not read the known ceb-gnrd chips over I2C
+#     sh bmc-hw-dump.sh -a         print every text file to the console too (long)
+#   The checklist (ceb-gnrd-checklist.txt) is always printed at the end.
 #     sh bmc-hw-dump.sh -o DIR     write the dump directory under DIR instead of /tmp
 #   On the PC (Linux or Git Bash), after copying both archives off the BMCs:
 #     sh bmc-hw-dump.sh compare OLD.tar.gz NEW.tar.gz
@@ -83,11 +85,13 @@ fi
 # ---------------------------------------------------------------- options
 SCAN=0
 PROBE=1
+ALL=0
 OUTBASE=/tmp
 while [ $# -gt 0 ]; do
     case "$1" in
         -s) SCAN=1 ;;
         -n) PROBE=0 ;;
+        -a) ALL=1 ;;
         -o) shift; OUTBASE=${1:?-o needs a directory} ;;
         -h|--help) sed -n '2,/^PATH=/p' "$0" | sed '$d'; exit 0 ;;
         *) echo "unknown option $1 (see -h)" >&2; exit 2 ;;
@@ -954,3 +958,18 @@ say ""
 say "done: $OUTBASE/$NAME.tar.gz  ($(du -k "$OUTBASE/$NAME.tar.gz" 2>/dev/null | cut -f1) KiB)"
 say "copy it off the BMC (scp) and compare with the dump of the other firmware:"
 say "  sh bmc-hw-dump.sh compare OLD.tar.gz NEW.tar.gz"
+
+# Console output for copy and paste: the checklist always, every file with -a.
+if [ "$ALL" = 1 ]; then
+    for t in "$OUT"/*.txt; do
+        case "$t" in */dt-properties.txt|*/dmesg.txt|*/journal.txt) continue ;; esac
+        echo
+        echo "################################################ ${t##*/}"
+        cat "$t"
+    done
+    echo
+    echo "(dt-properties.txt, dmesg.txt and journal.txt are only in the archive)"
+fi
+echo
+echo "################################################ ceb-gnrd-checklist.txt"
+cat "$CK"
