@@ -1,0 +1,165 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] sensors: show the IPMI discrete sensors
+
+The board's IPMI discrete sensors (boot progress, OS status, boot attempts,
+PSU redundancy) are built from D-Bus properties, not D-Bus sensors, so Redfish
+and the sensor table do not list them.  Add a table below the sensor table that
+reads those properties through the D-Bus REST interface every 10 s.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
+---
+--- /dev/null
++++ b/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
+@@ -0,0 +1,113 @@
++<template>
++  <page-section :section-title="$t('pageSensors.discrete.title')">
++    <b-table
++      responsive="md"
++      hover
++      thead-class="table-light"
++      :items="rows"
++      :fields="fields"
++      :busy="loading"
++      data-test-id="sensors-table-discrete"
++    />
++  </page-section>
++</template>
++
++<script>
++import PageSection from '@/components/Global/PageSection';
++import api from '@/store/api';
++
++// CEB-GNRD: the IPMI discrete sensors (ceb-gnrd-ipmi-sensors/config.yaml) are not
++// D-Bus sensors, so Redfish and the sensor table above do not list them.  Read
++// the D-Bus properties they are built from (D-Bus REST) and show their state.
++const SENSORS = [
++  {
++    name: 'Boot_Progress',
++    descriptionKey: 'bootProgress',
++    path: '/xyz/openbmc_project/state/host0',
++    property: 'BootProgress',
++  },
++  {
++    name: 'OS_Status',
++    descriptionKey: 'osStatus',
++    path: '/xyz/openbmc_project/state/host0',
++    property: 'OperatingSystemState',
++  },
++  {
++    name: 'Boot_Attempts',
++    descriptionKey: 'bootAttempts',
++    path: '/xyz/openbmc_project/state/host0',
++    property: 'AttemptsLeft',
++  },
++  {
++    name: 'PSU_Redundancy',
++    descriptionKey: 'psuRedundancy',
++    path: '/xyz/openbmc_project/control/power_supply_redundancy',
++    property: 'PowerSupplyRedundancyEnabled',
++  },
++];
++const REFRESH_MS = 10000;
++
++// D-Bus enum values are shown by their last part (...ProgressStages.OSStart)
++function stateText(value) {
++  if (value === undefined || value === null) return '--';
++  if (typeof value === 'string') return value.split('.').pop();
++  return String(value);
++}
++
++export default {
++  components: { PageSection },
++  data() {
++    return {
++      values: {},
++      loading: true,
++      timer: null,
++    };
++  },
++  computed: {
++    fields() {
++      return [
++        { key: 'name', label: this.$t('pageSensors.table.name') },
++        {
++          key: 'description',
++          label: this.$t('pageSensors.discrete.description'),
++        },
++        { key: 'state', label: this.$t('pageSensors.discrete.state') },
++      ];
++    },
++    rows() {
++      return SENSORS.map((sensor) => ({
++        name: sensor.name,
++        description: this.$t('pageSensors.discrete.' + sensor.descriptionKey),
++        state: stateText(this.values[sensor.path]?.[sensor.property]),
++      }));
++    },
++  },
++  created() {
++    this.load();
++    this.timer = setInterval(() => this.load(), REFRESH_MS);
++  },
++  beforeUnmount() {
++    clearInterval(this.timer);
++  },
++  methods: {
++    async load() {
++      const paths = [...new Set(SENSORS.map((sensor) => sensor.path))];
++      const values = {};
++      await Promise.all(
++        paths.map((path) =>
++          api
++            .get(path, { cache: false })
++            .then(({ data }) => {
++              values[path] = data?.data || {};
++            })
++            .catch(() => {
++              values[path] = {};
++            }),
++        ),
++      );
++      this.values = values;
++      this.loading = false;
++    },
++  },
++};
++</script>
+--- a/src/views/HardwareStatus/Sensors/Sensors.vue
++++ b/src/views/HardwareStatus/Sensors/Sensors.vue
+@@ -102,6 +102,8 @@
+         </b-table>
+       </b-col>
+     </b-row>
++    <!-- CEB-GNRD: IPMI discrete sensors (not Redfish sensors) -->
++    <discrete-sensors />
+   </b-container>
+ </template>
+ 
+@@ -113,6 +115,7 @@
+ import TableToolbar from '@/components/Global/TableToolbar';
+ import TableToolbarExport from '@/components/Global/TableToolbarExport';
+ import TableCellCount from '@/components/Global/TableCellCount';
++import DiscreteSensors from './DiscreteSensors';
+ 
+ import { useTableSelection } from '@/components/Composables/useTableSelection';
+ import { useLoadingBar } from '@/components/Composables/useLoadingBar';
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -918,6 +918,15 @@
+             "status": "Status",
+             "upperWarning": "Upper warning",
+             "upperCritical": "Upper critical"
++        },
++        "discrete": {
++            "title": "Discrete sensors",
++            "description": "Description",
++            "state": "State",
++            "bootProgress": "Host boot progress",
++            "osStatus": "Operating system / BIOS boot status",
++            "bootAttempts": "Boot attempts left",
++            "psuRedundancy": "PSU redundancy enabled"
+         }
+     },
+     "pageSerialOverLan": {

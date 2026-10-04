@@ -14,6 +14,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0012-ceb-gnrd-policies-remove-vtpm-rtad.patch \
     file://0013-ceb-gnrd-firmware-update-progress.patch \
     file://0014-ceb-gnrd-firmware-cards-side-by-side.patch \
+    file://0015-ceb-gnrd-sensors-discrete-table.patch \
     file://zh-CN.json \
 "
 

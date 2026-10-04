@@ -7,7 +7,9 @@
   serviceInterface: org.freedesktop.DBus.Properties
   readingType: eventdata2
   mutability: Mutability::Write|Mutability::Read
-  sensorNamePattern: nameProperty
+  # IPMI sensor names are at most 16 characters; the property name
+  # (e.g. OperatingSystemState) would be cut, so name the sensor explicitly.
+  sensorName: Boot_Progress
   interfaces:
     xyz.openbmc_project.State.Boot.Progress:
       BootProgress:
@@ -39,7 +41,7 @@
   serviceInterface: org.freedesktop.DBus.Properties
   readingType: assertion
   mutability: Mutability::Write|Mutability::Read
-  sensorNamePattern: nameProperty
+  sensorName: OS_Status
   interfaces:
     xyz.openbmc_project.State.OperatingSystem.Status:
       OperatingSystemState:
@@ -71,7 +73,7 @@
   serviceInterface: org.freedesktop.DBus.Properties
   readingType: assertion
   mutability: Mutability::Write|Mutability::Read
-  sensorNamePattern: nameProperty
+  sensorName: Boot_Attempts
   interfaces:
     xyz.openbmc_project.Control.Boot.RebootAttempts:
       AttemptsLeft:
@@ -87,7 +89,7 @@
   serviceInterface: org.freedesktop.DBus.Properties
   readingType: assertion
   mutability: Mutability::Read
-  sensorNamePattern: nameProperty
+  sensorName: PSU_Redundancy
   interfaces:
     xyz.openbmc_project.Control.PowerSupplyRedundancy:
       PowerSupplyRedundancyEnabled:
