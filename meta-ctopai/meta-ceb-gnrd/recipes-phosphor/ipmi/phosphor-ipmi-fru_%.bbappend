@@ -2,6 +2,10 @@ inherit obmc-phosphor-systemd
 
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/${PN}:"
 
+# IPMI Write FRU Data ("ipmitool fru write") also writes the FRU EEPROM, not
+# only the inventory (IPMI spec: it writes the FRU storage).
+SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-write-fru-data-to-eeprom.patch"
+
 # Board-specific FRU YAML configuration provider (mirrors sbp1-yaml-config).
 DEPENDS:append:ceb-gnrd = " ceb-gnrd-yaml-config"
 
