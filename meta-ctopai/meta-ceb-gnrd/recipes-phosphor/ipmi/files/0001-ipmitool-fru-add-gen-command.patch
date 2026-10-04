@@ -23,7 +23,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  } /* ipmi_fru_help() */
  
  /* ipmi_fru_read_internal_use -  print internal use are in hex or file
-@@ -4576,6 +4576,376 @@
+@@ -4576,6 +4576,385 @@
  	return 0;
  }
  
@@ -184,6 +184,15 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +
 +	if (len > FRU_GEN_FIELD_MAX) {
 +		len = FRU_GEN_FIELD_MAX;
++	}
++	if (len == 1) {
++		/* type/length 0xC1 is the end-of-fields marker, so a one character
++		 * value cannot be stored as it is: pad it with a space (readers strip
++		 * trailing spaces) */
++		area[used++] = 0xC0 | 2;
++		area[used++] = (uint8_t)str[0];
++		area[used++] = ' ';
++		return used;
 +	}
 +	/* type 11b (8-bit ASCII) in the top two bits, length in the low six */
 +	area[used++] = (uint8_t)(0xC0 | len);
@@ -400,7 +409,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  int
  ipmi_fru_main(struct ipmi_intf * intf, int argc, char ** argv)
  {
-@@ -4801,6 +5171,13 @@
+@@ -4801,6 +5180,13 @@
  			rc = ipmi_fru_get_multirec(intf, fru_id, argc, argv);
  		}
  	}
