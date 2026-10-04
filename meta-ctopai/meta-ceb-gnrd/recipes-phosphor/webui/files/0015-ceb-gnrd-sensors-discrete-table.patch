@@ -3,8 +3,8 @@ From: CEB-GNRD board layer <bmc@localhost>
 Date: Sun, 4 Oct 2026 00:00:00 +0000
 Subject: [PATCH] sensors: show the IPMI discrete sensors
 
-The board's IPMI discrete sensors (boot progress, OS status, boot attempts,
-PSU redundancy) are built from D-Bus properties, not D-Bus sensors, so Redfish
+The board's IPMI discrete sensors (boot progress, OS status, boot attempts)
+are built from D-Bus properties, not D-Bus sensors, so Redfish
 and the sensor table do not list them.  Add a table below the sensor table that
 reads those properties through the D-Bus REST interface every 10 s.
 
@@ -12,7 +12,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 ---
 --- /dev/null
 +++ b/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,107 @@
 +<template>
 +  <page-section :section-title="$t('pageSensors.discrete.title')">
 +    <b-table
@@ -52,12 +52,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 +    descriptionKey: 'bootAttempts',
 +    path: '/xyz/openbmc_project/state/host0',
 +    property: 'AttemptsLeft',
-+  },
-+  {
-+    name: 'PSU_Redundancy',
-+    descriptionKey: 'psuRedundancy',
-+    path: '/xyz/openbmc_project/control/power_supply_redundancy',
-+    property: 'PowerSupplyRedundancyEnabled',
 +  },
 +];
 +const REFRESH_MS = 10000;
@@ -147,7 +141,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
  import { useLoadingBar } from '@/components/Composables/useLoadingBar';
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -918,6 +918,15 @@
+@@ -918,6 +918,14 @@
              "status": "Status",
              "upperWarning": "Upper warning",
              "upperCritical": "Upper critical"
@@ -158,8 +152,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 +            "state": "State",
 +            "bootProgress": "Host boot progress",
 +            "osStatus": "Operating system / BIOS boot status",
-+            "bootAttempts": "Boot attempts left",
-+            "psuRedundancy": "PSU redundancy enabled"
++            "bootAttempts": "Boot attempts left"
          }
      },
      "pageSerialOverLan": {
