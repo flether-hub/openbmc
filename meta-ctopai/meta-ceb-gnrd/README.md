@@ -437,7 +437,7 @@ should appear after flashing the updated image.
 * DCMI power reading and temperature reading are not configured
   (`power_reading.json` has no path, `dcmi_sensors.json` is empty), so those
   commands return nothing useful.
-* `ipmitool fru gen [file]` (a board patch to ipmitool) interactively builds a FRU image (default `fru.bin`) with chassis, board and product info areas: each prompt shows the format and a placeholder default. Write it with `ipmitool fru write 0 fru.bin`.  FRU 0 is the board EEPROM (chassis type 0x17 or 0x11 gives FRU ID 0); `ceb-gnrd-fru` writes a default FRU into a blank EEPROM at boot and rescans fru-device after each write.
+* `ipmitool fru gen [file]` (a board patch to ipmitool) interactively builds a FRU image (default `fru.bin`) with chassis, board and product info areas: each prompt shows the format and a default (Enter keeps it, `-` gives an empty field). Write it with `ipmitool fru write 0 fru.bin`.  FRU 0 is the board EEPROM (chassis type 0x17 or 0x11 gives FRU ID 0); `ceb-gnrd-fru` writes a default FRU into a blank EEPROM at boot and rescans fru-device after each write.
 * SSH is dropbear (port 22); `openssh-sftp-server` and `openssh-scp` are
   installed, so `scp` works with both the SFTP-based and the legacy protocol.
 

@@ -1,22 +1,25 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CEB-GNRD board layer <bmc@localhost>
 Date: Sun, 4 Oct 2026 00:00:00 +0000
-Subject: [PATCH] storagecommands: FRU commands go through FruDevice, with the whole EEPROM as FRU area
+Subject: [PATCH] storagecommands: make the FRU commands work with FruDevice for a whole EEPROM
 
-Get FRU Inventory Area Info returned the length of the stored FRU image, so
-'ipmitool fru write' truncated any larger image to that length.  Report the
-size of the EEPROM (from sysfs) and pad the image read from fru-device with
-0xFF up to it.
-
-The phosphor-ipmi-fru handlers register the same three FRU commands at the
-same priority, and the one registered last wins (library load order); Write
-FRU Data was handled by them, keeping the data in /tmp and never reaching
-FruDevice.  Register these handlers at prioOemBase.
+- Get FRU Inventory Area Info returned the length of the stored FRU image, so
+  'ipmitool fru write' truncated any larger image to that length.  Report the
+  size of the EEPROM (from sysfs) and pad the image read from fru-device with
+  0xFF up to it.
+- The phosphor-ipmi-fru handlers register the same three FRU commands at the
+  same priority, and the one registered last wins (library load order); Write
+  FRU Data was handled by them, keeping the data in /tmp and never reaching
+  FruDevice.  Register these handlers at prioOemBase.
+- ipmitool writes the image area by area.  A write ending exactly where the
+  last area starts was taken for the end of the image (the area length is not
+  known yet), so a half updated FRU was written.  Only decide that the image
+  is complete once the length of the last area is known.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
 diff --git a/dbus-sdr/storagecommands.cpp b/dbus-sdr/storagecommands.cpp
-index 6de099c..e339452 100644
+index 6de099c..7801b3c 100644
 --- a/dbus-sdr/storagecommands.cpp
 +++ b/dbus-sdr/storagecommands.cpp
 @@ -31,6 +31,8 @@
@@ -63,7 +66,21 @@ index 6de099c..e339452 100644
      fruCache.clear();
      lastDevId = devId;
      fruCache = fru;
-@@ -1258,17 +1281,22 @@ void registerStorageFunctions()
+@@ -479,7 +502,12 @@ ipmi::RspType<uint8_t> ipmiStorageWriteFruData(
+                 areaLength *= 8; // it is in multiples of 8 bytes
+             }
+         }
+-        if (lastWriteAddr >= (areaLength + lastRecordStart))
++        // The length of the last area is known once its length byte has been
++        // written.  Until then areaLength is 0, and a write that merely ends
++        // at the start of the last area (ipmitool writes the image area by
++        // area) must not be taken for the end of the image: it would write a
++        // half updated FRU.
++        if (areaLength != 0 && lastWriteAddr >= (areaLength + lastRecordStart))
+         {
+             atEnd = true;
+         }
+@@ -1258,17 +1286,22 @@ void registerStorageFunctions()
      createTimers();
      startMatch();
  

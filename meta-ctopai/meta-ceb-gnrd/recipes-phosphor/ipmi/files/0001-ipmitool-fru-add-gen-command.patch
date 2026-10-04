@@ -23,7 +23,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  } /* ipmi_fru_help() */
  
  /* ipmi_fru_read_internal_use -  print internal use are in hex or file
-@@ -4576,6 +4576,385 @@
+@@ -4576,6 +4576,396 @@
  	return 0;
  }
  
@@ -63,7 +63,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +}
 +
 +/* fru_gen_ask_text - ask for one text field; Enter (or end of input) keeps
-+ *                    the default placeholder
++ *                    the default, "-" gives an empty field
 + */
 +static void
 +fru_gen_ask_text(const char *label, const char *hint, const char *def,
@@ -75,10 +75,15 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	int ok;
 +
 +	for (;;) {
-+		printf("%s\n    format : %s\n    default: %s\n    > ", label, hint, def);
++		printf("%s\n    format : %s\n    default: %s\n    > ", label, hint,
++			   def[0] != '\0' ? def : "(empty)");
 +		fflush(stdout);
 +		if (fru_gen_read_line(line, sizeof(line)) != 0 || line[0] == '\0') {
 +			snprintf(out, FRU_GEN_FIELD_MAX + 1, "%s", def);
++			return;
++		}
++		if (strcmp(line, "-") == 0) {
++			out[0] = '\0';
 +			return;
 +		}
 +		len = strlen(line);
@@ -139,8 +144,11 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	return era * 146097 + doe - 719468;
 +}
 +
++/* default board manufacturing date */
++#define FRU_GEN_DEF_DATE    "2026-10-01"
++
 +/* returns the board manufacturing time in minutes since 1996-01-01 00:00 UTC,
-+ * 0 means unspecified */
++ * 0 means unspecified; Enter keeps the default date, "-" is unspecified */
 +static uint32_t
 +fru_gen_ask_date(void)
 +{
@@ -153,10 +161,12 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +		mi = 0;
 +		printf("Board manufacturing date and time (UTC)\n"
 +			   "    format : YYYY-MM-DD or YYYY-MM-DD HH:MM, year 1996 or later,\n"
-+			   "             or leave empty for unspecified\n"
-+			   "    default: unspecified\n    > ");
++			   "             or - for unspecified\n"
++			   "    default: " FRU_GEN_DEF_DATE "\n    > ");
 +		fflush(stdout);
 +		if (fru_gen_read_line(line, sizeof(line)) != 0 || line[0] == '\0') {
++			snprintf(line, sizeof(line), "%s", FRU_GEN_DEF_DATE);
++		} else if (strcmp(line, "-") == 0) {
 +			return 0;
 +		}
 +		n = sscanf(line, "%d-%d-%d %d:%d", &y, &mo, &d, &h, &mi);
@@ -237,11 +247,11 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	area[used++] = fru_gen_ask_chassis_type();
 +	fru_gen_ask_text("Chassis part number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "CHASSIS_PART_NUMBER", text);
++					 "51-XXXX-XX", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Chassis serial number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "CHASSIS_SERIAL_NUMBER", text);
++					 "SN-XXX", text);
 +	used = fru_gen_add_field(area, used, text);
 +	return fru_gen_end_area(area, used);
 +}
@@ -263,23 +273,23 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	area[used++] = (uint8_t)((date >> 16) & 0xFF);
 +	fru_gen_ask_text("Board manufacturer",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "MANUFACTURER_NAME", text);
++					 "CTOPAI", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board product name",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "PRODUCT_NAME", text);
++					 "CEB-GNR-D", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board serial number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "BOARD_SERIAL_NUMBER", text);
++					 "SN-XXX", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board part number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "BOARD_PART_NUMBER", text);
++					 "91-XXXX-XX", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board FRU file ID",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "FRU_FILE_ID", text);
++					 "", text);
 +	used = fru_gen_add_field(area, used, text);
 +	return fru_gen_end_area(area, used);
 +}
@@ -296,31 +306,31 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	area[used++] = 0;       /* language code: English */
 +	fru_gen_ask_text("Product manufacturer",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "MANUFACTURER_NAME", text);
++					 "", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product name",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "PRODUCT_NAME", text);
++					 "", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product part or model number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "PRODUCT_PART_NUMBER", text);
++					 "", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product version",
 +					 "text, printable ASCII, up to 63 characters, for example V1.0",
-+					 "PRODUCT_VERSION", text);
++					 "v1.0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product serial number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "PRODUCT_SERIAL_NUMBER", text);
++					 "SN-XXX", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product asset tag",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "PRODUCT_ASSET_TAG", text);
++					 "Xeon6-SOC", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product FRU file ID",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "FRU_FILE_ID", text);
++					 "0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	return fru_gen_end_area(area, used);
 +}
@@ -332,7 +342,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +			"fru gen [file] - interactively create a FRU image (default file:\n"
 +			"                 fru.bin) with chassis, board and product info\n"
 +			"                 areas.  Every field is explained and has a\n"
-+			"                 placeholder default; press Enter to keep it.\n"
++			"                 default; press Enter to keep it, or enter - for an\n"
++			"                 empty field.\n"
 +			"                 Write the result with 'fru write <id> <file>'.");
 +}
 +
@@ -409,7 +420,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  int
  ipmi_fru_main(struct ipmi_intf * intf, int argc, char ** argv)
  {
-@@ -4801,6 +5180,13 @@
+@@ -4801,6 +5191,13 @@
  			rc = ipmi_fru_get_multirec(intf, fru_id, argc, argv);
  		}
  	}
