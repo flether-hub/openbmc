@@ -306,15 +306,15 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	area[used++] = 0;       /* language code: English */
 +	fru_gen_ask_text("Product manufacturer",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "", text);
++					 "CTOPAI", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product name",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "", text);
++					 "CEB-GNR-D", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product part or model number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "", text);
++					 "93-XXXX-XX", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product version",
 +					 "text, printable ASCII, up to 63 characters, for example V1.0",
