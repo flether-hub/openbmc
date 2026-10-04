@@ -9,7 +9,7 @@
 
 BUS=7
 ADDRS="0x58 0x59 0x5a"
-POLL_SECONDS=5
+POLL_SECONDS=30
 # A module is only removed after this many polls in a row without an answer
 # (one failed transfer, e.g. while the module is busy, must not drop it).
 MISS_LIMIT=3
