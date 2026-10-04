@@ -36,35 +36,3 @@
           0x19:
             type: string
             set: xyz.openbmc_project.State.Boot.Progress.ProgressStages.PrimaryProcInit
-0x05:
-  entityID: 0x23
-  entityInstance: 1
-  sensorType: 0x1F
-  path: /xyz/openbmc_project/state/host0
-  sensorReadingType: 0x6F
-  serviceInterface: org.freedesktop.DBus.Properties
-  readingType: assertion
-  mutability: Mutability::Write|Mutability::Read
-  sensorName: OS_Status
-  interfaces:
-    xyz.openbmc_project.State.OperatingSystem.Status:
-      OperatingSystemState:
-        Offsets:
-          0x02:
-            assert: xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.PXEBoot
-            type: string
-          0x06:
-            assert: xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.BootComplete
-            type: string
-          0x04:
-            assert: xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.CDROMBoot
-            type: string
-          0x01:
-            assert: xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.CBoot
-            type: string
-          0x03:
-            assert: xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.DiagBoot
-            type: string
-          0x05:
-            assert: xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.ROMBoot
-            type: string

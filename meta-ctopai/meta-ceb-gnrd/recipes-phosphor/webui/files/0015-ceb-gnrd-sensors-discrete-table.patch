@@ -3,18 +3,17 @@ From: CEB-GNRD board layer <bmc@localhost>
 Date: Sun, 4 Oct 2026 00:00:00 +0000
 Subject: [PATCH] sensors: analog and discrete sensors on two tabs
 
-The board's IPMI discrete sensors (boot progress, OS status)
-are built from D-Bus properties, not D-Bus sensors, so Redfish and the sensor
-table do not list them.  Show the sensor page as two tabs: "Analog sensors"
-(the existing Redfish sensor table, shown by default) and "Discrete sensors",
-a table that reads those properties through the D-Bus REST interface every
-10 s.
+The board's IPMI discrete sensor (host boot progress) is built from a D-Bus
+property, not a D-Bus sensor, so Redfish and the sensor table do not list it.
+Show the sensor page as two tabs: "Analog sensors" (the existing Redfish sensor
+table, shown by default) and "Discrete sensors", a table that reads that
+property through the D-Bus REST interface every 10 s.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 ---
 --- /dev/null
 +++ b/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,93 @@
 +<template>
 +  <div>
 +    <b-table
@@ -41,12 +40,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 +    descriptionKey: 'bootProgress',
 +    path: '/xyz/openbmc_project/state/host0',
 +    property: 'BootProgress',
-+  },
-+  {
-+    name: 'OS_Status',
-+    descriptionKey: 'osStatus',
-+    path: '/xyz/openbmc_project/state/host0',
-+    property: 'OperatingSystemState',
 +  },
 +];
 +const REFRESH_MS = 10000;
@@ -148,7 +141,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
  import { useLoadingBar } from '@/components/Composables/useLoadingBar';
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -918,6 +918,16 @@
+@@ -918,6 +918,15 @@
              "status": "Status",
              "upperWarning": "Upper warning",
              "upperCritical": "Upper critical"
@@ -160,8 +153,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 +        "discrete": {
 +            "description": "Description",
 +            "state": "State",
-+            "bootProgress": "Host boot progress",
-+            "osStatus": "Operating system / BIOS boot status"
++            "bootProgress": "Host boot progress"
          }
      },
      "pageSerialOverLan": {

@@ -926,8 +926,7 @@
     "discrete": {
       "description": "说明",
       "state": "状态",
-      "bootProgress": "主机启动进度",
-      "osStatus": "操作系统 / BIOS 启动状态"
+      "bootProgress": "主机启动进度"
     }
   },
   "pageSerialOverLan": {
