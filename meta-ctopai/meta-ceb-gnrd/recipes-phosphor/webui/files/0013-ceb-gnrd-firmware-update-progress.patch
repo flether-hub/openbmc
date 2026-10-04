@@ -189,7 +189,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +const BMC_REBOOT_ESTIMATE_S = 600;
 +const BMC_CHECK_MS = 5000;
 +const BMC_WAIT_DOWN_S = 180;
-+const BMC_REBOOT_LIMIT_S = 1500;
++const BMC_REBOOT_LIMIT_S = 900;
 +// Redfish TaskState values that end a task without success
 +const TASK_FAILED = ['Exception', 'Killed', 'Cancelled', 'Interrupted'];
 +
