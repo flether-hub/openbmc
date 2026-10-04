@@ -54,5 +54,6 @@ RDEPENDS:${PN}-system = " \
     ceb-gnrd-psu-detect \
     ceb-gnrd-rtc-sync \
     ceb-gnrd-boot-progress \
+    ceb-gnrd-fru-present \
     ceb-gnrd-sel-logrotate \
     "
