@@ -42,7 +42,8 @@ Platform features
   * rwfs is rewritten, and only the files of the OpenBMC whitelist (users and
     passwords, IPMI password, network, DNS, settings) and of
     `recipes-phosphor/initrdscripts/files/ceb-gnrd-whitelist` (time zone, host
-    name, SSH host keys, web certificates, fan settings) are restored; the SEL
+    name, SSH host keys, web certificates, fan settings, bmcweb data with the
+    web login sessions) are restored, so the web page stays logged in; the SEL
     and event logs are lost;
   * U-Boot is **not** rewritten (`ceb-gnrd-update-skip-u-boot.sh`, a power loss
     while it is written would leave a board that does not boot); create

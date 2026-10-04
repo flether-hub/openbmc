@@ -1,8 +1,9 @@
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 # Settings that must also survive a firmware update which cleans the rwfs:
-# timezone, hostname, SSH host keys, web certificates and the CEB-GNRD fan
-# settings.  A factory reset still erases everything (nothing is saved).
+# timezone, hostname, SSH host keys, web certificates, the CEB-GNRD fan settings
+# and the bmcweb data (web login sessions, Redfish service UUID), so the web page
+# stays logged in across a BMC update.  A factory reset still erases everything.
 SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-whitelist file://ceb-gnrd-update-skip-u-boot.sh"
 
 do_install:append:ceb-gnrd() {
