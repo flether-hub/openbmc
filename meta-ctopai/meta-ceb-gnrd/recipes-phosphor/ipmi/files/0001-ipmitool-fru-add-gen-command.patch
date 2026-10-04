@@ -23,11 +23,15 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  } /* ipmi_fru_help() */
  
  /* ipmi_fru_read_internal_use -  print internal use are in hex or file
-@@ -4576,6 +4576,396 @@
+@@ -4576,6 +4576,492 @@
  	return 0;
  }
  
 +/* ---- "fru gen": interactive generation of a FRU image ---- */
++
++#include <stdio.h>
++#include <unistd.h>
++#include <termios.h>
 +
 +/* worst case: product area, 3 + 7 fields of 64 bytes + end marker + padding */
 +#define FRU_GEN_AREA_MAX    512
@@ -62,30 +66,119 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	return 0;
 +}
 +
-+/* fru_gen_ask_text - ask for one text field; Enter (or end of input) keeps
-+ *                    the default, "-" gives an empty field
++/* fru_gen_input - read the value of one prompt with the default already in
++ *                  the input line, so that it can be edited (Backspace, Ctrl-U);
++ *                  Enter accepts the line.  Without a terminal a line is read
++ *                  as it is: an empty line keeps the default, "-" is empty.
++ *
++ * returns -1 at end of input (the default is returned), 0 otherwise
++ */
++static int
++fru_gen_input(const char *def, char *buf, size_t size)
++{
++	struct termios old;
++	struct termios raw;
++	size_t len;
++	int esc = 0;
++	unsigned char c;
++
++	if (!isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &old) != 0) {
++		if (fru_gen_read_line(buf, size) != 0) {
++			snprintf(buf, size, "%s", def);
++			return -1;
++		}
++		if (buf[0] == '\0') {
++			snprintf(buf, size, "%s", def);
++		} else if (strcmp(buf, "-") == 0) {
++			buf[0] = '\0';
++		}
++		return 0;
++	}
++
++	raw = old;
++	raw.c_lflag &= ~(ICANON | ECHO | ISIG);
++	raw.c_cc[VMIN] = 1;
++	raw.c_cc[VTIME] = 0;
++	tcsetattr(STDIN_FILENO, TCSANOW, &raw);
++
++	snprintf(buf, size, "%s", def);
++	len = strlen(buf);
++	fputs(buf, stdout);
++	fflush(stdout);
++	for (;;) {
++		if (read(STDIN_FILENO, &c, 1) != 1 || c == '\r' || c == '\n') {
++			break;
++		}
++		if (esc) {
++			/* swallow an escape sequence (cursor keys and the like) */
++			if (esc == 1) {
++				esc = (c == '[' || c == 'O') ? 2 : 0;
++			} else if (c >= 0x40 && c <= 0x7e) {
++				esc = 0;
++			}
++			continue;
++		}
++		if (c == 0x1b) {
++			esc = 1;
++		} else if (c == 0x03) {
++			/* Ctrl-C: give the terminal back and stop */
++			tcsetattr(STDIN_FILENO, TCSANOW, &old);
++			putchar('\n');
++			exit(1);
++		} else if (c == 0x7f || c == 0x08) {
++			if (len > 0) {
++				buf[--len] = '\0';
++				fputs("\b \b", stdout);
++			}
++		} else if (c == 0x15) {
++			while (len > 0) {
++				buf[--len] = '\0';
++				fputs("\b \b", stdout);
++			}
++		} else if (c >= 0x20 && c <= 0x7e && len + 1 < size) {
++			buf[len++] = (char)c;
++			buf[len] = '\0';
++			putchar(c);
++		}
++		fflush(stdout);
++	}
++	tcsetattr(STDIN_FILENO, TCSANOW, &old);
++	putchar('\n');
++	return 0;
++}
++
++/* fru_gen_show_default - end of a prompt: the input line follows.  On a
++ *                        terminal the default is in the line itself, otherwise
++ *                        it is shown here.
++ */
++static void
++fru_gen_show_default(const char *def)
++{
++	if (!isatty(STDIN_FILENO)) {
++		printf("    default: %s\n", def[0] != '\0' ? def : "(empty)");
++	}
++	printf("    > ");
++	fflush(stdout);
++}
++
++/* fru_gen_ask_text - ask for one text field, the default is in the input line
++ *                    and can be edited
 + */
 +static void
 +fru_gen_ask_text(const char *label, const char *hint, const char *def,
 +				 char *out)
 +{
 +	char line[256];
++	char prev[256];
++	const char *cur = def;
 +	size_t i;
 +	size_t len;
 +	int ok;
 +
 +	for (;;) {
-+		printf("%s\n    format : %s\n    default: %s\n    > ", label, hint,
-+			   def[0] != '\0' ? def : "(empty)");
-+		fflush(stdout);
-+		if (fru_gen_read_line(line, sizeof(line)) != 0 || line[0] == '\0') {
-+			snprintf(out, FRU_GEN_FIELD_MAX + 1, "%s", def);
-+			return;
-+		}
-+		if (strcmp(line, "-") == 0) {
-+			out[0] = '\0';
-+			return;
-+		}
++		printf("%s\n    format : %s\n", label, hint);
++		fru_gen_show_default(cur);
++		fru_gen_input(cur, line, sizeof(line));
 +		len = strlen(line);
 +		ok = (len <= FRU_GEN_FIELD_MAX);
 +		for (i = 0; ok && i < len; i++) {
@@ -99,6 +192,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +		}
 +		printf("    invalid: printable ASCII only, at most %d characters\n",
 +			   FRU_GEN_FIELD_MAX);
++		memcpy(prev, line, sizeof(prev));
++		cur = prev;
 +	}
 +}
 +
@@ -113,12 +208,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +		printf("Chassis type\n"
 +			   "    format : a number, decimal or 0x-hex (SMBIOS chassis type)\n"
 +			   "             0x01 other, 0x03 desktop, 0x07 tower,\n"
-+			   "             0x11 main server chassis, 0x17 rack mount chassis\n"
-+			   "    default: 0x17\n    > ");
-+		fflush(stdout);
-+		if (fru_gen_read_line(line, sizeof(line)) != 0 || line[0] == '\0') {
-+			return 0x17;
-+		}
++			   "             0x11 main server chassis, 0x17 rack mount chassis\n");
++		fru_gen_show_default("0x17");
++		fru_gen_input("0x17", line, sizeof(line));
 +		v = strtoul(line, &end, 0);
 +		if (end != line && *end == '\0' && v <= 0xFF) {
 +			return (uint8_t)v;
@@ -148,11 +240,13 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +#define FRU_GEN_DEF_DATE    "2026-10-01"
 +
 +/* returns the board manufacturing time in minutes since 1996-01-01 00:00 UTC,
-+ * 0 means unspecified; Enter keeps the default date, "-" is unspecified */
++ * 0 means unspecified (an empty input) */
 +static uint32_t
 +fru_gen_ask_date(void)
 +{
 +	char line[64];
++	char prev[64];
++	const char *cur = FRU_GEN_DEF_DATE;
 +	int y, mo, d, h, mi, n;
 +	long minutes;
 +
@@ -161,12 +255,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +		mi = 0;
 +		printf("Board manufacturing date and time (UTC)\n"
 +			   "    format : YYYY-MM-DD or YYYY-MM-DD HH:MM, year 1996 or later,\n"
-+			   "             or - for unspecified\n"
-+			   "    default: " FRU_GEN_DEF_DATE "\n    > ");
-+		fflush(stdout);
-+		if (fru_gen_read_line(line, sizeof(line)) != 0 || line[0] == '\0') {
-+			snprintf(line, sizeof(line), "%s", FRU_GEN_DEF_DATE);
-+		} else if (strcmp(line, "-") == 0) {
++			   "             or empty for unspecified\n");
++		fru_gen_show_default(cur);
++		fru_gen_input(cur, line, sizeof(line));
++		if (line[0] == '\0') {
 +			return 0;
 +		}
 +		n = sscanf(line, "%d-%d-%d %d:%d", &y, &mo, &d, &h, &mi);
@@ -180,6 +272,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +			}
 +		}
 +		printf("    invalid: use YYYY-MM-DD or YYYY-MM-DD HH:MM (year 1996 or later)\n");
++		memcpy(prev, line, sizeof(prev));
++		cur = prev;
 +	}
 +}
 +
@@ -342,8 +436,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +			"fru gen [file] - interactively create a FRU image (default file:\n"
 +			"                 fru.bin) with chassis, board and product info\n"
 +			"                 areas.  Every field is explained and has a\n"
-+			"                 default; press Enter to keep it, or enter - for an\n"
-+			"                 empty field.\n"
++			"                 default, which is in the input line: edit it, or\n"
++			"                 press Enter to keep it (without a terminal Enter\n"
++			"                 keeps the default and - gives an empty field).\n"
 +			"                 Write the result with 'fru write <id> <file>'.");
 +}
 +
@@ -371,7 +466,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	FILE *fp;
 +
 +	printf("Creating FRU image %s.\n"
-+		   "Press Enter to keep the default value shown for each field.\n",
++		   "The default of each field is in the input line: edit it with\n"
++		   "Backspace and type, or press Enter to keep it.\n",
 +		   filename);
 +	clen = fru_gen_chassis_area(chassis);
 +	blen = fru_gen_board_area(board);
@@ -420,7 +516,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  int
  ipmi_fru_main(struct ipmi_intf * intf, int argc, char ** argv)
  {
-@@ -4801,6 +5191,13 @@
+@@ -4801,6 +5287,13 @@
  			rc = ipmi_fru_get_multirec(intf, fru_id, argc, argv);
  		}
  	}
