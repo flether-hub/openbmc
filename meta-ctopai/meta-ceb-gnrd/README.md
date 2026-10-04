@@ -96,6 +96,12 @@ Platform features
   x86-power-control generates that pulse without taking GPIO ownership away
   from the daemon. Confirm GPIO polarity and verify power sequencing on the
   assembled board.
+  The flash is written with `flashcp -v` (BusyBox; `flashrom` if it is
+  missing).  Each step writes a percentage to the update's
+  `ActivationProgress` object, bmcweb turns it into the PercentComplete of the
+  Redfish update task, and the web firmware page (patch 0013) shows a progress
+  bar with the step name; the numbers are listed in `bios-update.sh` and must
+  match the table in that patch.
 * **phosphor-ipmi-flash**: IPMI in-band firmware update via BLOB protocol
   (host-bios targets enabled when `flash_bios` PACKAGECONFIG is active).
 * **Host/chassis state management**: `MACHINE_FEATURES` includes

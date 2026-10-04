@@ -12,6 +12,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0010-ceb-gnrd-firmware-single-bank.patch \
     file://0011-ceb-gnrd-dumps-bmc-only.patch \
     file://0012-ceb-gnrd-policies-remove-vtpm-rtad.patch \
+    file://0013-ceb-gnrd-firmware-update-progress.patch \
     file://zh-CN.json \
 "
 

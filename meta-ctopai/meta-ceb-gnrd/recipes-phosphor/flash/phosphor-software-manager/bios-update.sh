@@ -17,6 +17,29 @@ if [[ $# -ne 1 || ! -d "$1" ]]; then
     exit 2
 fi
 
+# Progress for the web page: the image directory is /tmp/images/<version id>, and the
+# software manager's object of this update is /xyz/openbmc_project/software/<id>.
+# Its ActivationProgress.Progress (0-100) becomes PercentComplete of the Redfish
+# update task, which the firmware page polls; the page names the step from the
+# value, so keep these numbers in sync with FirmwareFormUpdate.vue (0013 patch):
+#   20 started (set by the software manager)   21/22 waiting for the host to be off
+#   25 switching the BIOS flash to the BMC     28 detecting the flash
+#   30-45 erasing   45-80 writing   80-88 verifying
+#   89 returning the flash to the BIOS         92 force-off power-button pulse
+#   95 powering the host on                    100 done (set by the software manager)
+# bmcweb cancels the task after 5 minutes without a progress change, so long waits
+# change the value at least once a minute.  Run by hand (no such object) the
+# updates are silently ignored.
+readonly SOFTWARE_PATH="/xyz/openbmc_project/software/$(basename "$1")"
+LAST_PROGRESS=""
+set_progress() {
+    [[ "$1" == "$LAST_PROGRESS" ]] && return 0
+    LAST_PROGRESS=$1
+    busctl set-property xyz.openbmc_project.Software.BMC.Updater "$SOFTWARE_PATH" \
+        xyz.openbmc_project.Software.ActivationProgress Progress y "$1" \
+        >/dev/null 2>&1 || true
+}
+
 power_status() {
     local state
     state=$(busctl get-property xyz.openbmc_project.State.Chassis \
@@ -39,6 +62,7 @@ wait_for_host_off() {
         return 1
     }
 
+    set_progress 21
     if [[ "$state" == on ]]; then
         local message="BIOS update is waiting for the user to shut down the host."
         echo "$message"
@@ -61,6 +85,10 @@ wait_for_host_off() {
             stable=0
         fi
 
+        # keep the web progress (and the Redfish task) alive while waiting
+        if (( elapsed > 0 && elapsed % 60 == 0 )); then
+            set_progress $(( LAST_PROGRESS == 21 ? 22 : 21 ))
+        fi
         if (( elapsed > 0 && elapsed % 30 == 0 )); then
             local message="BIOS update still waiting for host shutdown (${elapsed}s elapsed)."
             echo "$message"
@@ -175,15 +203,37 @@ trap cleanup EXIT
 
 echo "BIOS update started at $(date); host is confirmed off."
 echo "Selecting BMC ownership of BIOS flash via $FLASH_SELECT_GPIO"
+set_progress 25
 set_flash_select 1
 sleep 5
+set_progress 28
 reprobe_bios_spi_nor
 sleep 1
 MTD_DEV=$(find_bios_mtd)
 echo "Writing $IMAGE_FILE to AST2600 SPI1 partition $MTD_DEV"
-flashrom -p "linux_mtd:dev=${MTD_DEV}" -w "$IMAGE_FILE"
+set_progress 30
+if command -v flashcp >/dev/null 2>&1; then
+    # flashcp -v prints "\rErasing block: n/N (p%) ", then "Writing kb" and
+    # "Verifying kb"; map the three phases onto 30-45, 45-80 and 80-88.
+    flashcp -v "$IMAGE_FILE" "$MTD_DEV" |
+    while IFS= read -r -d $'\r' line || [[ -n "$line" ]]; do
+        case "$line" in
+            *Erasing*)   base=30; span=15 ;;
+            *Writing*)   base=45; span=35 ;;
+            *Verifying*) base=80; span=8 ;;
+            *) continue ;;
+        esac
+        [[ "$line" =~ \(([0-9]+)%\) ]] || continue
+        set_progress $(( base + span * BASH_REMATCH[1] / 100 ))
+    done
+else
+    # linux_mtd takes the MTD device number, not the device path
+    flashrom -p "linux_mtd:dev=${MTD_DEV#/dev/mtd}" -w "$IMAGE_FILE"
+fi
+set_progress 88
 
 echo "BIOS flash completed; restoring BIOS ownership."
+set_progress 89
 set_flash_select 0
 sleep 1
 HOST_POWER=$(power_status) || {
@@ -198,6 +248,7 @@ else
         wait_for_host_off
     fi
     echo "Issuing the required ForceOff power-button pulse while host is already in S5/Off."
+    set_progress 92
     busctl call xyz.openbmc_project.State.Chassis \
         /xyz/openbmc_project/state/chassis0 \
         xyz.openbmc_project.State.Chassis ForcePowerButtonOff
@@ -208,5 +259,6 @@ else
     }
 fi
 echo "Requesting host power-on through the OpenBMC chassis power manager."
+set_progress 95
 request_power_transition On on
 echo "BIOS update and host power cycle completed at $(date)."

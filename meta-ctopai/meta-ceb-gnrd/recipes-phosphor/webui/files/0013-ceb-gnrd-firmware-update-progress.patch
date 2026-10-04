@@ -1,0 +1,386 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] firmware: show the update progress and the current step
+
+Show a progress bar under the update form: the upload percentage, then the
+PercentComplete of the Redfish update task that bmcweb returns, polled every
+2 s.  The package MANIFEST tells a BIOS update from a BMC update.  For the BIOS
+the step is named from the progress value that the board's bios-update.sh
+reports (waiting for the server to be off, switching the flash, erasing,
+writing, verifying, returning the flash, force-off pulse, power-on), and the
+page reports success or the step that failed.  A BMC update still ends with
+the BMC reboot and the refresh reminder.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
+---
+--- a/src/views/Operations/Firmware/FirmwareFormUpdate.vue
++++ b/src/views/Operations/Firmware/FirmwareFormUpdate.vue
+@@ -10,7 +10,7 @@
+         >
+           <form-file
+             id="image-file"
+-            :disabled="isPageDisabled"
++            :disabled="isPageDisabled || isUpdateRunning"
+             :state="getValidationState(v$.file)"
+             aria-describedby="image-file-help-block"
+             @input="onFileUpload($event)"
+@@ -27,11 +27,47 @@
+           data-test-id="firmware-button-startUpdate"
+           type="submit"
+           variant="primary"
+-          :disabled="isPageDisabled"
++          :disabled="isPageDisabled || isUpdateRunning"
+         >
+           {{ $t('pageFirmware.form.updateFirmware.startUpdate') }}
+         </b-btn>
+       </b-form>
++
++      <!-- CEB-GNRD: update progress (upload, then the Redfish update task) -->
++      <div
++        v-if="progress.visible"
++        class="mt-3"
++        data-test-id="firmware-update-progress"
++      >
++        <p class="mb-1 fw-bold">
++          {{ progressTitle }}
++        </p>
++        <div
++          class="progress"
++          style="height: 1.5rem"
++          role="progressbar"
++          :aria-valuenow="progress.percent"
++          aria-valuemin="0"
++          aria-valuemax="100"
++        >
++          <div
++            class="progress-bar"
++            :class="{
++              'progress-bar-striped progress-bar-animated':
++                progress.state === 'running',
++              'bg-success': progress.state === 'done',
++              'bg-danger': progress.state === 'failed',
++            }"
++            :style="{ width: progress.percent + '%' }"
++          >
++            {{ progress.percent }}%
++          </div>
++        </div>
++        <p class="mt-1 mb-0 small">
++          {{ $t('pageFirmware.progress.step') }}:
++          {{ $t('pageFirmware.progress.' + progress.stage) }}
++        </p>
++      </div>
+     </div>
+ 
+     <!-- Modals -->
+@@ -49,8 +85,30 @@
+ 
+ import FormFile from '@/components/Global/FormFile';
+ import ModalUpdateFirmware from './FirmwareModalUpdateFirmware';
++import api from '@/store/api';
+ import i18n from '@/i18n';
+ 
++// CEB-GNRD: steps of the BIOS update, by the progress value that
++// bios-update.sh writes (keep in sync with that script).  Each entry is the
++// first percentage of the step.
++const BIOS_STEPS = [
++  [0, 'stageVerify'],
++  [20, 'stageStarted'],
++  [21, 'stageWaitHostOff'],
++  [25, 'stageSelectFlash'],
++  [28, 'stageDetectFlash'],
++  [30, 'stageErase'],
++  [45, 'stageWrite'],
++  [80, 'stageCheck'],
++  [89, 'stageReturnFlash'],
++  [92, 'stageForceOff'],
++  [95, 'stagePowerOn'],
++  [100, 'stageBiosDone'],
++];
++const POLL_MS = 2000;
++// Redfish TaskState values that end a task without success
++const TASK_FAILED = ['Exception', 'Killed', 'Cancelled', 'Interrupted'];
++
+ export default {
+   components: { FormFile, ModalUpdateFirmware },
+   mixins: [BVToastMixin, LoadingBarMixin, VuelidateMixin],
+@@ -77,8 +135,30 @@
+       file: null,
+       isServerPowerOffRequired:
+         import.meta.env.VITE_SERVER_OFF_REQUIRED === 'true',
++      progress: {
++        visible: false,
++        // 'Host' (BIOS) or 'BMC', read from the MANIFEST in the package
++        purpose: null,
++        percent: 0,
++        stage: 'stageUpload',
++        state: 'running',
++      },
++      pollTimer: null,
++      pollErrors: 0,
+     };
+   },
++  computed: {
++    isUpdateRunning() {
++      return this.progress.visible && this.progress.state === 'running';
++    },
++    progressTitle() {
++      if (this.progress.purpose === 'Host')
++        return this.$t('pageFirmware.progress.titleBios');
++      if (this.progress.purpose === 'BMC')
++        return this.$t('pageFirmware.progress.titleBmc');
++      return this.$t('pageFirmware.progress.title');
++    },
++  },
+   validations() {
+     return {
+       file: {
+@@ -89,19 +169,34 @@
+   created() {
+     this.$store.dispatch('firmware/getUpdateServiceSettings');
+   },
++  beforeUnmount() {
++    this.stopPolling();
++  },
+   methods: {
+-    updateFirmware() {
++    async updateFirmware() {
+       this.startLoader();
+-      const timerId = setTimeout(() => {
+-        this.endLoader();
+-        this.infoToast(
+-          i18n.global.t('pageFirmware.toast.verifyUpdateMessage'),
+-          {
+-            title: i18n.global.t('pageFirmware.toast.verifyUpdate'),
+-            refreshAction: true,
+-          },
+-        );
+-      }, 360000);
++      this.progress = {
++        visible: true,
++        purpose: await this.readManifestPurpose(this.file),
++        percent: 0,
++        stage: 'stageUpload',
++        state: 'running',
++      };
++      // A BMC update ends with a BMC reboot that the page cannot follow, so the
++      // original reminder to refresh stays; a BIOS update reports its own end.
++      const timerId =
++        this.progress.purpose === 'Host'
++          ? null
++          : setTimeout(() => {
++              this.endLoader();
++              this.infoToast(
++                i18n.global.t('pageFirmware.toast.verifyUpdateMessage'),
++                {
++                  title: i18n.global.t('pageFirmware.toast.verifyUpdate'),
++                  refreshAction: true,
++                },
++              );
++            }, 360000);
+       this.infoToast(i18n.global.t('pageFirmware.toast.updateStartedMessage'), {
+         title: i18n.global.t('pageFirmware.toast.updateStarted'),
+         timestamp: true,
+@@ -112,13 +207,130 @@
+       this.$store
+         .dispatch('firmware/uploadFirmware', {
+           image: this.file,
++          onUploadProgress: (event) => {
++            if (event.total) {
++              this.progress.percent = Math.round(
++                (event.loaded * 100) / event.total,
++              );
++            }
++          },
++        })
++        .then((response) => {
++          // bmcweb answers with the update task (TaskService/Tasks/<n>)
++          const taskUri = response?.data?.['@odata.id'];
++          this.progress.percent = 0;
++          this.progress.stage = 'stageVerify';
++          if (taskUri) this.startPolling(taskUri, timerId);
+         })
+         .catch(({ message }) => {
+           this.endLoader();
+           this.errorToast(message);
+-          clearTimeout(timerId);
++          if (timerId) clearTimeout(timerId);
++          this.progress.state = 'failed';
+         });
+     },
++    startPolling(taskUri, timerId) {
++      this.stopPolling();
++      this.pollErrors = 0;
++      this.pollTimer = setInterval(
++        () => this.pollTask(taskUri, timerId),
++        POLL_MS,
++      );
++    },
++    stopPolling() {
++      if (this.pollTimer) clearInterval(this.pollTimer);
++      this.pollTimer = null;
++    },
++    async pollTask(taskUri, timerId) {
++      let task;
++      try {
++        ({ data: task } = await api.get(taskUri, { cache: false }));
++        this.pollErrors = 0;
++      } catch (error) {
++        // A BMC update reboots the BMC: from then on nothing answers.
++        if (++this.pollErrors >= 3 || this.progress.purpose === 'BMC') {
++          this.stopPolling();
++          if (this.progress.purpose !== 'Host') {
++            this.progress.stage = 'stageBmcReboot';
++          } else {
++            this.finish(false, timerId);
++          }
++        }
++        return;
++      }
++      const percent = Number(task?.PercentComplete ?? this.progress.percent);
++      this.progress.percent = Math.max(0, Math.min(100, percent));
++      this.progress.stage = this.stageOf(this.progress.percent);
++      if (task?.TaskState === 'Completed') {
++        this.progress.percent = 100;
++        this.progress.stage = this.stageOf(100);
++        this.finish(true, timerId);
++      } else if (TASK_FAILED.includes(task?.TaskState)) {
++        this.finish(false, timerId);
++      }
++    },
++    stageOf(percent) {
++      if (this.progress.purpose === 'Host') {
++        let stage = BIOS_STEPS[0][1];
++        for (const [from, name] of BIOS_STEPS) {
++          if (percent >= from) stage = name;
++        }
++        return stage;
++      }
++      if (percent >= 100) return 'stageBmcReboot';
++      return percent > 0 ? 'stageBmcStage' : 'stageVerify';
++    },
++    finish(success, timerId) {
++      this.stopPolling();
++      this.endLoader();
++      this.progress.state = success ? 'done' : 'failed';
++      const stage = this.$t('pageFirmware.progress.' + this.progress.stage);
++      if (this.progress.purpose === 'Host') {
++        if (timerId) clearTimeout(timerId);
++        if (success) {
++          this.successToast(this.$t('pageFirmware.progress.biosDone'));
++        } else {
++          this.errorToast(
++            this.$t('pageFirmware.progress.failedAt', { stage }),
++          );
++        }
++        this.$store.dispatch('firmware/getFirmwareInformation');
++      } else if (!success) {
++        if (timerId) clearTimeout(timerId);
++        this.errorToast(this.$t('pageFirmware.progress.failedAt', { stage }));
++      }
++    },
++    // The update package is a tar file; its MANIFEST says what it updates
++    // (purpose=...VersionPurpose.Host for the BIOS, .BMC for the BMC).
++    async readManifestPurpose(file) {
++      try {
++        const decoder = new TextDecoder();
++        let offset = 0;
++        for (let i = 0; i < 32 && offset + 512 <= file.size; i++) {
++          const header = new Uint8Array(
++            await file.slice(offset, offset + 512).arrayBuffer(),
++          );
++          if (header[0] === 0) break;
++          const name = decoder
++            .decode(header.subarray(0, 100))
++            .split('\0')[0]
++            .replace(/^\.\//, '');
++          const size =
++            parseInt(decoder.decode(header.subarray(124, 136)), 8) || 0;
++          if (name === 'MANIFEST') {
++            const text = await file
++              .slice(offset + 512, offset + 512 + size)
++              .text();
++            const match = text.match(/^purpose=.*\.(\w+)\s*$/m);
++            return match ? match[1] : null;
++          }
++          offset += 512 + Math.ceil(size / 512) * 512;
++        }
++      } catch (error) {
++        console.log(error);
++      }
++      return null;
++    },
+     onSubmitUpload() {
+       this.v$.$touch();
+       if (this.v$.$invalid) return;
+--- a/src/store/modules/Operations/FirmwareStore.js
++++ b/src/store/modules/Operations/FirmwareStore.js
+@@ -127,10 +127,11 @@
+         console.log('Do not support firmware push update');
+       }
+     },
+-    async uploadFirmwareHttpPush({ state }, { image }) {
++    async uploadFirmwareHttpPush({ state }, { image, onUploadProgress }) {
+       return await api
+         .post(state.httpPushUri, image, {
+           headers: { 'Content-Type': 'application/octet-stream' },
++          onUploadProgress,
+         })
+         .catch((error) => {
+           console.log(error);
+@@ -141,7 +142,13 @@
+     },
+     async uploadFirmwareMultipartHttpPush(
+       { state },
+-      { image, targets, forceUpdate, applyTime = 'Immediate' },
++      {
++        image,
++        targets,
++        forceUpdate,
++        applyTime = 'Immediate',
++        onUploadProgress,
++      },
+     ) {
+       const formData = new FormData();
+       formData.append('UpdateFile', image);
+@@ -159,6 +166,7 @@
+       return await api
+         .post(state.multipartHttpPushUri, formData, {
+           headers: { 'Content-Type': 'multipart/form-data' },
++          onUploadProgress,
+         })
+         .catch((error) => {
+           console.log(error);
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -375,6 +375,29 @@
+             "verifySwitchMessage": "Refresh the application to verify the running and backup images switched.",
+             "verifyUpdate": "Verify update",
+             "verifyUpdateMessage": "Refresh the application to verify firmware updated successfully"
++        },
++        "progress": {
++            "title": "Firmware update",
++            "titleBios": "BIOS update",
++            "titleBmc": "BMC update",
++            "step": "Step",
++            "stageUpload": "Uploading the image to the BMC",
++            "stageVerify": "Verifying the image",
++            "stageStarted": "Starting the update",
++            "stageWaitHostOff": "Waiting for the server to be powered off",
++            "stageSelectFlash": "Switching the BIOS flash to the BMC",
++            "stageDetectFlash": "Detecting the BIOS flash",
++            "stageErase": "Erasing the BIOS flash",
++            "stageWrite": "Writing the BIOS image",
++            "stageCheck": "Verifying the written image",
++            "stageReturnFlash": "Returning the BIOS flash to the server",
++            "stageForceOff": "Force power-off pulse",
++            "stagePowerOn": "Powering the server on",
++            "stageBiosDone": "BIOS update completed",
++            "stageBmcStage": "Writing the image to the update area",
++            "stageBmcReboot": "The BMC reboots to apply the update; refresh the page in a few minutes",
++            "biosDone": "BIOS update completed and the server was powered on.",
++            "failedAt": "Firmware update failed at: {stage}"
+         }
+     },
+     "pageInventory": {
