@@ -289,7 +289,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board FRU file ID",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "", text);
++					 "0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	return fru_gen_end_area(area, used);
 +}
