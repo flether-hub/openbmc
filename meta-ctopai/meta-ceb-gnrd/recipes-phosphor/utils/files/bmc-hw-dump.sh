@@ -857,7 +857,7 @@ sect "BMC debug console"
 ck "expected: UART5 = ttyS4 (serial@1e784000), 115200 8N1"
 ck "found: $(grep -o 'console=[^ ]*' /proc/cmdline 2>/dev/null | tr '\n' ' ')/proc/consoles: $(awk '{print $1}' /proc/consoles 2>/dev/null | tr '\n' ' ')"
 
-sect "host interfaces (eSPI / KCS / POST code / host serial console)"
+sect "host interfaces (eSPI / KCS / POST code / host CPU serial console = SOL)"
 ck "expected: eSPI mode (strap SCU510), Peripheral + Virtual Wire channels ready"
 ck "expected: KCS3 at I/O 0xCA2/0xCA3 (IPMI KCS), POST code snoop on port 0x80"
 ck "expected: VUART1 at I/O 0x3F8 (host COM1), SerIRQ 4 -> ttyVUART0 = SOL"
@@ -878,7 +878,12 @@ else
     ck "found: no devmem; see dev-nodes.txt (ipmi-kcs*, aspeed-lpc-snoop*, ttyVUART*) and serial.txt"
 fi
 ck "device nodes here: $(ls /dev 2>/dev/null | grep -E 'kcs|ipmi|snoop|espi|VUART' | tr '\n' ' ')"
-ck "host console source: $(grep -E '^pid ' "$OUT/serial.txt" 2>/dev/null | head -n 3 | tr '\n' ';')"
+# Host CPU serial console (SOL), not the BMC debug port: the process that reads the
+# host UART (obmc-console-server on ttyVUART0 here; the vendor firmware may use
+# another program or another UART).  Shells on the BMC debug port are left out.
+ck "host CPU serial console (SOL) source, i.e. the process holding the host UART:"
+grep -E '^pid ' "$OUT/serial.txt" 2>/dev/null | grep -v -E ' -?(ba)?sh |getty|bmc-hw-dump' \
+    | sed 's/^/    /' >> "$CK"
 
 sect "ADC (16 channels, voltage monitoring)"
 ck "expected: ADC0-15 enabled, internal 2.5 V reference on both engines"
