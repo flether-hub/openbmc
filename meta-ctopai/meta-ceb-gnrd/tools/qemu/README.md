@@ -13,17 +13,19 @@ the BMC firmware is changed for this.
 | NC-SI port (MAC3, eth1) | `run-qemu.sh` (QEMU answers NC-SI, DHCP 10.0.2.x) |
 | 4 temperature sensors (I2C7 0x48-0x4b) | `run-qemu.sh` (tmp105), `host-sim.py` command `temp` |
 | FRU EEPROM (I2C11 0x50-0x53, 1 KiB) | `run-qemu.sh`, the four blocks kept in `~/qemu-ceb-gnrd/fru0.bin` .. `fru3.bin` |
-| PSU slots (I2C8 0x58-0x5a) | `run-qemu.sh`, QEMU's isl69260 PMBus model at 0x58 and 0x59 (presence detection and the generic pmbus driver; fixed readings, not those of a CRPS supply; the adm1272 uses PMBus direct format, which the generic driver rejects), 0x5a empty |
+| PSU slots (I2C8 0x58-0x5a) | `run-qemu.sh`, QEMU's adm1266 PMBus model at 0x58 and 0x59 (PMBus linear format, so the generic `pmbus` driver binds; voltage readings only, not a CRPS supply), 0x5a empty.  isl69260 and adm1272 use the direct format, which the generic driver rejects; without an adm1266 model the script falls back to isl69260 |
+| PCIe slot I2C buses (I2C1-6) | `run-qemu.sh`, a 256-byte EEPROM at 0x50 on each |
 
-To load a FRU image into the EEPROM (the BMC reads it at boot), on the BMC:
+FRU: with the board's ipmi-fru-parser patch `ipmitool fru write 0 fru.bin`
+writes the FRU EEPROM and the inventory, and `ipmitool fru print 0` reads it
+back (ipmid reports "Device not present" unless the inventory object has
+`Present = true`, which `ceb-gnrd-ipmi-fru-properties.yaml` sets).  To load an
+image without ipmitool, on the BMC:
 
 ```
 cat fru.bin > /sys/bus/i2c/devices/10-0050/eeprom
+systemctl restart obmc-read-eeprom@system-chassis-motherboard
 ```
-
-then reboot the BMC.  `ipmitool fru write` does not write the EEPROM on
-OpenBMC, it only updates the inventory.
-| PCIe slot I2C buses (I2C1-6) | `run-qemu.sh`, a 256-byte EEPROM at 0x50 on each |
 
 ## SOL without the VUART
 

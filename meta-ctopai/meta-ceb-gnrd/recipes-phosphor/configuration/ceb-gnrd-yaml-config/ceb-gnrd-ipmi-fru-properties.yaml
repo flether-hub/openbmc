@@ -1,17 +1,21 @@
-# Extra FRU properties for ceb-gnrd.
-# Additional D-Bus properties exposed from FRU data beyond the standard
-# inventory interfaces.
+# Extra inventory properties that phosphor-ipmi-fru sends together with the FRU
+# fields (see ceb-gnrd-ipmi-fru.yaml).
 #
-# TODO: Add any board-specific extra properties here. For example,
-# BMC MAC addresses stored in FRU custom fields:
+# ipmid answers Get FRU Inventory Area Info / "ipmitool fru print" only for a FRU
+# whose first inventory object (FRU 0: /system) has xyz.openbmc_project.Inventory.
+# Item Present = true; otherwise it reports "Device not present".  The FRU parser
+# does not set Present by itself, and this EEPROM FRU has no presence detect, so
+# it is marked present here whenever its data was read or written.
 #
-# /system/chassis/motherboard/bmc/ethernet0:
-#     xyz.openbmc_project.Inventory.Item.NetworkInterface:
-#         MACAddress:
-#             IPMIFruProperty: Custom Field 2
-#             IPMIFruSection: Board
+# Boolean values are quoted strings, as in the upstream example.
+/system:
+    xyz.openbmc_project.Inventory.Item:
+        Present: "true"
 
-# Keep the placeholder as an empty YAML mapping.  The phosphor-ipmi-fru
-# generator iterates the document and does not accept YAML null (comments
-# only), which would make the compile-time generated C++ fail.
-{}
+/system/chassis:
+    xyz.openbmc_project.Inventory.Item:
+        Present: "true"
+
+/system/chassis/motherboard:
+    xyz.openbmc_project.Inventory.Item:
+        Present: "true"
