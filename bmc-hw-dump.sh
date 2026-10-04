@@ -20,6 +20,8 @@
 #   (MAC, PHY address, NC-SI, IP), SPI flash partitions, LEDs, watchdog, RTC,
 #   USB device, video, PECI, kernel log and process list, ipmitool output,
 #   BMC debug console (console=, getty, UART nodes) and VGA / KVM video engine.
+#   ceb-gnrd-checklist.txt lists every hardware function of the ceb-gnrd firmware
+#   with the value the new firmware expects next to what this firmware shows.
 #
 # Safety
 #   Nothing on the BMC is changed: the script only reads files and registers and
@@ -54,7 +56,7 @@ if [ "${1:-}" = compare ]; then
         espi-regs.txt lpc-regs.txt vuart-regs.txt \
         i2c-devices.txt i2c-scan.txt hwmon-layout.txt iio-layout.txt \
         serial.txt net-layout.txt mtd.txt leds.txt watchdog.txt rtc.txt \
-        dev-nodes.txt console-vga.txt
+        dev-nodes.txt console-vga.txt ceb-gnrd-checklist.txt
     do
         if [ ! -e "$old/$f" ] && [ ! -e "$new/$f" ]; then
             continue
@@ -130,7 +132,7 @@ show() {
 say "bmc-hw-dump: writing $OUT"
 
 # ---------------------------------------------------------------- 1. system
-say "[1/14] system information"
+say "[1/15] system information"
 run system.txt "kernel" uname -a
 show system.txt /proc/version /proc/cmdline /etc/os-release /etc/version /etc/issue \
     /etc/timestamp /proc/device-tree/model /proc/device-tree/compatible
@@ -154,7 +156,7 @@ have journalctl && run journal.txt "journal (this boot)" journalctl -b --no-page
 [ -r /var/log/messages ] && run journal.txt "/var/log/messages" tail -n 3000 /var/log/messages
 
 # ---------------------------------------------------------------- 2. device tree
-say "[2/14] device tree"
+say "[2/15] device tree"
 if [ -r /sys/firmware/fdt ]; then
     cp /sys/firmware/fdt "$OUT/device-tree.dtb" 2>/dev/null &&
         echo "raw blob saved: decompile on the PC with  dtc -I dtb -O dts device-tree.dtb" >> "$OUT/system.txt"
@@ -179,7 +181,7 @@ if [ -d /proc/device-tree ]; then
 fi
 
 # ---------------------------------------------------------------- 3. GPIO
-say "[3/14] GPIO"
+say "[3/15] GPIO"
 bank_name() {
     # offset -> GPIO name, AST2600 bank order A..Z, AA, AB ...
     b=$(( $1 / 8 )); p=$(( $1 % 8 ))
@@ -257,7 +259,7 @@ dump_list() {
 
 if [ -n "$DEVMEM" ]; then
     # ------------------------------------------------------------ 4. SCU
-    say "[4/14] SCU (chip id, straps, pin mux, clock delays)"
+    say "[4/15] SCU (chip id, straps, pin mux, clock delays)"
     {
         echo "SCU004 silicon revision: $(rd 0x1e6e2004)  (AST2600 A3 = 0x05030303)"
         echo "SCU014 silicon revision 2: $(rd 0x1e6e2014)"
@@ -272,7 +274,7 @@ if [ -n "$DEVMEM" ]; then
     dump_range scu-regs.txt "SCU 0x600-0x6ff (pin control, drive strength, pull-down)" 0x1e6e2000 0x600 0x6fc
 
     # ------------------------------------------------------------ 5. GPIO registers
-    say "[5/14] GPIO controller registers (direction and value of every pin)"
+    say "[5/15] GPIO controller registers (direction and value of every pin)"
     dump_range gpio-regs.txt "GPIO 3.3V controller 0x1e780000" 0x1e780000 0x000 0x1fc
     dump_range gpio-regs.txt "GPIO 1.8V controller 0x1e780800" 0x1e780800 0x000 0x0fc
     # Decode: data / direction register pairs, 4 banks of 8 pins per register.
@@ -303,7 +305,7 @@ if [ -n "$DEVMEM" ]; then
     } > "$OUT/gpio-pins.txt"
 
     # ------------------------------------------------------------ 6. eSPI / LPC / VUART
-    say "[6/14] eSPI, LPC (KCS / snoop / SuperIO), VUART registers"
+    say "[6/15] eSPI, LPC (KCS / snoop / SuperIO), VUART registers"
     # eSPI: control and status registers only (never the channel data ports).
     dump_list espi-regs.txt "eSPI 0x1e6ee000" 0x1e6ee000 \
         0x000:CTRL 0x004:STS 0x008:INT_STS 0x00c:INT_EN \
@@ -331,20 +333,21 @@ if [ -n "$DEVMEM" ]; then
     dump_list vuart-regs.txt "VUART2 0x1e788000" 0x1e788000 0x020:GCRA 0x024:GCRB 0x028:ADDRL 0x02c:ADDRH
 
     # ------------------------------------------------------------ 7. other blocks
-    say "[7/14] PWM/tach, ADC, watchdog, SPI controller registers"
+    say "[7/15] PWM/tach, ADC, watchdog, SPI controller registers"
     dump_range block-regs.txt "PWM / tach 0x1e610000" 0x1e610000 0x000 0x0fc
     dump_range block-regs.txt "ADC0 0x1e6e9000" 0x1e6e9000 0x000 0x0cc
     dump_range block-regs.txt "ADC1 0x1e6e9100" 0x1e6e9100 0x000 0x0cc
     dump_range block-regs.txt "WDT1..4 0x1e785000" 0x1e785000 0x000 0x0fc
     dump_range block-regs.txt "FMC (BMC flash) 0x1e620000" 0x1e620000 0x000 0x0fc
     dump_range block-regs.txt "SPI1 (host BIOS flash) 0x1e630000" 0x1e630000 0x000 0x0fc
+    dump_range block-regs.txt "PECI controller 0x1e78b000 (control / timing)" 0x1e78b000 0x000 0x01c
 else
-    say "[4-7/14] skipped: no /dev/mem or devmem on this firmware (registers not read)"
+    say "[4-7/15] skipped: no /dev/mem or devmem on this firmware (registers not read)"
     echo "devmem / /dev/mem not available: register dump skipped" > "$OUT/scu-regs.txt"
 fi
 
 # ---------------------------------------------------------------- 8. I2C
-say "[8/14] I2C buses and devices"
+say "[8/15] I2C buses and devices"
 {
     for b in /sys/bus/i2c/devices/i2c-*; do
         [ -d "$b" ] || continue
@@ -379,7 +382,7 @@ for e in /sys/bus/i2c/devices/*/eeprom; do
 done
 
 # ---------------------------------------------------------------- 9. hwmon / iio
-say "[9/14] hwmon and ADC"
+say "[9/15] hwmon and ADC"
 : > "$OUT/hwmon-layout.txt"
 for h in /sys/class/hwmon/hwmon*; do
     [ -d "$h" ] || continue
@@ -407,7 +410,7 @@ for i in /sys/bus/iio/devices/iio:device*; do
 done
 
 # ---------------------------------------------------------------- 10. serial / console
-say "[10/14] UARTs, VUART and host console"
+say "[10/15] UARTs, VUART and host console"
 {
     echo "### /proc/tty/driver/serial"
     cat /proc/tty/driver/serial 2>/dev/null || echo "(not readable)"
@@ -432,13 +435,15 @@ for f in /etc/obmc-console/*.conf /etc/obmc-console.conf /etc/*sol*.conf; do
 done
 
 # ---------------------------------------------------------------- 11. network
-say "[11/14] network (MAC, PHY address, NC-SI)"
+say "[11/15] network (MAC, PHY address, NC-SI)"
 {
     for n in /sys/class/net/*; do
         i=${n##*/}
         [ "$i" = lo ] && continue
         phy=$(readlink "$n/phydev" 2>/dev/null | sed 's|.*/||')
-        echo "$i dev=$(readlink -f "$n/device" 2>/dev/null | sed 's|.*/||') phy=${phy:-<none, NC-SI or fixed>} carrier=$(cat "$n/carrier" 2>/dev/null) speed=$(cat "$n/speed" 2>/dev/null)"
+        phyid=$(cat "$n/phydev/phy_id" 2>/dev/null)
+        phydrv=$(readlink "$n/phydev/driver" 2>/dev/null | sed 's|.*/||')
+        echo "$i dev=$(readlink -f "$n/device" 2>/dev/null | sed 's|.*/||') phy=${phy:-<none, NC-SI or fixed>} phy_id=${phyid:--} phy_driver=${phydrv:--} mac=$(cat "$n/address" 2>/dev/null) carrier=$(cat "$n/carrier" 2>/dev/null) speed=$(cat "$n/speed" 2>/dev/null)"
     done
 } > "$OUT/net-layout.txt"
 run network.txt "addresses" ip addr
@@ -456,7 +461,7 @@ for f in /etc/systemd/network/* /etc/network/interfaces; do
 done
 
 # ---------------------------------------------------------------- 12. flash
-say "[12/14] SPI flash partitions"
+say "[12/15] SPI flash partitions"
 run mtd.txt "mtd partitions" cat /proc/mtd
 for m in /sys/class/mtd/mtd[0-9]*; do
     [ -d "$m" ] || continue
@@ -466,7 +471,7 @@ done
 grep -i -E 'spi-nor|spi_nor|mtd|fmc|jedec' "$OUT/dmesg.txt" >> "$OUT/mtd.txt" 2>/dev/null
 
 # ---------------------------------------------------------------- 13. LEDs, watchdog, RTC, other devices
-say "[13/14] LEDs, watchdog, RTC, USB, video, PECI, device nodes"
+say "[13/15] LEDs, watchdog, RTC, USB, video, PECI, device nodes"
 for l in /sys/class/leds/*; do
     [ -d "$l" ] || continue
     trig=$(sed 's/.*\[\(.*\)\].*/\1/' "$l/trigger" 2>/dev/null)
@@ -495,10 +500,19 @@ have hwclock && run rtc-values.txt "hwclock" hwclock -r
     echo
     echo "### PECI"
     ls -l /sys/bus/peci/devices 2>/dev/null
+    ls /sys/bus/peci/drivers 2>/dev/null | sed 's/^/    driver: /'
+    echo
+    echo "### I3C"
+    ls -l /sys/bus/i3c/devices 2>/dev/null
+    echo
+    echo "### chassis intrusion"
+    for a in /sys/class/hwmon/hwmon*/intrusion*; do
+        [ -e "$a" ] && echo "$a: $(cat "$a" 2>/dev/null)"
+    done
 } > "$OUT/dev-nodes.txt"
 
 # ---------------------------------------------------------------- 13b. debug console and VGA
-say "[13b/14] BMC debug console and VGA / video"
+say "[13b/15] BMC debug console and VGA / video"
 {
     echo "### BMC debug console"
     echo "kernel cmdline: $(cat /proc/cmdline 2>/dev/null)"
@@ -546,7 +560,7 @@ if [ -n "$DEVMEM" ]; then
 fi
 
 # ---------------------------------------------------------------- 14. IPMI
-say "[14/14] IPMI (if ipmitool exists on this firmware)"
+say "[14/15] IPMI (if ipmitool exists on this firmware)"
 if have ipmitool; then
     run ipmi.txt "mc info" ipmitool mc info
     run ipmi.txt "mc guid" ipmitool mc guid
@@ -561,6 +575,165 @@ if have ipmitool; then
 else
     echo "ipmitool is not installed on this firmware" > "$OUT/ipmi.txt"
 fi
+
+# ---------------------------------------------------------------- 15. ceb-gnrd checklist
+# Every hardware function the ceb-gnrd firmware uses, with the value the new
+# firmware expects next to what this firmware shows.  On the old vendor firmware
+# a different value is not automatically wrong, but every difference must be
+# explained before the new image is deployed.
+say "[15/15] ceb-gnrd checklist (expected by the new firmware vs found here)"
+CK=$OUT/ceb-gnrd-checklist.txt
+ck() { printf '%s\n' "$*" >> "$CK"; }
+sect() { ck ""; ck "==== $*"; }
+
+ck "ceb-gnrd checklist - $HOST $STAMP"
+ck "EXPECTED = what the ceb-gnrd firmware uses; FOUND = this firmware."
+ck "AST2600 Linux numbering: i2c-N is controller 0x1e78a080 + N*0x80 (schematic I2C(N+1))."
+
+sect "GPIO (needs devmem; direction / level from the GPIO registers)"
+if [ -s "$OUT/gpio-pins.txt" ] && grep -q '^GPIOA0' "$OUT/gpio-pins.txt"; then
+    for e in \
+        "GPIOG6 out BMC_FRU_WP:FRU EEPROM write protect (low = writable)" \
+        "GPIOI5 out BMC_SYS_ALERT_LED:system alert LED" \
+        "GPIOI6 out BMC_FAN_BMC_OVERRIDE_N:high = BMC owns the fan PWM (CPLD mux)" \
+        "GPIOM1 out BMC_BIOS_FLASH_SELECT:BIOS flash to BMC (high, only during update)" \
+        "GPIOM2 in  BMC_POWER_BUTTON_INPUT:front panel power button (active low)" \
+        "GPIOM7 in  BMC_BIOS_BOOT_OK:BIOS POST complete (high)" \
+        "GPIOP7 out BMC_HBLED_N:BMC heartbeat LED to CPLD" \
+        "GPIOS4 in  PCB_VER0:board revision strap" \
+        "GPIOS5 in  PCB_VER1:board revision strap" \
+        "GPIOS6 in  PCB_VER2:board revision strap" \
+        "GPIOS7 in  CFG_VER0:configuration strap" \
+        "GPIOV0 in  BMC_UID_BUTTON_N:UID button (active low)" \
+        "GPIOV1 out BMC_UID_LED:UID / identify LED" \
+        "GPIOV2 out BMC_CPU_POWER_BUTTON:power button pulse to the CPU (active low)" \
+        "GPIOV3 out BMC_CPU_RESET:reset pulse to the CPU (active low)" \
+        "GPIOV4 in  BMC_CPU_PWRGD:host power good (host on = high)"
+    do
+        pin=${e%% *}; rest=${e#* }; dir=${rest%% *}; rest=${rest#* }; rest=${rest# }
+        sig=${rest%%:*}; what=${rest#*:}
+        got=$(awk -v p="$pin" '$1 == p {print "dir=" $3 " value=" $4}' "$OUT/gpio-pins.txt")
+        ck "$(printf '%-7s %-24s expected %-4s found %-18s %s' "$pin" "$sig" "$dir" "${got:-?}" "$what")"
+    done
+    ck "(a pin muxed to another function shows a meaningless value: check scu-regs.txt)"
+else
+    ck "not available (no devmem): compare gpio-kernel.txt / gpio-sysfs-exported.txt by hand"
+fi
+
+sect "I2C devices"
+scan_has() {
+    # scan_has BUS ADDR -> the i2cdetect cell (UU / address / --) or "?" without -s
+    [ -s "$OUT/i2c-scan.txt" ] || { echo "?"; return; }
+    sed -n "/^### i2c-$1 /,/^### /p" "$OUT/i2c-scan.txt" | awk -v a="$2" '
+        BEGIN { a = tolower(a); sub(/^0x/, "", a); row = substr(a, 1, 1) "0:"; col = ("0x" substr(a, 2, 1)) + 0 }
+        $1 == row { print $(col + 2); exit }'
+}
+for e in \
+    "6 0x48 EnvTemp_Inlet (NST175, lm75)" "6 0x49 EnvTemp_Outlet" "6 0x4a BoardTemp_PCIe" "6 0x4b BoardTemp_M2" \
+    "7 0x58 CRPS PSU0 (PMBus, 0-2 PSUs present)" "7 0x59 CRPS PSU1" "7 0x5a CRPS PSU2" \
+    "9 0x6f RTC NCT3015Y" "10 0x50 FRU EEPROM FM24C08 (0x50-0x53)"
+do
+    set -- $e
+    bus=$1 addr=$2; shift 2
+    dev=$(printf '%s-%04x' "$bus" "$addr")
+    if [ -d "/sys/bus/i2c/devices/$dev" ]; then
+        drv=$(readlink "/sys/bus/i2c/devices/$dev/driver" 2>/dev/null | sed 's|.*/||')
+        got="kernel device $dev ($(cat "/sys/bus/i2c/devices/$dev/name" 2>/dev/null), driver ${drv:-none})"
+    else
+        got="no kernel device; scan cell: $(scan_has "$bus" "$addr")"
+    fi
+    ck "$(printf 'i2c-%-2s %s  %-38s found: %s' "$bus" "$addr" "$*" "$got")"
+done
+ck "bus controllers here:"
+grep '^bus ' "$OUT/i2c-devices.txt" 2>/dev/null | sed 's/^/    /' >> "$CK"
+[ -s "$OUT/i2c-scan.txt" ] || ck "(no I2C scan: run with -s to see devices the vendor firmware drives from user space)"
+
+sect "network"
+ck "expected: 1e680000.ethernet = RJ45 via RTL8211FS, PHY address 2 (…:02), RGMII, static 192.168.185.200"
+ck "expected: 1e670000.ethernet = NC-SI to the Intel E810 (no PHY), DHCP, only up while the host is on"
+ck "found:"
+sed 's/^/    /' "$OUT/net-layout.txt" >> "$CK" 2>/dev/null
+[ -n "$DEVMEM" ] && ck "SCU340/350 (MAC clock delays) found: $(rd 0x1e6e2340) $(rd 0x1e6e2350)"
+
+sect "BMC debug console"
+ck "expected: UART5 = ttyS4 (serial@1e784000), 115200 8N1"
+ck "found: $(grep -o 'console=[^ ]*' /proc/cmdline 2>/dev/null | tr '\n' ' ')/proc/consoles: $(awk '{print $1}' /proc/consoles 2>/dev/null | tr '\n' ' ')"
+
+sect "host interfaces (eSPI / KCS / POST code / host serial console)"
+ck "expected: eSPI mode (strap SCU510), Peripheral + Virtual Wire channels ready"
+ck "expected: KCS3 at I/O 0xCA2/0xCA3 (IPMI KCS), POST code snoop on port 0x80"
+ck "expected: VUART1 at I/O 0x3F8 (host COM1), SerIRQ 4 -> ttyVUART0 = SOL"
+if [ -n "$DEVMEM" ]; then
+    c=$(rd 0x1e6ee000); s=$(rd 0x1e6ee098)
+    case "$c$s" in *-*) ck "eSPI registers not readable" ;; *)
+        ck "found eSPI CTRL=$c (bit1 peripheral ready=$(( (c >> 1) & 1 )), bit3 VW ready=$(( (c >> 3) & 1 ))) SYSEVT=$s (boot done=$(( (s >> 20) & 1 )), boot status=$(( (s >> 23) & 1 )))" ;;
+    esac
+    h=$(rd 0x1e789014); l=$(rd 0x1e789018)
+    case "$h$l" in *-*) ;; *) ck "found KCS3 address (LADR3H/L) = 0x$(printf '%02x%02x' $((h & 0xff)) $((l & 0xff)))  HICR0=$(rd 0x1e789000)" ;; esac
+    a=$(rd 0x1e789090)
+    case "$a" in *-*) ;; *) ck "found snoop address 0 (SNPWADR) = 0x$(printf '%04x' $((a & 0xffff)))  HICR5=$(rd 0x1e789080)" ;; esac
+    ga=$(rd 0x1e787020); gb=$(rd 0x1e787024); al=$(rd 0x1e787028); ah=$(rd 0x1e78702c)
+    case "$ga$gb$al$ah" in *-*) ;; *)
+        ck "found VUART1 enable=$((ga & 1)) address=0x$(printf '%02x%02x' $((ah & 0xff)) $((al & 0xff))) SerIRQ=$(( (gb >> 4) & 0xf ))" ;;
+    esac
+else
+    ck "found: no devmem; see dev-nodes.txt (ipmi-kcs*, aspeed-lpc-snoop*, ttyVUART*) and serial.txt"
+fi
+ck "device nodes here: $(ls /dev 2>/dev/null | grep -E 'kcs|ipmi|snoop|espi|VUART' | tr '\n' ' ')"
+ck "host console source: $(grep -E '^pid ' "$OUT/serial.txt" 2>/dev/null | head -n 3 | tr '\n' ';')"
+
+sect "ADC (16 channels, voltage monitoring)"
+ck "expected: ADC0-15 enabled, internal 2.5 V reference on both engines"
+if [ -n "$DEVMEM" ]; then
+    for b in 0x1e6e9000 0x1e6e9100; do
+        r=$(rd $b)
+        case "$r" in *-*) continue ;; esac
+        ref=$(( (r >> 6) & 3 ))
+        case $ref in 0) ref="2.5V internal" ;; 1) ref="1.2V internal" ;; *) ref="external ($ref)" ;; esac
+        ck "found engine $b ctrl=$r reference=$ref channels-enabled=0x$(printf '%02x' $(( (r >> 16) & 0xff )))"
+    done
+fi
+ck "iio devices here: $(grep -c '^iio:' "$OUT/iio-layout.txt" 2>/dev/null)"
+
+sect "fans"
+ck "expected: 6 headers, PWM0-5 at 25 kHz and TACH0-5, PWM owned by the BMC when GPIOI6 is high"
+grep -E 'pwm|fan' "$OUT/hwmon-layout.txt" 2>/dev/null | head -n 30 | sed 's/^/    found /' >> "$CK"
+
+sect "temperatures / CPU"
+ck "expected: CPU and DIMM temperatures over PECI (peci0), board temperatures on i2c-6"
+ck "found PECI devices: $(ls /sys/bus/peci/devices 2>/dev/null | tr '\n' ' ')"
+ck "found hwmon names: $(cat /sys/class/hwmon/hwmon*/name 2>/dev/null | sort | uniq -c | tr -s ' ' | tr '\n' ',')"
+
+sect "flash"
+ck "expected: BMC flash 64 MiB on FMC CS0 (u-boot 0x0, env 0xe0000, kernel 0x100000, rofs 0xa00000, rwfs 0x3600000)"
+ck "expected: host BIOS 64 MiB on SPI1 CS0 (MX25U51245G), shared through GPIOM1"
+grep -E '^(dev:|mtd[0-9])' "$OUT/mtd.txt" 2>/dev/null | head -n 20 | sed 's/^/    found /' >> "$CK"
+
+sect "LEDs, watchdog, RTC, chassis intrusion"
+ck "expected LEDs: bmc-heartbeat (GPIOP7, heartbeat trigger), fault (GPIOI5), identify (GPIOV1)"
+sed 's/^/    found /' "$OUT/leds.txt" >> "$CK" 2>/dev/null
+ck "expected watchdog: WDT1, systemd runtime watchdog 120 s, SoC reset (not full chip)"
+sed 's/^/    found /' "$OUT/watchdog.txt" >> "$CK" 2>/dev/null
+[ -n "$DEVMEM" ] && ck "    found WDT1 control=$(rd 0x1e78500c) reset-mask=$(rd 0x1e78501c) $(rd 0x1e785020)"
+ck "expected RTC: NCT3015Y on i2c-9 0x6f as rtc0, internal AST2600 RTC disabled"
+sed 's/^/    found /' "$OUT/rtc.txt" >> "$CK" 2>/dev/null
+ck "expected chassis intrusion: AST2600 CHASI# latch (hwmon intrusion0_alarm)"
+grep -A3 'chassis intrusion' "$OUT/dev-nodes.txt" 2>/dev/null | sed '1d; s/^/    found /' >> "$CK"
+
+sect "KVM, VGA, virtual media, I3C"
+ck "expected: video engine video@1e700000 and VGA display@1e6e6000 enabled; USB virtual hub enabled (virtual media / KVM keyboard)"
+grep -E '/(video|display|usb-vhub|usb)@' "$OUT/dt-enabled-nodes.txt" 2>/dev/null | sed 's/^/    found /' >> "$CK"
+ck "    found USB device controllers: $(ls /sys/class/udc 2>/dev/null | tr '\n' ' ')"
+ck "expected: I3C3 (Linux i3c2) enabled for the CPU, other I3C controllers disabled"
+grep -E '/i3c@' "$OUT/dt-enabled-nodes.txt" 2>/dev/null | sed 's/^/    found /' >> "$CK"
+
+sect "power control (how this firmware drives the host)"
+ck "expected: x86-power-control using the GPIOs above (PowerOk=PWRGD, PostComplete=BOOT_OK, PowerOut, ResetOut)"
+ck "processes holding GPIO lines (gpioinfo 'used'):"
+grep -E '\[used\]|"[a-z]' "$OUT/gpio-kernel.txt" 2>/dev/null | grep -v unused | head -n 40 | sed 's/^/    /' >> "$CK"
+ck "power / host related processes:"
+grep -i -E 'power|chassis|host|state|ipmi|kcs|sol|console|fan|pid' "$OUT/processes.txt" 2>/dev/null \
+    | grep -v -E 'grep|\[k' | head -n 40 | sed 's/^/    /' >> "$CK"
 
 # ---------------------------------------------------------------- archive
 rm -f "$NAMES"
