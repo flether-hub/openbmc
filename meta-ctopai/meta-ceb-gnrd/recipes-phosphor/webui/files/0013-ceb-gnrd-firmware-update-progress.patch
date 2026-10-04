@@ -1,16 +1,23 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CEB-GNRD board layer <bmc@localhost>
 Date: Sun, 4 Oct 2026 00:00:00 +0000
-Subject: [PATCH] firmware: show the update progress and the current step
+Subject: [PATCH] firmware: update progress, BIOS flash region selection
 
-Show a progress bar under the update form: the upload percentage, then the
+Progress: a bar under the update form shows the upload percentage, then the
 PercentComplete of the Redfish update task that bmcweb returns, polled every
 2 s.  The package MANIFEST tells a BIOS update from a BMC update.  For the BIOS
 the step is named from the progress value that the board's bios-update.sh
-reports (waiting for the server to be off, switching the flash, erasing,
-writing, verifying, returning the flash, force-off pulse, power-on), and the
-page reports success or the step that failed.  A BMC update still ends with
-the BMC reboot and the refresh reminder.
+reports (waiting for the server to be off, switching the flash, reading,
+erasing, writing, verifying, returning the flash, force-off pulse, power-on),
+and the page reports success or the step that failed.  A BMC update still ends
+with the BMC reboot and the refresh reminder.
+
+Regions: for a BIOS package the page lists the flash regions (bios-layout.txt
+from the package, or the board default) as check boxes.  nac0/nac1 (settings
+and MAC addresses of the CPU's integrated network controller) are not selected
+by default and can only be selected after confirming a warning.  The selection
+is added to the package as bios-regions.txt, which bios-update.sh uses to
+write only those regions.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 ---
@@ -25,12 +32,57 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
              :state="getValidationState(v$.file)"
              aria-describedby="image-file-help-block"
              @input="onFileUpload($event)"
-@@ -27,11 +27,47 @@
+@@ -23,19 +23,113 @@
+           </form-file>
+         </b-form-group>
+ 
++        <!-- CEB-GNRD: BIOS flash regions to write (BIOS packages only) -->
++        <div
++          v-if="biosRegions.length"
++          class="mb-3"
++          data-test-id="firmware-bios-regions"
++        >
++          <p class="mb-1 fw-bold">
++            {{ $t('pageFirmware.regions.title') }}
++          </p>
++          <div
++            v-for="region in biosRegions"
++            :key="region.name"
++            class="form-check"
++          >
++            <input
++              :id="'bios-region-' + region.name"
++              class="form-check-input"
++              type="checkbox"
++              :checked="region.selected"
++              :disabled="isPageDisabled || isUpdateRunning"
++              @change="onRegionToggle(region, $event)"
++            />
++            <label class="form-check-label" :for="'bios-region-' + region.name">
++              {{ region.name }}
++              <span class="text-muted small">
++                ({{ region.range }}, {{ region.size }})
++              </span>
++              <span v-if="isNacRegion(region)" class="text-danger small">
++                {{ $t('pageFirmware.regions.nacHint') }}
++              </span>
++            </label>
++          </div>
++          <p v-if="!selectedRegionNames.length" class="text-danger small mb-0">
++            {{ $t('pageFirmware.regions.noneSelected') }}
++          </p>
++        </div>
++
+         <b-btn
            data-test-id="firmware-button-startUpdate"
            type="submit"
            variant="primary"
 -          :disabled="isPageDisabled"
-+          :disabled="isPageDisabled || isUpdateRunning"
++          :disabled="
++            isPageDisabled ||
++            isUpdateRunning ||
++            (biosRegions.length > 0 && !selectedRegionNames.length)
++          "
          >
            {{ $t('pageFirmware.form.updateFirmware.startUpdate') }}
          </b-btn>
@@ -74,7 +126,28 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
      </div>
  
      <!-- Modals -->
-@@ -49,8 +85,30 @@
+     <modal-update-firmware v-model="showUpdateModal" @ok="updateFirmware" />
++    <b-modal
++      id="modal-bios-region-nac"
++      v-model="nacConfirm.show"
++      :title="$t('pageFirmware.regions.nacConfirmTitle')"
++      :ok-title="$t('pageFirmware.regions.nacConfirmOk')"
++      :cancel-title="$t('global.action.cancel')"
++      ok-variant="danger"
++      @ok="confirmNacRegion"
++    >
++      <p class="m-0">
++        {{
++          $t('pageFirmware.regions.nacConfirmText', {
++            region: nacConfirm.name,
++          })
++        }}
++      </p>
++    </b-modal>
+   </div>
+ </template>
+ 
+@@ -49,8 +143,125 @@
  
  import FormFile from '@/components/Global/FormFile';
  import ModalUpdateFirmware from './FirmwareModalUpdateFirmware';
@@ -90,9 +163,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +  [21, 'stageWaitHostOff'],
 +  [25, 'stageSelectFlash'],
 +  [28, 'stageDetectFlash'],
-+  [30, 'stageErase'],
-+  [45, 'stageWrite'],
-+  [80, 'stageCheck'],
++  [30, 'stageRead'],
++  [40, 'stageErase'],
++  [55, 'stageWrite'],
++  [85, 'stageCheck'],
 +  [89, 'stageReturnFlash'],
 +  [92, 'stageForceOff'],
 +  [95, 'stagePowerOn'],
@@ -102,16 +176,113 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +// Redfish TaskState values that end a task without success
 +const TASK_FAILED = ['Exception', 'Killed', 'Cancelled', 'Interrupted'];
 +
++// CEB-GNRD: BIOS flash layout used when the package has no bios-layout.txt
++// (same as /usr/share/ceb-gnrd/bios-layout.txt on the BMC).
++const DEFAULT_BIOS_LAYOUT = `00000000:00000fff descriptor
++00001000:00001fff metadata
++00002000:00011fff pdr
++00012000:01011fff bios
++01012000:01a11fff nac1
++01a12000:02411fff nac0
++02412000:03ffffff reserved
++`;
++// Configuration of the CPU's integrated network controller, including its
++// MAC addresses: not written unless the user confirms.
++const NAC_REGIONS = ['nac0', 'nac1'];
++const BIOS_REGIONS_FILE = 'bios-regions.txt';
++
++const textDecoder = new TextDecoder();
++
++// The entries of a tar file: [{ name, dataOffset, size }], and the offset of
++// the end-of-archive blocks.
++async function readTar(file) {
++  const entries = [];
++  let offset = 0;
++  while (offset + 512 <= file.size && entries.length < 64) {
++    const header = new Uint8Array(
++      await file.slice(offset, offset + 512).arrayBuffer(),
++    );
++    if (header[0] === 0) break;
++    const name = textDecoder
++      .decode(header.subarray(0, 100))
++      .split('\0')[0]
++      .replace(/^\.\//, '');
++    const size = parseInt(textDecoder.decode(header.subarray(124, 136)), 8);
++    if (!name || Number.isNaN(size)) throw new Error('not a tar file');
++    entries.push({ name, dataOffset: offset + 512, size });
++    offset += 512 + Math.ceil(size / 512) * 512;
++  }
++  return { entries, end: offset };
++}
++
++async function readTarText(file, tar, name) {
++  const entry = tar.entries.find((e) => e.name === name);
++  if (!entry) return null;
++  return await file
++    .slice(entry.dataOffset, entry.dataOffset + entry.size)
++    .text();
++}
++
++// A ustar header and data blocks for a small text file.
++function tarEntry(name, text) {
++  const encoder = new TextEncoder();
++  const data = encoder.encode(text);
++  const header = new Uint8Array(512);
++  const put = (value, offset, length) =>
++    header.set(encoder.encode(value).subarray(0, length), offset);
++  const octal = (value, length) =>
++    value.toString(8).padStart(length - 1, '0') + '\0';
++  put(name, 0, 100);
++  put(octal(0o644, 8), 100, 8);
++  put(octal(0, 8), 108, 8);
++  put(octal(0, 8), 116, 8);
++  put(octal(data.length, 12), 124, 12);
++  put(octal(Math.floor(Date.now() / 1000), 12), 136, 12);
++  header.fill(32, 148, 156); // checksum field counts as spaces
++  put('0', 156, 1);
++  put('ustar\0', 257, 6);
++  put('00', 263, 2);
++  const sum = header.reduce((total, byte) => total + byte, 0);
++  put(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8);
++  const body = new Uint8Array(Math.ceil(data.length / 512) * 512);
++  body.set(data);
++  return [header, body];
++}
++
++function parseLayout(text) {
++  const regions = [];
++  for (const line of text.split('\n')) {
++    const match = line.match(/^\s*([0-9a-fA-F]+):([0-9a-fA-F]+)\s+(\S+)/);
++    if (!match) continue;
++    const start = parseInt(match[1], 16);
++    const end = parseInt(match[2], 16);
++    const bytes = end - start + 1;
++    regions.push({
++      name: match[3],
++      range: `0x${match[1]}-0x${match[2]}`,
++      size:
++        bytes >= 1048576
++          ? `${(bytes / 1048576).toFixed(bytes % 1048576 ? 1 : 0)} MiB`
++          : `${Math.round(bytes / 1024)} KiB`,
++      selected: !NAC_REGIONS.includes(match[3]),
++    });
++  }
++  return regions;
++}
++
  export default {
    components: { FormFile, ModalUpdateFirmware },
    mixins: [BVToastMixin, LoadingBarMixin, VuelidateMixin],
-@@ -77,8 +135,30 @@
+@@ -77,8 +288,36 @@
        file: null,
        isServerPowerOffRequired:
          import.meta.env.VITE_SERVER_OFF_REQUIRED === 'true',
++      // 'Host' (BIOS) or 'BMC', from the MANIFEST of the selected package
++      filePurpose: null,
++      biosRegions: [],
++      nacConfirm: { show: false, name: '' },
 +      progress: {
 +        visible: false,
-+        // 'Host' (BIOS) or 'BMC', read from the MANIFEST in the package
 +        purpose: null,
 +        percent: 0,
 +        stage: 'stageUpload',
@@ -125,6 +296,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +    isUpdateRunning() {
 +      return this.progress.visible && this.progress.state === 'running';
 +    },
++    selectedRegionNames() {
++      return this.biosRegions.filter((r) => r.selected).map((r) => r.name);
++    },
 +    progressTitle() {
 +      if (this.progress.purpose === 'Host')
 +        return this.$t('pageFirmware.progress.titleBios');
@@ -136,7 +310,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
    validations() {
      return {
        file: {
-@@ -89,19 +169,34 @@
+@@ -89,36 +328,199 @@
    created() {
      this.$store.dispatch('firmware/getUpdateServiceSettings');
    },
@@ -159,7 +333,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 -      }, 360000);
 +      this.progress = {
 +        visible: true,
-+        purpose: await this.readManifestPurpose(this.file),
++        purpose: this.filePurpose,
 +        percent: 0,
 +        stage: 'stageUpload',
 +        state: 'running',
@@ -182,10 +356,20 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
        this.infoToast(i18n.global.t('pageFirmware.toast.updateStartedMessage'), {
          title: i18n.global.t('pageFirmware.toast.updateStarted'),
          timestamp: true,
-@@ -112,13 +207,130 @@
+       });
+-      this.dispatchWorkstationUpload(timerId);
++      let image = this.file;
++      if (this.progress.purpose === 'Host' && this.biosRegions.length) {
++        image = await this.withRegionSelection(this.file);
++      }
++      this.dispatchWorkstationUpload(image, timerId);
+     },
+-    dispatchWorkstationUpload(timerId) {
++    dispatchWorkstationUpload(image, timerId) {
        this.$store
          .dispatch('firmware/uploadFirmware', {
-           image: this.file,
+-          image: this.file,
++          image,
 +          onUploadProgress: (event) => {
 +            if (event.total) {
 +              this.progress.percent = Math.round(
@@ -209,6 +393,24 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +          this.progress.state = 'failed';
          });
      },
++    // The package with bios-regions.txt (the regions to write) appended.
++    async withRegionSelection(file) {
++      try {
++        const tar = await readTar(file);
++        const [header, body] = tarEntry(
++          BIOS_REGIONS_FILE,
++          this.selectedRegionNames.join('\n') + '\n',
++        );
++        return new File(
++          [file.slice(0, tar.end), header, body, new Uint8Array(1024)],
++          file.name,
++          { type: file.type || 'application/x-tar' },
++        );
++      } catch (error) {
++        console.log(error);
++        return file;
++      }
++    },
 +    startPolling(taskUri, timerId) {
 +      this.stopPolling();
 +      this.pollErrors = 0;
@@ -281,39 +483,56 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +      }
 +    },
 +    // The update package is a tar file; its MANIFEST says what it updates
-+    // (purpose=...VersionPurpose.Host for the BIOS, .BMC for the BMC).
-+    async readManifestPurpose(file) {
++    // (purpose=...VersionPurpose.Host for the BIOS, .BMC for the BMC).  A BIOS
++    // package may carry its own bios-layout.txt.
++    async inspectPackage(file) {
++      this.filePurpose = null;
++      this.biosRegions = [];
++      if (!file) return;
 +      try {
-+        const decoder = new TextDecoder();
-+        let offset = 0;
-+        for (let i = 0; i < 32 && offset + 512 <= file.size; i++) {
-+          const header = new Uint8Array(
-+            await file.slice(offset, offset + 512).arrayBuffer(),
-+          );
-+          if (header[0] === 0) break;
-+          const name = decoder
-+            .decode(header.subarray(0, 100))
-+            .split('\0')[0]
-+            .replace(/^\.\//, '');
-+          const size =
-+            parseInt(decoder.decode(header.subarray(124, 136)), 8) || 0;
-+          if (name === 'MANIFEST') {
-+            const text = await file
-+              .slice(offset + 512, offset + 512 + size)
-+              .text();
-+            const match = text.match(/^purpose=.*\.(\w+)\s*$/m);
-+            return match ? match[1] : null;
-+          }
-+          offset += 512 + Math.ceil(size / 512) * 512;
++        const tar = await readTar(file);
++        const manifest = (await readTarText(file, tar, 'MANIFEST')) || '';
++        const match = manifest.match(/^purpose=.*\.(\w+)\s*$/m);
++        this.filePurpose = match ? match[1] : null;
++        if (this.filePurpose === 'Host') {
++          const layout =
++            (await readTarText(file, tar, 'bios-layout.txt')) ||
++            DEFAULT_BIOS_LAYOUT;
++          this.biosRegions = parseLayout(layout);
 +        }
 +      } catch (error) {
 +        console.log(error);
 +      }
-+      return null;
++    },
++    isNacRegion(region) {
++      return NAC_REGIONS.includes(region.name);
++    },
++    onRegionToggle(region, event) {
++      if (event.target.checked && this.isNacRegion(region)) {
++        // only selected after the user confirms in the dialog
++        event.target.checked = false;
++        this.nacConfirm = { show: true, name: region.name };
++        return;
++      }
++      region.selected = event.target.checked;
++    },
++    confirmNacRegion() {
++      const region = this.biosRegions.find(
++        (r) => r.name === this.nacConfirm.name,
++      );
++      if (region) region.selected = true;
 +    },
      onSubmitUpload() {
        this.v$.$touch();
        if (this.v$.$invalid) return;
+@@ -127,6 +529,7 @@
+     onFileUpload(file) {
+       this.file = file;
+       this.v$.file.$touch();
++      this.inspectPackage(file);
+     },
+   },
+ };
 --- a/src/store/modules/Operations/FirmwareStore.js
 +++ b/src/store/modules/Operations/FirmwareStore.js
 @@ -127,10 +127,11 @@
@@ -354,7 +573,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
            console.log(error);
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -375,6 +375,29 @@
+@@ -375,6 +375,38 @@
              "verifySwitchMessage": "Refresh the application to verify the running and backup images switched.",
              "verifyUpdate": "Verify update",
              "verifyUpdateMessage": "Refresh the application to verify firmware updated successfully"
@@ -370,6 +589,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +            "stageWaitHostOff": "Waiting for the server to be powered off",
 +            "stageSelectFlash": "Switching the BIOS flash to the BMC",
 +            "stageDetectFlash": "Detecting the BIOS flash",
++            "stageRead": "Reading the current BIOS flash",
 +            "stageErase": "Erasing the BIOS flash",
 +            "stageWrite": "Writing the BIOS image",
 +            "stageCheck": "Verifying the written image",
@@ -381,6 +601,14 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +            "stageBmcReboot": "The BMC reboots to apply the update; refresh the page in a few minutes",
 +            "biosDone": "BIOS update completed and the server was powered on.",
 +            "failedAt": "Firmware update failed at: {stage}"
++        },
++        "regions": {
++            "title": "BIOS flash regions to update",
++            "nacHint": "(network controller settings and MAC addresses)",
++            "noneSelected": "Select at least one region.",
++            "nacConfirmTitle": "Update the network controller region?",
++            "nacConfirmOk": "Update this region",
++            "nacConfirmText": "Region {region} holds the settings of the CPU's integrated network controller, including its MAC addresses. Updating it erases the current MAC addresses. Are you sure?"
          }
      },
      "pageInventory": {

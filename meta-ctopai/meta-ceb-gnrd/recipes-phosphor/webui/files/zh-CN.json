@@ -410,6 +410,7 @@
       "stageWaitHostOff": "等待服务器关机",
       "stageSelectFlash": "把 BIOS Flash 切换给 BMC",
       "stageDetectFlash": "识别 BIOS Flash",
+      "stageRead": "正在读取 BIOS Flash 当前内容",
       "stageErase": "正在擦除 BIOS Flash",
       "stageWrite": "正在写入 BIOS 镜像",
       "stageCheck": "正在校验写入的内容",
@@ -421,6 +422,14 @@
       "stageBmcReboot": "BMC 正在重启以完成升级，请几分钟后刷新页面",
       "biosDone": "BIOS 升级完成，服务器已开机。",
       "failedAt": "固件升级失败，失败的步骤：{stage}"
+    },
+    "regions": {
+      "title": "要更新的 BIOS Flash 分区",
+      "nacHint": "（CPU 内置网卡的设置和 MAC 地址）",
+      "noneSelected": "请至少选择一个分区。",
+      "nacConfirmTitle": "确定要更新网卡分区吗？",
+      "nacConfirmOk": "更新此分区",
+      "nacConfirmText": "分区 {region} 存放 CPU 内置网卡的设置，包括 MAC 地址。更新它会把当前的 MAC 地址清除。确定要更新吗？"
     }
   },
   "pageInventory": {

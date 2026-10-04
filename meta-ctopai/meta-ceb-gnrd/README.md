@@ -96,8 +96,17 @@ Platform features
   x86-power-control generates that pulse without taking GPIO ownership away
   from the daemon. Confirm GPIO polarity and verify power sequencing on the
   assembled board.
-  The flash is written with `flashcp -v` (BusyBox; `flashrom` if it is
-  missing).  Each step writes a percentage to the update's
+  Only selected flash regions are written (`flashrom -l <layout> -i <region>`,
+  which also skips unchanged blocks); the other regions keep their content.
+  The layout is `bios-layout.txt` in the update package or the board default
+  `/usr/share/ceb-gnrd/bios-layout.txt` (descriptor, metadata, pdr, bios,
+  nac1, nac0, reserved).  The regions come from `bios-regions.txt` in the
+  package, which the web firmware page adds from its check boxes; without it
+  (curl, Redfish clients) every region except nac0/nac1 is written.  nac0/nac1
+  hold the CPU's integrated network controller settings and MAC addresses; the
+  web page selects them only after a confirmation dialog.  The image must be
+  the full 64 MiB flash image.
+  Each step writes a percentage to the update's
   `ActivationProgress` object, bmcweb turns it into the PercentComplete of the
   Redfish update task, and the web firmware page (patch 0013) shows a progress
   bar with the step name; the numbers are listed in `bios-update.sh` and must

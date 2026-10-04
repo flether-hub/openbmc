@@ -21,10 +21,10 @@ fi
 # software manager's object of this update is /xyz/openbmc_project/software/<id>.
 # Its ActivationProgress.Progress (0-100) becomes PercentComplete of the Redfish
 # update task, which the firmware page polls; the page names the step from the
-# value, so keep these numbers in sync with FirmwareFormUpdate.vue (0013 patch):
+# value, so keep these numbers in sync with FirmwareFormUpdate.vue (webui patch 0013):
 #   20 started (set by the software manager)   21/22 waiting for the host to be off
 #   25 switching the BIOS flash to the BMC     28 detecting the flash
-#   30-45 erasing   45-80 writing   80-88 verifying
+#   30-40 reading the flash   40-55 erasing   55-85 writing   85-88 verifying
 #   89 returning the flash to the BIOS         92 force-off power-button pulse
 #   95 powering the host on                    100 done (set by the software manager)
 # bmcweb cancels the task after 5 minutes without a progress change, so long waits
@@ -103,13 +103,75 @@ wait_for_host_off() {
     return 1
 }
 
-wait_for_host_off
-
 IMAGE_FILE=$(find "$1" -type f \( -iname '*.fd' -o -iname '*.bin' \) -print -quit)
 if [[ -z "$IMAGE_FILE" ]]; then
     echo "ERROR: BIOS image (.FD/.BIN) not found in $1" >&2
     exit 1
 fi
+if (( $(stat -c %s "$IMAGE_FILE") != EXPECTED_FLASH_SIZE )); then
+    echo "ERROR: $IMAGE_FILE is $(stat -c %s "$IMAGE_FILE") bytes; a full $EXPECTED_FLASH_SIZE-byte flash image is required." >&2
+    exit 1
+fi
+
+# Flash regions.  The layout (flashrom format, "start:end name", hex) comes from
+# bios-layout.txt in the update package, or the board default below.  The regions
+# to write come from bios-regions.txt in the package (one name per line, written
+# by the web firmware page); without it every region except nac0/nac1 is written.
+# nac0/nac1 hold the configuration of the CPU's integrated network controller,
+# including its MAC addresses, which a full image would overwrite.  Regions not
+# selected keep their current content.
+readonly DEFAULT_LAYOUT=/usr/share/ceb-gnrd/bios-layout.txt
+readonly DEFAULT_SKIPPED_REGIONS="nac0 nac1"
+LAYOUT_FILE="$1/bios-layout.txt"
+[[ -f "$LAYOUT_FILE" ]] || LAYOUT_FILE=$DEFAULT_LAYOUT
+if [[ ! -r "$LAYOUT_FILE" ]]; then
+    echo "ERROR: BIOS flash layout $LAYOUT_FILE not found." >&2
+    exit 1
+fi
+LAYOUT_REGIONS=()
+while read -r range name _; do
+    [[ -z "${range:-}" || "$range" == \#* ]] && continue
+    start=-1; end=-1
+    if [[ "$range" =~ ^([0-9a-fA-F]+):([0-9a-fA-F]+)$ ]]; then
+        start=$(( 16#${BASH_REMATCH[1]} )); end=$(( 16#${BASH_REMATCH[2]} ))
+    fi
+    if (( start < 0 || start > end || end >= EXPECTED_FLASH_SIZE )) ||
+        [[ ! "${name:-}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+        echo "ERROR: bad line in $LAYOUT_FILE: $range ${name:-}" >&2
+        exit 1
+    fi
+    LAYOUT_REGIONS+=("$name")
+done < "$LAYOUT_FILE"
+if (( ${#LAYOUT_REGIONS[@]} == 0 )); then
+    echo "ERROR: $LAYOUT_FILE lists no regions." >&2
+    exit 1
+fi
+SELECTED_REGIONS=()
+if [[ -f "$1/bios-regions.txt" ]]; then
+    while read -r name _; do
+        [[ -z "${name:-}" || "$name" == \#* ]] && continue
+        if [[ " ${LAYOUT_REGIONS[*]} " != *" $name "* ]]; then
+            echo "ERROR: region '$name' in bios-regions.txt is not in $LAYOUT_FILE" >&2
+            exit 1
+        fi
+        SELECTED_REGIONS+=("$name")
+    done < "$1/bios-regions.txt"
+else
+    for name in "${LAYOUT_REGIONS[@]}"; do
+        [[ " $DEFAULT_SKIPPED_REGIONS " == *" $name "* ]] || SELECTED_REGIONS+=("$name")
+    done
+fi
+if (( ${#SELECTED_REGIONS[@]} == 0 )); then
+    echo "ERROR: no BIOS flash region selected." >&2
+    exit 1
+fi
+echo "BIOS flash layout: $LAYOUT_FILE (${LAYOUT_REGIONS[*]})"
+echo "Regions to write: ${SELECTED_REGIONS[*]}"
+for name in "${LAYOUT_REGIONS[@]}"; do
+    [[ " ${SELECTED_REGIONS[*]} " == *" $name "* ]] || echo "Region kept unchanged: $name"
+done
+
+wait_for_host_off
 
 find_bios_mtd() {
     local entry name size
@@ -210,26 +272,51 @@ set_progress 28
 reprobe_bios_spi_nor
 sleep 1
 MTD_DEV=$(find_bios_mtd)
-echo "Writing $IMAGE_FILE to AST2600 SPI1 partition $MTD_DEV"
+echo "Writing regions ${SELECTED_REGIONS[*]} of $IMAGE_FILE to AST2600 SPI1 partition $MTD_DEV"
 set_progress 30
-if command -v flashcp >/dev/null 2>&1; then
-    # flashcp -v prints "\rErasing block: n/N (p%) ", then "Writing kb" and
-    # "Verifying kb"; map the three phases onto 30-45, 45-80 and 80-88.
-    flashcp -v "$IMAGE_FILE" "$MTD_DEV" |
-    while IFS= read -r -d $'\r' line || [[ -n "$line" ]]; do
-        case "$line" in
-            *Erasing*)   base=30; span=15 ;;
-            *Writing*)   base=45; span=35 ;;
-            *Verifying*) base=80; span=8 ;;
-            *) continue ;;
-        esac
-        [[ "$line" =~ \(([0-9]+)%\) ]] || continue
-        set_progress $(( base + span * BASH_REMATCH[1] / 100 ))
-    done
-else
-    # linux_mtd takes the MTD device number, not the device path
-    flashrom -p "linux_mtd:dev=${MTD_DEV#/dev/mtd}" -w "$IMAGE_FILE"
-fi
+# flashrom writes only the included regions (erasing and rewriting only blocks that
+# differ) and verifies them.  --progress prints "[READ: n%][ERASE: n%][WRITE: n%]..."
+# (with backspaces between updates); map reading the current content to 30-40,
+# erasing to 40-55, writing to 55-85 and the verify read after the write to 85-88.
+# linux_mtd takes the MTD device number, not the device path.
+FLASHROM_ARGS=(-p "linux_mtd:dev=${MTD_DEV#/dev/mtd}" -l "$LAYOUT_FILE" --noverify-all --progress)
+for name in "${SELECTED_REGIONS[@]}"; do
+    FLASHROM_ARGS+=(-i "$name")
+done
+flashrom "${FLASHROM_ARGS[@]}" -w "$IMAGE_FILE" |
+while IFS= read -r -d '.' chunk || [[ -n "$chunk" ]]; do
+    # pass flashrom's own messages on to the journal, without the progress counters
+    if [[ "$chunk" != *%\]* ]]; then
+        printf '%s.' "$chunk"
+    fi
+    read_pc=""; erase_pc=""; write_pc=""
+    [[ "$chunk" =~ \[READ:\ *([0-9]+)%\] ]] && read_pc=${BASH_REMATCH[1]}
+    [[ "$chunk" =~ \[ERASE:\ *([0-9]+)%\] ]] && erase_pc=${BASH_REMATCH[1]}
+    [[ "$chunk" =~ \[WRITE:\ *([0-9]+)%\] ]] && write_pc=${BASH_REMATCH[1]}
+    p=$LAST_PROGRESS
+    if [[ "$chunk" == *Verifying* ]]; then
+        verifying=1
+        p=85
+    fi
+    if [[ -n "$write_pc" ]]; then
+        written=1
+        p=$(( 55 + 30 * write_pc / 100 ))
+    elif [[ -n "$erase_pc" ]]; then
+        p=$(( 40 + 15 * erase_pc / 100 ))
+    elif [[ -n "$read_pc" ]]; then
+        if [[ -n "${written:-}${verifying:-}" ]]; then
+            p=$(( 85 + 3 * read_pc / 100 ))
+        else
+            p=$(( 30 + 10 * read_pc / 100 ))
+        fi
+    fi
+    # never move backwards (a later stage restarts its own percentage)
+    # the loop's last command must succeed (pipefail would stop the script)
+    if (( p > LAST_PROGRESS )); then
+        set_progress "$p"
+    fi
+done
+echo
 set_progress 88
 
 echo "BIOS flash completed; restoring BIOS ownership."
