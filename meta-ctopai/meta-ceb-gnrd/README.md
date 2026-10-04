@@ -262,6 +262,14 @@ Platform features
   earlier, ipmid read the sensors before their threshold interfaces existed and
   offered only the two static sensors for the first minute.  Cost: `ipmitool`
   is not available for about a minute after boot.
+* `ceb-gnrd-boot-progress` (`recipes-phosphor/state`) publishes the host boot
+  progress (`xyz.openbmc_project.State.Boot.Progress` on
+  `/xyz/openbmc_project/state/host0`) from the port 80 POST codes, because
+  nothing upstream derives it and the host does not report it.  The POST code
+  ranges (`STAGES` in the script) follow the public AMI Aptio checkpoints and
+  Intel MRC; the GNR-D BIOS vendor's POST code list is authoritative.  Shown by
+  the IPMI `Boot_Progress` sensor and the web discrete sensor table; Redfish
+  `BootProgress` is read by bmcweb from x86-power-control and stays empty.
 * `ceb-gnrd-check` (`recipes-phosphor/utils`, installed to `/usr/bin`) runs on
   the BMC, prints PASS/FAIL for services, sensors and thresholds, IPMI commands,
   the fan OEM commands, Redfish, RTC and MTD layout and bundles logs into

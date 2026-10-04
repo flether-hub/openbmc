@@ -53,5 +53,6 @@ RDEPENDS:${PN}-system = " \
     phosphor-dbus-monitor \
     ceb-gnrd-psu-detect \
     ceb-gnrd-rtc-sync \
+    ceb-gnrd-boot-progress \
     ceb-gnrd-sel-logrotate \
     "

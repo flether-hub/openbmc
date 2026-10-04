@@ -24,7 +24,7 @@ SYSTEMD_AUTO_ENABLE = "enable"
 
 # Units that get the restart / quiesce drop-in.  The first four are upstream
 # services (none of them pings the systemd watchdog, so WatchdogSec= cannot be
-# used for them); the last three are this layer's own services, which send
+# used for them); OWN_UNITS are this layer's own services, which send
 # READY=1 and WATCHDOG=1 themselves (Type=notify, WatchdogSec= in their units).
 RESTART_UNITS = " \
     xyz.openbmc_project.ObjectMapper.service \
@@ -38,6 +38,7 @@ OWN_UNITS = " \
     ceb-gnrd-fan-settings.service \
     ceb-gnrd-temp-max.service \
     ceb-gnrd-alert-led.service \
+    ceb-gnrd-boot-progress.service \
     "
 
 do_install() {

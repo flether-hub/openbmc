@@ -32,6 +32,10 @@
           0x14:
             type: string
             set: xyz.openbmc_project.State.Boot.Progress.ProgressStages.MotherboardInit
+          # 0x19 primary processor initialization (IPMI system firmware progress)
+          0x19:
+            type: string
+            set: xyz.openbmc_project.State.Boot.Progress.ProgressStages.PrimaryProcInit
 0x05:
   entityID: 0x23
   entityInstance: 1

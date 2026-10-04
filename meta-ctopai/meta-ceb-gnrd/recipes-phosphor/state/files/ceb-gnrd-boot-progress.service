@@ -1,0 +1,14 @@
+[Unit]
+Description=CEB-GNRD host boot progress from BIOS POST codes
+After=lpcsnoop.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=60
+ExecStart=/usr/libexec/ceb-gnrd-boot-progress.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
