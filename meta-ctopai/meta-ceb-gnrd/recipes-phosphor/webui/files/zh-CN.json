@@ -926,7 +926,8 @@
     "discrete": {
       "description": "说明",
       "state": "状态",
-      "bootProgress": "主机启动进度"
+      "bootProgress": "主机启动进度",
+      "watchdog": "IPMI 看门狗，已配置的超时动作"
     }
   },
   "pageSerialOverLan": {

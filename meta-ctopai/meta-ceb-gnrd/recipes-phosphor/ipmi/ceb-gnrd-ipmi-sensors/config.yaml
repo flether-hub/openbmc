@@ -36,3 +36,29 @@
           0x19:
             type: string
             set: xyz.openbmc_project.State.Boot.Progress.ProgressStages.PrimaryProcInit
+0x08:
+  entityID: 0x07
+  entityInstance: 1
+  sensorType: 0x23
+  # The host IPMI watchdog (Watchdog 2) of phosphor-watchdog.  sel-logger records
+  # its expiry events with this object path, so they now belong to this sensor.
+  # The offsets show the configured expire action (IPMI watchdog offsets 1-3).
+  path: /xyz/openbmc_project/watchdog/host0
+  sensorReadingType: 0x6F
+  serviceInterface: org.freedesktop.DBus.Properties
+  readingType: assertion
+  mutability: Mutability::Read
+  sensorName: Watchdog2
+  interfaces:
+    xyz.openbmc_project.State.Watchdog:
+      ExpireAction:
+        Offsets:
+          0x01:
+            type: string
+            assert: xyz.openbmc_project.State.Watchdog.Action.HardReset
+          0x02:
+            type: string
+            assert: xyz.openbmc_project.State.Watchdog.Action.PowerOff
+          0x03:
+            type: string
+            assert: xyz.openbmc_project.State.Watchdog.Action.PowerCycle
