@@ -3,7 +3,7 @@ From: CEB-GNRD board layer <bmc@localhost>
 Date: Sun, 4 Oct 2026 00:00:00 +0000
 Subject: [PATCH] sensors: analog and discrete sensors on two tabs
 
-The board's IPMI discrete sensors (boot progress, OS status, boot attempts)
+The board's IPMI discrete sensors (boot progress, OS status)
 are built from D-Bus properties, not D-Bus sensors, so Redfish and the sensor
 table do not list them.  Show the sensor page as two tabs: "Analog sensors"
 (the existing Redfish sensor table, shown by default) and "Discrete sensors",
@@ -14,7 +14,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 ---
 --- /dev/null
 +++ b/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,99 @@
 +<template>
 +  <div>
 +    <b-table
@@ -47,12 +47,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 +    descriptionKey: 'osStatus',
 +    path: '/xyz/openbmc_project/state/host0',
 +    property: 'OperatingSystemState',
-+  },
-+  {
-+    name: 'Boot_Attempts',
-+    descriptionKey: 'bootAttempts',
-+    path: '/xyz/openbmc_project/state/host0',
-+    property: 'AttemptsLeft',
 +  },
 +];
 +const REFRESH_MS = 10000;
@@ -154,7 +148,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
  import { useLoadingBar } from '@/components/Composables/useLoadingBar';
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -918,6 +918,17 @@
+@@ -918,6 +918,16 @@
              "status": "Status",
              "upperWarning": "Upper warning",
              "upperCritical": "Upper critical"
@@ -167,8 +161,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific sensors]
 +            "description": "Description",
 +            "state": "State",
 +            "bootProgress": "Host boot progress",
-+            "osStatus": "Operating system / BIOS boot status",
-+            "bootAttempts": "Boot attempts left"
++            "osStatus": "Operating system / BIOS boot status"
          }
      },
      "pageSerialOverLan": {

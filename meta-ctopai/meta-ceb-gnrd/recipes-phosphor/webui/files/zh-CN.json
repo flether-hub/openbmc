@@ -927,8 +927,7 @@
       "description": "说明",
       "state": "状态",
       "bootProgress": "主机启动进度",
-      "osStatus": "操作系统 / BIOS 启动状态",
-      "bootAttempts": "剩余启动尝试次数"
+      "osStatus": "操作系统 / BIOS 启动状态"
     }
   },
   "pageSerialOverLan": {
