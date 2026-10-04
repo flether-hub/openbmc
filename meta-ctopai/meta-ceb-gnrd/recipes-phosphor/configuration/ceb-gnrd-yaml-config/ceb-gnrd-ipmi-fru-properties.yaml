@@ -1,21 +1,12 @@
-# Extra inventory properties that phosphor-ipmi-fru sends together with the FRU
-# fields (see ceb-gnrd-ipmi-fru.yaml).
+# Extra D-Bus properties for the FRU inventory objects (beyond the FRU fields of
+# ceb-gnrd-ipmi-fru.yaml); none needed.
 #
-# ipmid answers Get FRU Inventory Area Info / "ipmitool fru print" only for a FRU
-# whose first inventory object (FRU 0: /system) has xyz.openbmc_project.Inventory.
-# Item Present = true; otherwise it reports "Device not present".  The FRU parser
-# does not set Present by itself, and this EEPROM FRU has no presence detect, so
-# it is marked present here whenever its data was read or written.
+# "ipmitool fru" does not use this inventory: with ipmid's dynamic-sensors
+# option its FRU commands read and write the FRU EEPROM through fru-device
+# (see ceb-gnrd-fru).  This mapping fills the inventory used by the web
+# inventory page, from obmc-read-eeprom at boot.
 #
-# Boolean values are quoted strings, as in the upstream example.
-/system:
-    xyz.openbmc_project.Inventory.Item:
-        Present: "true"
-
-/system/chassis:
-    xyz.openbmc_project.Inventory.Item:
-        Present: "true"
-
-/system/chassis/motherboard:
-    xyz.openbmc_project.Inventory.Item:
-        Present: "true"
+# Keep the placeholder as an empty YAML mapping.  The phosphor-ipmi-fru
+# generator iterates the document and does not accept YAML null (comments
+# only), which would make the compile-time generated C++ fail.
+{}

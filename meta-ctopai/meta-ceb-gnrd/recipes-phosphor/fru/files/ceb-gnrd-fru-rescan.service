@@ -1,0 +1,11 @@
+[Unit]
+Description=Rescan the FRU devices after a FRU write
+After=xyz.openbmc_project.FruDevice.service
+
+[Service]
+ExecStart=/usr/libexec/ceb-gnrd-fru-rescan.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

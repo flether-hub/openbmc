@@ -1,0 +1,11 @@
+[Unit]
+Description=Write a default FRU image into a blank CEB-GNRD FRU EEPROM
+Before=xyz.openbmc_project.FruDevice.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/ceb-gnrd-fru-init.sh
+
+[Install]
+WantedBy=multi-user.target

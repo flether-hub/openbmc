@@ -16,16 +16,14 @@ the BMC firmware is changed for this.
 | PSU slots (I2C8 0x58-0x5a) | `run-qemu.sh`, QEMU's adm1266 PMBus model at 0x58 and 0x59 (PMBus linear format, so the generic `pmbus` driver binds; voltage readings only, not a CRPS supply), 0x5a empty.  isl69260 and adm1272 use the direct format, which the generic driver rejects; without an adm1266 model the script falls back to isl69260 |
 | PCIe slot I2C buses (I2C1-6) | `run-qemu.sh`, a 256-byte EEPROM at 0x50 on each |
 
-FRU: with the board's ipmi-fru-parser patch `ipmitool fru write 0 fru.bin`
-writes the FRU EEPROM and the inventory, and `ipmitool fru print 0` reads it
-back (ipmid reports "Device not present" unless the inventory object has
-`Present = true`, which `ceb-gnrd-ipmi-fru-properties.yaml` sets).  To load an
-image without ipmitool, on the BMC:
-
-```
-cat fru.bin > /sys/bus/i2c/devices/10-0050/eeprom
-systemctl restart obmc-read-eeprom@system-chassis-motherboard
-```
+FRU: `ipmitool fru print/write 0` read and write the FRU EEPROM through
+fru-device (ipmid's dynamic-sensors option), which only knows EEPROMs that
+already hold a valid FRU.  The `ceb-gnrd-fru` package therefore writes a default
+placeholder FRU into a blank EEPROM at boot (chassis type 0x17, which makes it FRU
+ID 0), so a fresh `~/qemu-ceb-gnrd/fru0.bin` can be written with
+`ipmitool fru write 0 fru.bin` straight away, and it asks fru-device to rescan
+3 s after every FRU write so `ipmitool fru print 0` shows the new data.  To
+re-seed the default image, delete `~/qemu-ceb-gnrd/fru*.bin` and restart QEMU.
 
 ## SOL without the VUART
 
