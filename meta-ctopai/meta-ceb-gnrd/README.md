@@ -241,6 +241,13 @@ Platform features
   the fan OEM commands, Redfish, RTC and MTD layout and bundles logs into
   `/tmp/ceb-gnrd-check.tar.gz`.  Its expected values are those of the QEMU run.
   Known FAIL there: Manager `FirmwareVersion` (see the bmcweb note above).
+* `bmc-hw-dump` (`recipes-phosphor/utils/files/bmc-hw-dump.sh`, installed to
+  `/usr/bin`) is a read-only dump of how the running firmware uses the hardware
+  (GPIO, pin mux, I2C, eSPI/KCS/VUART, network, flash, ...).  Copy the script to
+  the old vendor firmware and run it there, run `bmc-hw-dump` on this firmware,
+  then compare on the PC with `sh bmc-hw-dump.sh compare OLD.tar.gz NEW.tar.gz`.
+  `ceb-gnrd-checklist.txt` in the dump lists every ceb-gnrd hardware function
+  with the expected and the found value.
 
 ### Alignment with OpenBMC conventions
 

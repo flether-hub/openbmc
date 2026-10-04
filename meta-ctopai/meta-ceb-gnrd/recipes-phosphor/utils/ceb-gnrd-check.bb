@@ -6,7 +6,9 @@ LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/Apache-2.0;md5
 inherit allarch
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-SRC_URI = "file://ceb-gnrd-check.sh"
+# bmc-hw-dump: read-only dump of how the running firmware uses the hardware, run on
+# the old vendor firmware and on this one to compare them (sh bmc-hw-dump.sh -h).
+SRC_URI = "file://ceb-gnrd-check.sh file://bmc-hw-dump.sh"
 
 S = "${UNPACKDIR}"
 
@@ -16,4 +18,5 @@ RDEPENDS:${PN} = "ipmitool curl"
 do_install() {
     install -d ${D}${bindir}
     install -m 0755 ${UNPACKDIR}/ceb-gnrd-check.sh ${D}${bindir}/ceb-gnrd-check
+    install -m 0755 ${UNPACKDIR}/bmc-hw-dump.sh ${D}${bindir}/bmc-hw-dump
 }

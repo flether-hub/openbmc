@@ -80,7 +80,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -s) SCAN=1 ;;
         -o) shift; OUTBASE=${1:?-o needs a directory} ;;
-        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,/^PATH=/p' "$0" | sed '$d'; exit 0 ;;
         *) echo "unknown option $1 (see -h)" >&2; exit 2 ;;
     esac
     shift
