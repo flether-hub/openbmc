@@ -133,7 +133,7 @@ show() {
     file=$1; shift
     for p in "$@"; do
         [ -r "$p" ] || continue
-        v=$(tr '\0' ' ' < "$p" 2>/dev/null | head -c 2000)
+        v=$(tr '\0' ' ' < "$p" 2>/dev/null | cut -c1-2000 | head -n 50)
         echo "$p: $v" >> "$OUT/$file"
     done
 }
@@ -247,7 +247,7 @@ rd() {
 }
 dump_range() {
     # dump_range FILE TITLE BASE FIRST LAST : 32-bit registers BASE+FIRST..BASE+LAST
-    file=$1 title=$2 base=$3 off=$4 last=$5
+    file=$1 title=$2 base=$3 off=$(($4)) last=$(($5))
     echo "### $title" >> "$OUT/$file"
     while [ "$off" -le "$last" ]; do
         printf '0x%08x %s\n' $((base + off)) "$(rd $((base + off)))" >> "$OUT/$file"
@@ -449,7 +449,7 @@ say "[10/15] UARTs, VUART and host console"
     echo "### which process holds which tty (console server / SOL source)"
     for p in /proc/[0-9]*; do
         fds=$(ls -l "$p/fd" 2>/dev/null | grep -E '/dev/tty(S|VUART|USB|GS)' | sed 's/.*-> //' | sort -u | tr '\n' ' ')
-        [ -n "$fds" ] && echo "pid ${p#/proc/} $(tr '\0' ' ' < "$p/cmdline" 2>/dev/null | head -c 150): $fds"
+        [ -n "$fds" ] && echo "pid ${p#/proc/} $(tr '\0' ' ' < "$p/cmdline" 2>/dev/null | cut -c1-150): $fds"
     done
 } > "$OUT/serial.txt"
 for f in /etc/obmc-console/*.conf /etc/obmc-console.conf /etc/*sol*.conf; do
