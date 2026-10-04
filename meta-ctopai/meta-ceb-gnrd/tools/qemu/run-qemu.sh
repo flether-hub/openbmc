@@ -31,7 +31,11 @@ fi
 mkdir -p "$STATE" || exit 1
 [ -f "$BIOS_FLASH" ] || truncate -s 64M "$BIOS_FLASH"
 # FRU EEPROM block 0x50 (256 bytes, erased = 0xff)
-[ -f "$STATE/fru.bin" ] || head -c 256 /dev/zero | tr '\0' '\377' > "$STATE/fru.bin"
+# (LC_ALL=C: in a UTF-8 locale tr writes \377 as two bytes; QEMU needs exactly
+# 256 bytes, so a file of another size, e.g. from that bug, is recreated)
+if [ "$(wc -c < "$STATE/fru.bin" 2>/dev/null)" != 256 ]; then
+    head -c 256 /dev/zero | LC_ALL=C tr '\000' '\377' > "$STATE/fru.bin"
+fi
 rm -f "$QMP"
 
 # PCIe slot buses: an EEPROM at 0x50 on Linux i2c-0 .. i2c-5
