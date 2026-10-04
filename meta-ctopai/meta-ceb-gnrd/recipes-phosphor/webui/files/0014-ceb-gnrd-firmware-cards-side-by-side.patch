@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Sun, 4 Oct 2026 00:00:00 +0000
+Subject: [PATCH] firmware: BMC and BIOS cards side by side, wider update form
+
+Show the BIOS card to the right of the BMC card instead of below it, and make
+the update form as wide as the two cards together (it now also holds the BIOS
+region list and the progress bar).
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific layout]
+---
+--- a/src/views/Operations/Firmware/Firmware.vue
++++ b/src/views/Operations/Firmware/Firmware.vue
+@@ -18,17 +18,18 @@
+       :is-server-off="isServerOff"
+     />
+ 
+-    <!-- Firmware cards -->
++    <!-- Firmware cards: BMC and BIOS side by side -->
+     <b-row>
+-      <b-col xl="10">
++      <b-col md="6" xl="5">
+         <!-- BMC Firmware -->
+         <bmc-cards
+           :is-page-disabled="isPageDisabled"
+           :is-server-off="isServerOff"
+         />
+-
++      </b-col>
++      <b-col v-if="!isSingleFileUploadEnabled" md="6" xl="5">
+         <!-- Bios Firmware -->
+-        <bios-cards v-if="!isSingleFileUploadEnabled" />
++        <bios-cards />
+       </b-col>
+     </b-row>
+ 
+@@ -37,8 +38,8 @@
+       :section-title="$t('pageFirmware.sectionTitleUpdateFirmware')"
+     >
+       <b-row>
+-        <b-col sm="8" md="6" xl="4">
+-          <!-- Update form -->
++        <b-col xl="10">
++          <!-- Update form (as wide as the BMC and BIOS cards above) -->
+           <form-update
+             :is-server-off="isServerOff"
+             :is-page-disabled="isPageDisabled"
+--- a/src/views/Operations/Firmware/FirmwareCardsBmc.vue
++++ b/src/views/Operations/Firmware/FirmwareCardsBmc.vue
+@@ -1,7 +1,7 @@
+ <template>
+   <div>
+     <page-section :section-title="sectionTitle">
+-      <b-row class="row-cols-1 row-cols-md-2">
++      <b-row class="row-cols-1">
+         <!-- Running image -->
+         <b-col class="mb-3">
+           <b-card class="h-100">
+--- a/src/views/Operations/Firmware/FirmwareCardsBios.vue
++++ b/src/views/Operations/Firmware/FirmwareCardsBios.vue
+@@ -1,6 +1,6 @@
+ <template>
+   <page-section :section-title="$t('pageFirmware.sectionTitleBiosCards')">
+-    <b-row class="row-cols-1 row-cols-md-2">
++    <b-row class="row-cols-1">
+       <!-- Running image -->
+       <b-col class="mb-3">
+         <b-card class="h-100">
+@@ -34,9 +34,3 @@
+   },
+ };
+ </script>
+-
+-<style lang="scss" scoped>
+-.page-section {
+-  margin-top: -$spacer * 1.5;
+-}
+-</style>
