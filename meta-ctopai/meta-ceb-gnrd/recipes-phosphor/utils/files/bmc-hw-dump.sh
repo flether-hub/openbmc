@@ -7,6 +7,7 @@
 #   On the BMC (old vendor firmware first, later the new firmware):
 #     sh bmc-hw-dump.sh            dump into /tmp/bmc-hw-<host>-<time>.tar.gz
 #     sh bmc-hw-dump.sh -s         also scan the I2C buses (i2cdetect -r, see below)
+#     sh bmc-hw-dump.sh -n         do not read the known ceb-gnrd chips over I2C
 #     sh bmc-hw-dump.sh -o DIR     write the dump directory under DIR instead of /tmp
 #   On the PC (Linux or Git Bash), after copying both archives off the BMCs:
 #     sh bmc-hw-dump.sh compare OLD.tar.gz NEW.tar.gz
@@ -34,6 +35,10 @@
 #   The optional I2C scan (-s) sends one read-byte transaction to every free
 #   address; that is harmless for normal sensors / EEPROMs / PSUs, but it is
 #   still bus traffic, so it is off by default.
+#   The chip identification (on by default, -n turns it off) reads a few
+#   registers of the known ceb-gnrd chips (temperature sensors, RTC, FRU EEPROM,
+#   PMBus PSU identity) with single SMBus read transactions; it never writes a
+#   register, and works on the vendor firmware even without kernel drivers.
 
 PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin
 
@@ -77,10 +82,12 @@ fi
 
 # ---------------------------------------------------------------- options
 SCAN=0
+PROBE=1
 OUTBASE=/tmp
 while [ $# -gt 0 ]; do
     case "$1" in
         -s) SCAN=1 ;;
+        -n) PROBE=0 ;;
         -o) shift; OUTBASE=${1:?-o needs a directory} ;;
         -h|--help) sed -n '2,/^PATH=/p' "$0" | sed '$d'; exit 0 ;;
         *) echo "unknown option $1 (see -h)" >&2; exit 2 ;;
@@ -347,6 +354,19 @@ else
     say "[4-7/15] skipped: no /dev/mem or devmem on this firmware (registers not read)"
     echo "devmem / /dev/mem not available: register dump skipped" > "$OUT/scu-regs.txt"
 fi
+
+# busof N : Linux bus number of AST2600 I2C controller N (0x1e78a080 + N*0x80);
+# the vendor firmware may number its buses differently.
+busof() {
+    want=$(printf '%x' $((0x1e78a080 + $1 * 0x80)))
+    for b in /sys/bus/i2c/devices/i2c-*; do
+        [ -d "$b" ] || continue
+        case "$(readlink -f "$b/device" 2>/dev/null)$(readlink -f "$b" 2>/dev/null)" in
+            *"$want"*) echo "${b##*/i2c-}"; return ;;
+        esac
+    done
+    echo "$1"
+}
 
 # ---------------------------------------------------------------- 8. I2C
 say "[8/15] I2C buses and devices"
@@ -662,15 +682,74 @@ phy_model() {
     awk '{print $1}' /proc/modules 2>/dev/null | sort | tr '\n' ' '
     echo
 } > "$OUT/chips.txt"
-# PMBus identity of PSUs that no driver owns, only with -s (reads MFR_ID 0x99 and
-# MFR_MODEL 0x9a with SMBus block reads, no writes).
-if [ "$SCAN" = 1 ] && have i2cget; then
-    echo "### PMBus MFR_ID / MFR_MODEL read with i2cget (i2c-7 0x58-0x5a)" >> "$OUT/chips.txt"
-    for a in 0x58 0x59 0x5a; do
-        [ -d "/sys/bus/i2c/devices/$(printf '7-%04x' $a)" ] && continue
-        id=$(i2cget -y 7 $a 0x99 s 2>/dev/null)
-        md=$(i2cget -y 7 $a 0x9a s 2>/dev/null)
-        [ -n "$id$md" ] && echo "i2c-7 $a: MFR_ID=$id MFR_MODEL=$md (hex bytes, ASCII)" >> "$OUT/chips.txt"
+# Identify the known ceb-gnrd chips directly over I2C (read-only SMBus reads),
+# also when the firmware has no kernel driver for them.  -n turns it off.
+hex2ascii() {
+    for x in $*; do
+        case "$x" in 0x*) ;; *) continue ;; esac
+        v=$((x))
+        [ "$v" -ge 32 ] && [ "$v" -lt 127 ] || continue
+        o=$(printf '%03o' "$v")
+        printf "\\$o"
+    done
+}
+if [ "$PROBE" = 1 ] && have i2cget; then
+    B6=$(busof 6); B7=$(busof 7); B9=$(busof 9); B10=$(busof 10)
+    {
+        echo "### chip identification over I2C (controller -> bus here: I2C7=i2c-$B6, I2C8=i2c-$B7, I2C10=i2c-$B9, I2C11=i2c-$B10)"
+        echo "# temperature sensors (NST175 / LM75 family): TEMP reg0, CONF reg1, THYST reg2, TOS reg3"
+        echo "# an LM75-compatible chip at power-on has THYST 75 C and TOS 80 C"
+        for a in 0x48 0x49 0x4a 0x4b; do
+            t=$(i2cget -y "$B6" $a 0x00 w 2>/dev/null)
+            if [ -z "$t" ]; then echo "i2c-$B6 $a: no answer"; continue; fi
+            c=$(i2cget -y "$B6" $a 0x01 b 2>/dev/null)
+            h=$(i2cget -y "$B6" $a 0x02 w 2>/dev/null)
+            o=$(i2cget -y "$B6" $a 0x03 w 2>/dev/null)
+            msb=$(( t & 0xff )); [ "$msb" -ge 128 ] && msb=$((msb - 256))
+            half=$(( (t >> 15) & 1 ))
+            echo "i2c-$B6 $a: temp=$msb.$((half * 5)) C conf=$c thyst=$(( h & 0xff )) C tos=$(( o & 0xff )) C (raw $t $h $o)"
+        done
+        echo
+        echo "# RTC NCT3015Y / NCT3018Y at 0x6f: registers 0x00-0x1f"
+        r=""
+        i=0
+        while [ $i -lt 32 ]; do
+            v=$(i2cget -y "$B9" 0x6f $i b 2>/dev/null) || { r="no answer"; break; }
+            r="$r ${v#0x}"
+            i=$((i + 1))
+        done
+        echo "i2c-$B9 0x6f:$r"
+        echo
+        echo "# FRU EEPROM: a 24C08 (1 KiB) answers at 0x50-0x53, a 24C02 only at 0x50"
+        for a in 0x50 0x51 0x52 0x53 0x54 0x55 0x56 0x57; do
+            v=$(i2cget -y "$B10" $a 0x00 b 2>/dev/null) && echo "i2c-$B10 $a: answers (byte0=$v)"
+        done
+        if [ ! -e "/sys/bus/i2c/devices/$(printf '%s-%04x' "$B10" 0x50)/eeprom" ]; then
+            r=""; i=0
+            while [ $i -lt 16 ]; do
+                v=$(i2cget -y "$B10" 0x50 $i b 2>/dev/null) || break
+                r="$r ${v#0x}"; i=$((i + 1))
+            done
+            echo "i2c-$B10 0x50 first 16 bytes:$r  (FRU common header starts with 01)"
+        fi
+        echo
+        echo "# PMBus PSUs: PMBUS_REVISION 0x98, MFR_ID 0x99, MFR_MODEL 0x9a, MFR_REVISION 0x9b"
+        for a in 0x58 0x59 0x5a; do
+            rev=$(i2cget -y "$B7" $a 0x98 b 2>/dev/null)
+            if [ -z "$rev" ]; then echo "i2c-$B7 $a: no answer (slot empty?)"; continue; fi
+            id=$(i2cget -y "$B7" $a 0x99 s 2>/dev/null)
+            md=$(i2cget -y "$B7" $a 0x9a s 2>/dev/null)
+            mr=$(i2cget -y "$B7" $a 0x9b s 2>/dev/null)
+            echo "i2c-$B7 $a: pmbus_rev=$rev MFR_ID='$(hex2ascii $id)' MFR_MODEL='$(hex2ascii $md)' MFR_REVISION='$(hex2ascii $mr)'"
+        done
+        echo
+    } >> "$OUT/chips.txt" 2>&1
+fi
+# PHY identity through the MII registers (read-only ioctl), for every interface.
+if have mii-tool; then
+    for n in /sys/class/net/eth*; do
+        [ -e "$n" ] || continue
+        run chips.txt "MII registers of ${n##*/} (vendor OUI / model / revision)" mii-tool -v "${n##*/}"
     done
 fi
 
@@ -749,7 +828,7 @@ for e in \
     "9 0x6f RTC NCT3015Y" "10 0x50 FRU EEPROM FM24C08 (0x50-0x53)"
 do
     set -- $e
-    bus=$1 addr=$2; shift 2
+    bus=$(busof "$1") addr=$2; shift 2
     dev=$(printf '%s-%04x' "$bus" "$addr")
     if [ -d "/sys/bus/i2c/devices/$dev" ]; then
         drv=$(readlink "/sys/bus/i2c/devices/$dev/driver" 2>/dev/null | sed 's|.*/||')
@@ -837,20 +916,20 @@ grep -A3 'chassis intrusion' "$OUT/dev-nodes.txt" 2>/dev/null | sed '1d; s/^/   
 
 sect "external chips (models and drivers, details in chips.txt)"
 for e in \
-    "RJ45 PHY|Realtek RTL8211FS (phy_id 0x001cc916), driver 'RTL8211F Gigabit Ethernet'|phy_id=" \
+    "RJ45 PHY|Realtek RTL8211FS (phy_id 0x001cc916, MII OUI 00:07:32 model 17), driver 'RTL8211F Gigabit Ethernet'|phy_id=|product info|vendor" \
     "BMC flash|Winbond W25Q512JV 64 MiB on FMC (jedec ef4020)|fmc|1e620000|w25q|winbond" \
     "BIOS flash|Macronix MX25U51245G 64 MiB on SPI1 (jedec c2953a)|spi1|1e630000|mx25|macronix" \
-    "RTC|Nuvoton NCT3015Y, driver rtc-nct3018y (name nct3018y)|^rtc" \
-    "FRU EEPROM|FM24C08 (24c08), driver at24|eeprom" \
-    "temperatures|4x NST175 at i2c-6 0x48-0x4b, driver lm75 (created by dbus-sensors)|lm75|tmp75|nst175" \
-    "PSU|CRPS PMBus modules at i2c-7 0x58-0x5a, driver pmbus|pmbus|^7-00|MFR_" \
+    "RTC|Nuvoton NCT3015Y, driver rtc-nct3018y (name nct3018y)|^rtc|0x6f" \
+    "FRU EEPROM|FM24C08 (24c08), driver at24|eeprom|answers|first 16" \
+    "temperatures|4x NST175 at i2c-6 0x48-0x4b, driver lm75 (created by dbus-sensors)|lm75|tmp75|nst175|temp=" \
+    "PSU|CRPS PMBus modules at i2c-7 0x58-0x5a, driver pmbus|pmbus|^7-00|MFR_|slot empty" \
     "NC-SI NIC|Intel E810 behind NC-SI|ncsi" \
     "fans|AST2600 PWM/tach, driver aspeed-g6-pwm-tach (hwmon)|pwm|tach" \
     "ADC|AST2600 ADC, driver aspeed_adc (iio)|adc"
 do
     what=${e%%|*}; rest=${e#*|}; exp=${rest%%|*}; pat=${rest#*|}
     ck "$what: expected $exp"
-    grep -i -E "$pat" "$OUT/chips.txt" 2>/dev/null | grep -v '^#' | head -n 6 | sed 's/^/    found /' >> "$CK"
+    grep -i -E "$pat" "$OUT/chips.txt" 2>/dev/null | grep -v '^#' | head -n 8 | sed 's/^/    found /' >> "$CK"
 done
 
 sect "KVM, VGA, virtual media, I3C"
