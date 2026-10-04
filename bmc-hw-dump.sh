@@ -18,7 +18,8 @@
 #   fans, PWM, temperatures, PSU), IIO ADC, eSPI / LPC (KCS, snoop, SuperIO) /
 #   VUART configuration registers, UARTs and which process holds them, network
 #   (MAC, PHY address, NC-SI, IP), SPI flash partitions, LEDs, watchdog, RTC,
-#   USB device, video, PECI, kernel log and process list, ipmitool output.
+#   USB device, video, PECI, kernel log and process list, ipmitool output,
+#   BMC debug console (console=, getty, UART nodes) and VGA / KVM video engine.
 #
 # Safety
 #   Nothing on the BMC is changed: the script only reads files and registers and
@@ -53,7 +54,7 @@ if [ "${1:-}" = compare ]; then
         espi-regs.txt lpc-regs.txt vuart-regs.txt \
         i2c-devices.txt i2c-scan.txt hwmon-layout.txt iio-layout.txt \
         serial.txt net-layout.txt mtd.txt leds.txt watchdog.txt rtc.txt \
-        dev-nodes.txt
+        dev-nodes.txt console-vga.txt
     do
         if [ ! -e "$old/$f" ] && [ ! -e "$new/$f" ]; then
             continue
@@ -495,6 +496,54 @@ have hwclock && run rtc-values.txt "hwclock" hwclock -r
     echo "### PECI"
     ls -l /sys/bus/peci/devices 2>/dev/null
 } > "$OUT/dev-nodes.txt"
+
+# ---------------------------------------------------------------- 13b. debug console and VGA
+say "[13b/14] BMC debug console and VGA / video"
+{
+    echo "### BMC debug console"
+    echo "kernel cmdline: $(cat /proc/cmdline 2>/dev/null)"
+    [ -r /proc/device-tree/chosen/stdout-path ] && \
+        echo "device tree /chosen/stdout-path: $(tr -d '\0' < /proc/device-tree/chosen/stdout-path)"
+    [ -r /proc/device-tree/chosen/bootargs ] && \
+        echo "device tree /chosen/bootargs: $(tr -d '\0' < /proc/device-tree/chosen/bootargs)"
+    echo "active consoles (/proc/consoles):"
+    cat /proc/consoles 2>/dev/null | sed 's/^/    /'
+    echo "login prompts (getty) on:"
+    ps w 2>/dev/null | grep -E '[g]etty' | sed 's/^/    /'
+    # UART blocks in the device tree (AST2600: uart1..5 at 0x1e783000, 0x1e78d000,
+    # 0x1e78e000, 0x1e78f000, 0x1e784000; uart6..13 at 0x1e790000..)
+    echo "UART nodes in the device tree:"
+    grep -E '/serial@[0-9a-f]+ ' "$OUT/dt-enabled-nodes.txt" 2>/dev/null | sed 's/^/    /'
+    for t in $(cat /proc/consoles 2>/dev/null | awk '{print $1}'); do
+        [ -e "/dev/$t" ] || continue
+        have stty && echo "line settings of /dev/$t: $(stty -F "/dev/$t" 2>/dev/null | tr '\n' ' ')"
+    done
+    echo
+    echo "### VGA (GFX display controller 0x1e6e6000) and KVM video engine (0x1e700000)"
+    echo "device tree nodes:"
+    grep -E '/(display|gfx|video)@' "$OUT/dt-enabled-nodes.txt" 2>/dev/null | sed 's/^/    /'
+    echo "framebuffer / DRM / video devices:"
+    ls -l /dev/fb* /dev/dri/* /dev/video* 2>/dev/null | awk '{print "    " $1, $NF}'
+    ls /sys/class/drm 2>/dev/null | sed 's/^/    drm: /'
+    for v in /sys/class/video4linux/*; do
+        [ -e "$v" ] && echo "    ${v##*/}: $(cat "$v/name" 2>/dev/null)"
+    done
+    echo "reserved memory (VGA / video buffers):"
+    ls /proc/device-tree/reserved-memory 2>/dev/null | sed 's/^/    /'
+    echo "kernel messages:"
+    grep -i -E 'aspeed-video|aspeed_video|gfx|vga|drm|fb[0-9]|framebuffer|video engine' \
+        "$OUT/dmesg.txt" 2>/dev/null | sed 's/^/    /'
+    echo "KVM / video processes:"
+    ps w 2>/dev/null | grep -i -E '[k]vm|[v]ideo|[o]bmc-ikvm|[v]nc' | sed 's/^/    /'
+} > "$OUT/console-vga.txt"
+if [ -n "$DEVMEM" ]; then
+    {
+        echo "SCU500 hw strap 1: $(rd 0x1e6e2500)  (VGA memory size / VGA enable straps)"
+        echo "SCU0C0 misc control: $(rd 0x1e6e20c0)"
+    } >> "$OUT/console-vga.txt"
+    dump_range block-regs.txt "GFX (VGA display) 0x1e6e6000" 0x1e6e6000 0x000 0x0fc
+    dump_range block-regs.txt "Video engine (KVM) 0x1e700000" 0x1e700000 0x000 0x0fc
+fi
 
 # ---------------------------------------------------------------- 14. IPMI
 say "[14/14] IPMI (if ipmitool exists on this firmware)"
