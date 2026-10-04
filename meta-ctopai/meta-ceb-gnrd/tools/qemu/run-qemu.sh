@@ -79,7 +79,7 @@ exec qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x49,id=temp-outlet \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x4a,id=temp-pcie \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x4b,id=temp-m2 \
-  -device adm1272,bus=aspeed.i2c.bus.7,address=0x58,id=psu0 \
-  -device adm1272,bus=aspeed.i2c.bus.7,address=0x59,id=psu1 \
+  -device isl69260,bus=aspeed.i2c.bus.7,address=0x58,id=psu0 \
+  -device isl69260,bus=aspeed.i2c.bus.7,address=0x59,id=psu1 \
   $FRU \
   $PCIE
