@@ -25,6 +25,28 @@ then reboot the BMC.  `ipmitool fru write` does not write the EEPROM on
 OpenBMC, it only updates the inventory.
 | PCIe slot I2C buses (I2C1-6) | `run-qemu.sh`, a 256-byte EEPROM at 0x50 on each |
 
+## SOL without the VUART
+
+QEMU has no VUART, so the host serial console is played by UART3 (BMC ttyS2),
+which `run-qemu.sh` connects to `~/qemu-ceb-gnrd/host-uart.sock`.  Only the
+running BMC is changed, a BMC reboot restores the normal SOL on ttyVUART0.  On
+the BMC:
+
+```
+systemctl stop obmc-console@ttyVUART0.service
+obmc-console-server --config /etc/obmc-console/server.ttyVUART0.conf ttyS2 &
+```
+
+On Ubuntu, the "host" end (type here, read the web SOL page or
+`ipmitool -I lanplus -H 127.0.0.1 -p 2623 -U root -P 0penBmc sol activate`):
+
+```
+socat -,raw,echo=0 UNIX-CONNECT:$HOME/qemu-ceb-gnrd/host-uart.sock
+```
+
+or a real x86 guest whose COM1 is that socket:
+`qemu-system-x86_64 ... -serial unix:$HOME/qemu-ceb-gnrd/host-uart.sock`.
+
 Not emulated, test on the board: eSPI (VUART/SOL, KCS, POST codes, Virtual Wire),
 PECI (CPU/DIMM temperatures), KVM video, USB virtual media, fan PWM/TACH, the
 NCT3015Y RTC.

@@ -14,6 +14,9 @@
 #   I2C1-6  (Linux i2c-0..5) 0x50     one 256-byte EEPROM per PCIe slot bus
 #   QMP     control socket used by host-sim.py (host power, buttons, temperatures)
 #
+#   UART3   (BMC ttyS2) on ~/qemu-ceb-gnrd/host-uart.sock: the host serial port
+#           for SOL tests (QEMU has no VUART; see README.md)
+#
 # Not emulated (test on the board): eSPI/VUART/KCS/POST codes, PECI, KVM video,
 # USB virtual media, fan PWM/TACH, the NCT3015Y RTC.
 #
@@ -57,9 +60,15 @@ for bus in 0 1 2 3 4 5; do
 done
 
 echo "QMP socket for host-sim.py: $QMP"
+echo "Host serial console (UART3, for SOL tests): $STATE/host-uart.sock"
+# Serial ports: the first is UART5 (BMC debug console, this terminal), then
+# UART1, UART2, UART3 ...  UART3 (BMC ttyS2) goes to a socket that plays the host's
+# serial port for SOL tests (QEMU has no VUART); see README.md.
 # shellcheck disable=SC2086
 exec qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
   -qmp "unix:$QMP,server=on,wait=off" \
+  -serial stdio -serial null -serial null \
+  -serial "unix:$STATE/host-uart.sock,server=on,wait=off" \
   -drive file="$IMAGE",format=raw,if=mtd,index=0 \
   -drive file="$BIOS_FLASH",format=raw,if=mtd,index=1 \
   -nic user \
