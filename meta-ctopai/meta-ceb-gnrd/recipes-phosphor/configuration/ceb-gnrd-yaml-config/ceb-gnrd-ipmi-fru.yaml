@@ -1,29 +1,63 @@
-# IPMI FRU read mapping for ceb-gnrd.
-# Maps FRU EEPROM sections to D-Bus inventory paths.
-# FRUID 0 = motherboard FRU EEPROM.
+# IPMI FRU mapping for ceb-gnrd: which FRU fields go to which D-Bus inventory
+# property.  Used in both directions:
+#   * phosphor-ipmi-fru (ipmi-fru-parser): obmc-read-eeprom at boot and IPMI
+#     Write FRU Data parse the FRU and send these properties to the inventory
+#     manager;
+#   * phosphor-ipmi-host (ceb-gnrd-ipmi-fru-read-inventory-native): IPMI Read FRU
+#     Data ("ipmitool fru print") builds the FRU areas back from them.
 #
-# entityID/entityInstance use the generic value 0 (unspecified entity).
+# FRUID 0 = motherboard FRU EEPROM (FM24C08, I2C11 0x50).
+# IPMIFruProperty must be one of the parser's key names:
+#   Chassis: Type, Part Number, Serial Number, Custom Field 1..8
+#   Board:   Mfg Date, Manufacturer, Name, Serial Number, Part Number,
+#            FRU File ID, Custom Field 1..8
+#   Product: Manufacturer, Name, Model Number, Version, Serial Number,
+#            Asset Tag, FRU File ID, Custom Field 1..8
+# and every property must belong to the interface it is listed under (the
+# inventory manager rejects the whole update otherwise).
 0:
-    /system/chassis/motherboard:
-        entityID: 0
-        entityInstance: 0
+    /system:
+        entityID: 23
+        entityInstance: 1
         interfaces:
-            xyz.openbmc_project.Inventory.Item.Board.Motherboard:
+            xyz.openbmc_project.Inventory.Item:
+                PrettyName:
+                    IPMIFruProperty: Name
+                    IPMIFruSection: Product
+            xyz.openbmc_project.Inventory.Decorator.Asset:
                 Manufacturer:
                     IPMIFruProperty: Manufacturer
-                    IPMIFruSection: Board
-                Model:
-                    IPMIFruProperty: Product Name
                     IPMIFruSection: Product
-                PartNumber:
-                    IPMIFruProperty: Part Number
-                    IPMIFruSection: Board
+                Model:
+                    IPMIFruProperty: Model Number
+                    IPMIFruSection: Product
                 SerialNumber:
                     IPMIFruProperty: Serial Number
-                    IPMIFruSection: Board
+                    IPMIFruSection: Product
+            xyz.openbmc_project.Inventory.Decorator.Revision:
                 Version:
                     IPMIFruProperty: Version
                     IPMIFruSection: Product
+            xyz.openbmc_project.Inventory.Item.System:
+    /system/chassis:
+        entityID: 23
+        entityInstance: 2
+        interfaces:
+            xyz.openbmc_project.Inventory.Decorator.Asset:
+                PartNumber:
+                    IPMIFruProperty: Part Number
+                    IPMIFruSection: Chassis
+                SerialNumber:
+                    IPMIFruProperty: Serial Number
+                    IPMIFruSection: Chassis
+    /system/chassis/motherboard:
+        entityID: 7
+        entityInstance: 1
+        interfaces:
+            xyz.openbmc_project.Inventory.Item:
+                PrettyName:
+                    IPMIFruProperty: Name
+                    IPMIFruSection: Board
             xyz.openbmc_project.Inventory.Decorator.Asset:
                 BuildDate:
                     IPMIFruProperty: Mfg Date
@@ -31,18 +65,10 @@
                 Manufacturer:
                     IPMIFruProperty: Manufacturer
                     IPMIFruSection: Board
-                Model:
-                    IPMIFruProperty: Product Name
-                    IPMIFruSection: Product
                 PartNumber:
                     IPMIFruProperty: Part Number
                     IPMIFruSection: Board
                 SerialNumber:
                     IPMIFruProperty: Serial Number
                     IPMIFruSection: Board
-                SKU:
-                    IPMIFruProperty: SKU
-                    IPMIFruSection: Product
-                Version:
-                    IPMIFruProperty: Version
-                    IPMIFruSection: Product
+            xyz.openbmc_project.Inventory.Item.Board.Motherboard:
