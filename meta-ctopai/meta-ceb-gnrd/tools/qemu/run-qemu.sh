@@ -30,11 +30,13 @@ if [ ! -f "$IMAGE" ]; then
 fi
 mkdir -p "$STATE" || exit 1
 [ -f "$BIOS_FLASH" ] || truncate -s 64M "$BIOS_FLASH"
-# FRU EEPROM block 0x50 (256 bytes, erased = 0xff)
-# (LC_ALL=C: in a UTF-8 locale tr writes \377 as two bytes; QEMU needs exactly
-# 256 bytes, so a file of another size, e.g. from that bug, is recreated)
-if [ "$(wc -c < "$STATE/fru.bin" 2>/dev/null)" != 256 ]; then
-    head -c 256 /dev/zero | LC_ALL=C tr '\000' '\377' > "$STATE/fru.bin"
+# FRU EEPROM block 0x50, erased = 0xff.  QEMU's block layer counts a raw file in
+# 512-byte sectors and at24c-eeprom needs file size == rom-size, so the backing
+# file is 512 bytes with 1-byte addressing (the guest uses the first 256 bytes,
+# like the real 24C08 block).  LC_ALL=C: in a UTF-8 locale tr writes \377 as two
+# bytes.  A file of another size is recreated.
+if [ "$(wc -c < "$STATE/fru.bin" 2>/dev/null)" != 512 ]; then
+    head -c 512 /dev/zero | LC_ALL=C tr '\000' '\377' > "$STATE/fru.bin"
 fi
 rm -f "$QMP"
 
@@ -59,7 +61,7 @@ exec qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x4a,id=temp-pcie \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x4b,id=temp-m2 \
   -drive file="$STATE/fru.bin",format=raw,if=none,id=fru0 \
-  -device at24c-eeprom,bus=aspeed.i2c.bus.10,address=0x50,rom-size=256,drive=fru0 \
+  -device at24c-eeprom,bus=aspeed.i2c.bus.10,address=0x50,rom-size=512,address-size=1,drive=fru0 \
   -device at24c-eeprom,bus=aspeed.i2c.bus.10,address=0x51,rom-size=256 \
   -device at24c-eeprom,bus=aspeed.i2c.bus.10,address=0x52,rom-size=256 \
   -device at24c-eeprom,bus=aspeed.i2c.bus.10,address=0x53,rom-size=256 \
