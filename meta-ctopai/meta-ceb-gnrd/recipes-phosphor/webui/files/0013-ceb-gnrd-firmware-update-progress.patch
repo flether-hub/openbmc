@@ -12,12 +12,12 @@ erasing, writing, verifying, returning the flash, force-off pulse, power-on),
 and the page reports success or the step that failed.  A BMC update still ends
 with the BMC reboot and the refresh reminder.
 
-Regions: for a BIOS package the page lists the flash regions (bios-layout.txt
-from the package, or the board default) as check boxes.  nac0/nac1 (settings
-and MAC addresses of the CPU's integrated network controller) are not selected
-by default and can only be selected after confirming a warning.  The selection
-is added to the package as bios-regions.txt, which bios-update.sh uses to
-write only those regions.
+Regions: for a BIOS package the page lists the regions of the board's fixed
+BIOS flash layout as check boxes.  nac0/nac1 (settings and MAC addresses of
+the CPU's integrated network controller) are not selected by default and can
+only be selected after confirming a warning.  The selection is added to the
+package as bios-regions.txt, which bios-update.sh uses to write only those
+regions.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 ---
@@ -176,9 +176,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +// Redfish TaskState values that end a task without success
 +const TASK_FAILED = ['Exception', 'Killed', 'Cancelled', 'Interrupted'];
 +
-+// CEB-GNRD: BIOS flash layout used when the package has no bios-layout.txt
-+// (same as /usr/share/ceb-gnrd/bios-layout.txt on the BMC).
-+const DEFAULT_BIOS_LAYOUT = `00000000:00000fff descriptor
++// CEB-GNRD: the fixed layout of the board's BIOS flash
++// (same as /usr/share/ceb-gnrd/bios-layout.txt, used by bios-update.sh).
++const BIOS_LAYOUT = `00000000:00000fff descriptor
 +00001000:00001fff metadata
 +00002000:00011fff pdr
 +00012000:01011fff bios
@@ -310,7 +310,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
    validations() {
      return {
        file: {
-@@ -89,36 +328,199 @@
+@@ -89,36 +328,195 @@
    created() {
      this.$store.dispatch('firmware/getUpdateServiceSettings');
    },
@@ -483,8 +483,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +      }
 +    },
 +    // The update package is a tar file; its MANIFEST says what it updates
-+    // (purpose=...VersionPurpose.Host for the BIOS, .BMC for the BMC).  A BIOS
-+    // package may carry its own bios-layout.txt.
++    // (purpose=...VersionPurpose.Host for the BIOS, .BMC for the BMC).
 +    async inspectPackage(file) {
 +      this.filePurpose = null;
 +      this.biosRegions = [];
@@ -495,10 +494,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +        const match = manifest.match(/^purpose=.*\.(\w+)\s*$/m);
 +        this.filePurpose = match ? match[1] : null;
 +        if (this.filePurpose === 'Host') {
-+          const layout =
-+            (await readTarText(file, tar, 'bios-layout.txt')) ||
-+            DEFAULT_BIOS_LAYOUT;
-+          this.biosRegions = parseLayout(layout);
++          this.biosRegions = parseLayout(BIOS_LAYOUT);
 +        }
 +      } catch (error) {
 +        console.log(error);
@@ -525,7 +521,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
      onSubmitUpload() {
        this.v$.$touch();
        if (this.v$.$invalid) return;
-@@ -127,6 +529,7 @@
+@@ -127,6 +525,7 @@
      onFileUpload(file) {
        this.file = file;
        this.v$.file.$touch();

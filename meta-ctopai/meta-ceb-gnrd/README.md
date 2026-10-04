@@ -98,9 +98,9 @@ Platform features
   assembled board.
   Only selected flash regions are written (`flashrom -l <layout> -i <region>`,
   which also skips unchanged blocks); the other regions keep their content.
-  The layout is `bios-layout.txt` in the update package or the board default
-  `/usr/share/ceb-gnrd/bios-layout.txt` (descriptor, metadata, pdr, bios,
-  nac1, nac0, reserved).  The regions come from `bios-regions.txt` in the
+  The layout is fixed for the board: `/usr/share/ceb-gnrd/bios-layout.txt`
+  (descriptor, metadata, pdr, bios, nac1, nac0, reserved; the web page has the
+  same table).  The regions come from `bios-regions.txt` in the
   package, which the web firmware page adds from its check boxes; without it
   (curl, Redfish clients) every region except nac0/nac1 is written.  nac0/nac1
   hold the CPU's integrated network controller settings and MAC addresses; the

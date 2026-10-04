@@ -113,17 +113,15 @@ if (( $(stat -c %s "$IMAGE_FILE") != EXPECTED_FLASH_SIZE )); then
     exit 1
 fi
 
-# Flash regions.  The layout (flashrom format, "start:end name", hex) comes from
-# bios-layout.txt in the update package, or the board default below.  The regions
-# to write come from bios-regions.txt in the package (one name per line, written
-# by the web firmware page); without it every region except nac0/nac1 is written.
+# Flash regions.  The layout of the board's BIOS flash is fixed (flashrom format,
+# "start:end name", hex): /usr/share/ceb-gnrd/bios-layout.txt.  The regions to
+# write come from bios-regions.txt in the package (one name per line, added by the
+# web firmware page); without it every region except nac0/nac1 is written.
 # nac0/nac1 hold the configuration of the CPU's integrated network controller,
 # including its MAC addresses, which a full image would overwrite.  Regions not
 # selected keep their current content.
-readonly DEFAULT_LAYOUT=/usr/share/ceb-gnrd/bios-layout.txt
+readonly LAYOUT_FILE=/usr/share/ceb-gnrd/bios-layout.txt
 readonly DEFAULT_SKIPPED_REGIONS="nac0 nac1"
-LAYOUT_FILE="$1/bios-layout.txt"
-[[ -f "$LAYOUT_FILE" ]] || LAYOUT_FILE=$DEFAULT_LAYOUT
 if [[ ! -r "$LAYOUT_FILE" ]]; then
     echo "ERROR: BIOS flash layout $LAYOUT_FILE not found." >&2
     exit 1
