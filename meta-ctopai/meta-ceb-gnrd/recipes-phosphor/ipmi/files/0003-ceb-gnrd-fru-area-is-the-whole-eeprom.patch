@@ -1,17 +1,22 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CEB-GNRD board layer <bmc@localhost>
 Date: Sun, 4 Oct 2026 00:00:00 +0000
-Subject: [PATCH] storagecommands: report the whole EEPROM as the FRU inventory area
+Subject: [PATCH] storagecommands: FRU commands go through FruDevice, with the whole EEPROM as FRU area
 
 Get FRU Inventory Area Info returned the length of the stored FRU image, so
 'ipmitool fru write' truncated any larger image to that length.  Report the
 size of the EEPROM (from sysfs) and pad the image read from fru-device with
 0xFF up to it.
 
+The phosphor-ipmi-fru handlers register the same three FRU commands at the
+same priority, and the one registered last wins (library load order); Write
+FRU Data was handled by them, keeping the data in /tmp and never reaching
+FruDevice.  Register these handlers at prioOemBase.
+
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
 diff --git a/dbus-sdr/storagecommands.cpp b/dbus-sdr/storagecommands.cpp
-index 6de099c..5377635 100644
+index 6de099c..e339452 100644
 --- a/dbus-sdr/storagecommands.cpp
 +++ b/dbus-sdr/storagecommands.cpp
 @@ -31,6 +31,8 @@
@@ -58,3 +63,29 @@ index 6de099c..5377635 100644
      fruCache.clear();
      lastDevId = devId;
      fruCache = fru;
+@@ -1258,17 +1281,22 @@ void registerStorageFunctions()
+     createTimers();
+     startMatch();
+ 
++    // The FRU commands are also registered by the phosphor-ipmi-fru handlers
++    // (fru_strgfnhandler.cpp, storagehandler.cpp) at prioOpenBmcBase; the one
++    // registered last wins, which depends on the library load order.  Register
++    // these at a higher priority so that the FruDevice based ones always win.
++
+     // <Get FRU Inventory Area Info>
+-    ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
++    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnStorage,
+                           ipmi::storage::cmdGetFruInventoryAreaInfo,
+                           ipmi::Privilege::User, ipmiStorageGetFruInvAreaInfo);
+     // <READ FRU Data>
+-    ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
++    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnStorage,
+                           ipmi::storage::cmdReadFruData, ipmi::Privilege::User,
+                           ipmiStorageReadFruData);
+ 
+     // <WRITE FRU Data>
+-    ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
++    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnStorage,
+                           ipmi::storage::cmdWriteFruData,
+                           ipmi::Privilege::Operator, ipmiStorageWriteFruData);
+ 
