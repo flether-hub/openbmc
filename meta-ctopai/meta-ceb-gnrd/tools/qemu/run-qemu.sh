@@ -6,9 +6,9 @@
 #   network MAC2 = eth0, the RJ45 port (192.168.185.200, port forwards below)
 #           MAC3 = eth1, NC-SI (QEMU's user network answers NC-SI, DHCP 10.0.2.x)
 #   I2C7    (Linux i2c-6)  0x48-0x4b  4 temperature sensors (tmp105, LM75 compatible)
-#   I2C8    (Linux i2c-7)  0x58, 0x59 2 PMBus "PSUs" (QEMU's adm1272 hot-swap
-#                                     controller: presence, PMBus driver, readings
-#                                     that differ from a CRPS supply); 0x5a empty
+#   I2C8    (Linux i2c-7)  0x58, 0x59 2 PMBus "PSUs" (QEMU's isl69260 voltage regulator,
+#                                     linear PMBus format like a CRPS supply: presence,
+#                                     pmbus driver, fixed readings); 0x5a empty
 #   I2C11   (Linux i2c-10) 0x50-0x53  FRU EEPROM, 1 KiB like the FM24C08; all four
 #                                     256-byte blocks are kept in files
 #   I2C1-6  (Linux i2c-0..5) 0x50     one 256-byte EEPROM per PCIe slot bus

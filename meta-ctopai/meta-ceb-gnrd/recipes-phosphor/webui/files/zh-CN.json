@@ -919,8 +919,11 @@
       "upperWarning": "过高警告",
       "upperCritical": "过高严重警告"
     },
+    "tabs": {
+      "analog": "模拟量传感器",
+      "discrete": "离散传感器"
+    },
     "discrete": {
-      "title": "离散传感器",
       "description": "说明",
       "state": "状态",
       "bootProgress": "主机启动进度",
