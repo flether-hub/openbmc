@@ -23,7 +23,9 @@ if [ ! -r "$EEPROM" ]; then
     exit 1
 fi
 
-first=$(od -An -v -tx1 -N 16 "$EEPROM" | tr -d ' \n')
+# BusyBox od has no -A/-t/-N: first 16 bytes as 8 hex words
+first=$(dd if="$EEPROM" bs=16 count=1 2>/dev/null | od -v -x | head -n 1)
+first=$(echo "${first#* }" | tr -d ' ')
 if [ "$first" != "$BLANK" ]; then
     echo "FRU EEPROM is not blank, left unchanged"
     exit 0

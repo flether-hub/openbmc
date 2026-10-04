@@ -23,14 +23,15 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  } /* ipmi_fru_help() */
  
  /* ipmi_fru_read_internal_use -  print internal use are in hex or file
-@@ -4576,6 +4576,376 @@
+@@ -4576,6 +4576,385 @@
  	return 0;
  }
  
 +/* ---- "fru gen": interactive generation of a FRU image ---- */
 +
 +/* worst case: product area, 3 + 7 fields of 64 bytes + end marker + padding */
-+#define FRU_GEN_AREA_MAX    512
++#define FRU_GEN_AREA_MAX    1024
++#define FRU_GEN_IMAGE_SIZE  1024    /* size of the FRU EEPROM */
 +#define FRU_GEN_FIELD_MAX   63
 +
 +/* fru_gen_read_line - read one line from stdin without the line ending
@@ -197,7 +198,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 + * returns the total size of the area in bytes
 + */
 +static size_t
-+fru_gen_end_area(uint8_t *area, size_t used)
++fru_gen_end_area(uint8_t *area, size_t used, size_t min_total)
 +{
 +	size_t total;
 +	size_t i;
@@ -205,6 +206,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +
 +	area[used++] = 0xC1;    /* end of fields */
 +	total = (used + 1 + 7) & ~(size_t)7;    /* room for the checksum byte */
++	if (total < min_total) {
++		total = min_total & ~(size_t)7;
++	}
 +	while (used < total - 1) {
 +		area[used++] = 0;
 +	}
@@ -234,7 +238,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +					 "text, printable ASCII, up to 63 characters",
 +					 "CHASSIS_SERIAL_NUMBER", text);
 +	used = fru_gen_add_field(area, used, text);
-+	return fru_gen_end_area(area, used);
++	return fru_gen_end_area(area, used, 0);
 +}
 +
 +static size_t
@@ -272,11 +276,11 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +					 "text, printable ASCII, up to 63 characters",
 +					 "FRU_FILE_ID", text);
 +	used = fru_gen_add_field(area, used, text);
-+	return fru_gen_end_area(area, used);
++	return fru_gen_end_area(area, used, 0);
 +}
 +
 +static size_t
-+fru_gen_product_area(uint8_t *area)
++fru_gen_product_area(uint8_t *area, size_t min_total)
 +{
 +	char text[FRU_GEN_FIELD_MAX + 1];
 +	size_t used = 0;
@@ -313,7 +317,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +					 "text, printable ASCII, up to 63 characters",
 +					 "FRU_FILE_ID", text);
 +	used = fru_gen_add_field(area, used, text);
-+	return fru_gen_end_area(area, used);
++	return fru_gen_end_area(area, used, min_total);
 +}
 +
 +static void
@@ -355,7 +359,12 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +		   filename);
 +	clen = fru_gen_chassis_area(chassis);
 +	blen = fru_gen_board_area(board);
-+	plen = fru_gen_product_area(product);
++	/* pad the product area so that the image fills the whole EEPROM: the BMC
++	 * reports the size of the stored FRU as the size of the FRU area and
++	 * 'fru write' never writes more than that, so a small image could not be
++	 * replaced by a larger one later */
++	plen = fru_gen_product_area(product, clen + blen + 8 < FRU_GEN_IMAGE_SIZE
++								? FRU_GEN_IMAGE_SIZE - 8 - clen - blen : 0);
 +
 +	memset(hdr, 0, sizeof(hdr));
 +	hdr[0] = 0x01;                                  /* format version */
@@ -400,7 +409,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  int
  ipmi_fru_main(struct ipmi_intf * intf, int argc, char ** argv)
  {
-@@ -4801,6 +5171,13 @@
+@@ -4801,6 +5180,13 @@
  			rc = ipmi_fru_get_multirec(intf, fru_id, argc, argv);
  		}
  	}
