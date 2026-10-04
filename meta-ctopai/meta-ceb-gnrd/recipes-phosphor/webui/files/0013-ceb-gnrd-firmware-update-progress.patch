@@ -186,10 +186,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
 +// BMC update: expected time from the staged image to the BMC answering again
 +// (reboot, writing kernel/rofs/rwfs to flash, boot), the check interval, how
 +// long to wait for the BMC to go down, and when to give up.
-+const BMC_REBOOT_ESTIMATE_S = 300;
++const BMC_REBOOT_ESTIMATE_S = 600;
 +const BMC_CHECK_MS = 5000;
 +const BMC_WAIT_DOWN_S = 180;
-+const BMC_REBOOT_LIMIT_S = 900;
++const BMC_REBOOT_LIMIT_S = 1500;
 +// Redfish TaskState values that end a task without success
 +const TASK_FAILED = ['Exception', 'Killed', 'Cancelled', 'Interrupted'];
 +
