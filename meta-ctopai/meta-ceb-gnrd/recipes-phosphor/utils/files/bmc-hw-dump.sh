@@ -22,6 +22,8 @@
 #   BMC debug console (console=, getty, UART nodes) and VGA / KVM video engine.
 #   ceb-gnrd-checklist.txt lists every hardware function of the ceb-gnrd firmware
 #   with the value the new firmware expects next to what this firmware shows.
+#   chips.txt lists the external chips (device tree compatibles, I2C / SPI
+#   devices and their drivers, flash JEDEC IDs, PHY IDs, PSU models, modules).
 #
 # Safety
 #   Nothing on the BMC is changed: the script only reads files and registers and
@@ -56,7 +58,7 @@ if [ "${1:-}" = compare ]; then
         espi-regs.txt lpc-regs.txt vuart-regs.txt \
         i2c-devices.txt i2c-scan.txt hwmon-layout.txt iio-layout.txt \
         serial.txt net-layout.txt mtd.txt leds.txt watchdog.txt rtc.txt \
-        dev-nodes.txt console-vga.txt ceb-gnrd-checklist.txt
+        dev-nodes.txt console-vga.txt chips.txt ceb-gnrd-checklist.txt
     do
         if [ ! -e "$old/$f" ] && [ ! -e "$new/$f" ]; then
             continue
@@ -559,6 +561,119 @@ if [ -n "$DEVMEM" ]; then
     dump_range block-regs.txt "Video engine (KVM) 0x1e700000" 0x1e700000 0x000 0x0fc
 fi
 
+# ---------------------------------------------------------------- 13c. external chips
+say "[13c/15] external chips: models and kernel drivers"
+phy_model() {
+    case "$1" in
+        0x001cc916) echo "Realtek RTL8211F/FS" ;;
+        0x001cc915) echo "Realtek RTL8211E" ;;
+        0x001cc912) echo "Realtek RTL8211B" ;;
+        0x001cc914) echo "Realtek RTL8211DN" ;;
+        0x01410dd*) echo "Marvell 88E1510/1512" ;;
+        0x01410cc*) echo "Marvell 88E1111" ;;
+        0x600d84a*) echo "Broadcom BCM54210E" ;;
+        0x0022162*) echo "Micrel/Microchip KSZ9031" ;;
+        0x2000a23*) echo "TI DP83867" ;;
+        *) echo "unknown (look up the OUI)" ;;
+    esac
+}
+{
+    echo "### chips declared in the device tree (node: compatible)"
+    echo "# children of I2C / SPI / FMC / MDIO controllers are the external chips"
+    find /proc/device-tree -name compatible 2>/dev/null | sort | while read -r c; do
+        node=$(dirname "$c" | sed 's|^/proc/device-tree||')
+        case "$node" in
+            */i2c@*/*|*/i2c-bus@*/*|*/spi@*/*|*/fmc@*/*|*/mdio@*/*|*/ethernet-phy*|*/leds*|*/iio-hwmon*|*/gpio-keys*|*/pwm-fan*)
+                st=""
+                [ -r "$(dirname "$c")/status" ] && st=" [$(tr -d '\0' < "$(dirname "$c")/status")]"
+                reg=""
+                [ -r "$(dirname "$c")/reg" ] && have od && \
+                    reg=" reg=$(od -A n -t x1 "$(dirname "$c")/reg" 2>/dev/null | tr -s ' ' | sed 's/^ //')"
+                echo "$node: $(tr '\0' ' ' < "$c")$st$reg"
+                ;;
+        esac
+    done
+    echo
+    echo "### I2C chips the kernel knows (bus-address: name -> driver)"
+    for d in /sys/bus/i2c/devices/[0-9]*-*; do
+        [ -d "$d" ] || continue
+        drv=$(readlink "$d/driver" 2>/dev/null | sed 's|.*/||')
+        echo "${d##*/}: $(cat "$d/name" 2>/dev/null) -> ${drv:-<no driver bound>}"
+    done
+    echo
+    echo "### SPI flash chips"
+    for d in /sys/bus/spi/devices/*; do
+        [ -d "$d" ] || continue
+        drv=$(readlink "$d/driver" 2>/dev/null | sed 's|.*/||')
+        line="${d##*/}: modalias=$(cat "$d/modalias" 2>/dev/null) driver=${drv:-<none>}"
+        [ -r "$d/spi-nor/jedec_id" ] && line="$line jedec_id=$(cat "$d/spi-nor/jedec_id")"
+        [ -r "$d/spi-nor/manufacturer" ] && line="$line manufacturer=$(cat "$d/spi-nor/manufacturer")"
+        [ -r "$d/spi-nor/partname" ] && line="$line part=$(cat "$d/spi-nor/partname")"
+        echo "$line"
+    done
+    grep -i -E 'spi-nor|spi_nor|jedec|found .* flash|detected|mx25|mx66|w25q|n25q|mt25q|s25fl|gd25' \
+        "$OUT/dmesg.txt" 2>/dev/null | sed 's/^/    dmesg: /'
+    echo
+    echo "### Ethernet PHYs"
+    for n in /sys/class/net/*; do
+        [ -e "$n/phydev/phy_id" ] || continue
+        id=$(cat "$n/phydev/phy_id")
+        echo "${n##*/}: phy=$(readlink "$n/phydev" | sed 's|.*/||') phy_id=$id ($(phy_model "$id")) driver=$(readlink "$n/phydev/driver" 2>/dev/null | sed 's|.*/||')"
+    done
+    for p in /sys/bus/mdio_bus/devices/*; do
+        [ -e "$p/phy_id" ] || continue
+        id=$(cat "$p/phy_id")
+        echo "${p##*/}: phy_id=$id ($(phy_model "$id"))"
+    done
+    echo "NC-SI (network controller behind the NC-SI port):"
+    grep -i 'ncsi' "$OUT/dmesg.txt" 2>/dev/null | sed 's/^/    dmesg: /' | head -n 20
+    echo
+    echo "### hwmon chips (sensor driver names)"
+    for h in /sys/class/hwmon/hwmon*; do
+        [ -d "$h" ] || continue
+        echo "${h##*/}: $(cat "$h/name" 2>/dev/null) on $(readlink -f "$h/device" 2>/dev/null | sed 's|.*/||')"
+    done
+    echo
+    echo "### PMBus power supplies (manufacturer / model, if a pmbus driver is bound)"
+    for d in /sys/kernel/debug/pmbus/hwmon*; do
+        [ -d "$d" ] || continue
+        echo "${d##*/}: mfr_id=$(cat "$d/mfr_id" 2>/dev/null) model=$(cat "$d/mfr_model" 2>/dev/null) revision=$(cat "$d/mfr_revision" 2>/dev/null) serial=$(cat "$d/mfr_serial" 2>/dev/null)"
+    done
+    echo
+    echo "### RTC / EEPROM / LED / watchdog chips"
+    for r in /sys/class/rtc/rtc*; do
+        [ -d "$r" ] && echo "${r##*/}: $(cat "$r/name" 2>/dev/null)"
+    done
+    for e in /sys/bus/i2c/devices/*/eeprom; do
+        [ -e "$e" ] || continue
+        d=${e%/eeprom}; d=${d##*/}
+        echo "$d: $(cat "/sys/bus/i2c/devices/$d/name" 2>/dev/null) eeprom, $(wc -c < "$e" 2>/dev/null) bytes"
+    done
+    echo
+    echo "### every kernel driver bound to a device (bus: device -> driver)"
+    for bus in platform i2c spi mdio_bus i3c peci usb; do
+        for d in /sys/bus/$bus/devices/*; do
+            [ -e "$d/driver" ] || continue
+            echo "$bus: ${d##*/} -> $(readlink "$d/driver" | sed 's|.*/||')"
+        done
+    done
+    echo
+    echo "### loaded kernel modules"
+    awk '{print $1}' /proc/modules 2>/dev/null | sort | tr '\n' ' '
+    echo
+} > "$OUT/chips.txt"
+# PMBus identity of PSUs that no driver owns, only with -s (reads MFR_ID 0x99 and
+# MFR_MODEL 0x9a with SMBus block reads, no writes).
+if [ "$SCAN" = 1 ] && have i2cget; then
+    echo "### PMBus MFR_ID / MFR_MODEL read with i2cget (i2c-7 0x58-0x5a)" >> "$OUT/chips.txt"
+    for a in 0x58 0x59 0x5a; do
+        [ -d "/sys/bus/i2c/devices/$(printf '7-%04x' $a)" ] && continue
+        id=$(i2cget -y 7 $a 0x99 s 2>/dev/null)
+        md=$(i2cget -y 7 $a 0x9a s 2>/dev/null)
+        [ -n "$id$md" ] && echo "i2c-7 $a: MFR_ID=$id MFR_MODEL=$md (hex bytes, ASCII)" >> "$OUT/chips.txt"
+    done
+fi
+
 # ---------------------------------------------------------------- 14. IPMI
 say "[14/15] IPMI (if ipmitool exists on this firmware)"
 if have ipmitool; then
@@ -719,6 +834,24 @@ ck "expected RTC: NCT3015Y on i2c-9 0x6f as rtc0, internal AST2600 RTC disabled"
 sed 's/^/    found /' "$OUT/rtc.txt" >> "$CK" 2>/dev/null
 ck "expected chassis intrusion: AST2600 CHASI# latch (hwmon intrusion0_alarm)"
 grep -A3 'chassis intrusion' "$OUT/dev-nodes.txt" 2>/dev/null | sed '1d; s/^/    found /' >> "$CK"
+
+sect "external chips (models and drivers, details in chips.txt)"
+for e in \
+    "RJ45 PHY|Realtek RTL8211FS (phy_id 0x001cc916), driver 'RTL8211F Gigabit Ethernet'|phy_id=" \
+    "BMC flash|Winbond W25Q512JV 64 MiB on FMC (jedec ef4020)|fmc|1e620000|w25q|winbond" \
+    "BIOS flash|Macronix MX25U51245G 64 MiB on SPI1 (jedec c2953a)|spi1|1e630000|mx25|macronix" \
+    "RTC|Nuvoton NCT3015Y, driver rtc-nct3018y (name nct3018y)|^rtc" \
+    "FRU EEPROM|FM24C08 (24c08), driver at24|eeprom" \
+    "temperatures|4x NST175 at i2c-6 0x48-0x4b, driver lm75 (created by dbus-sensors)|lm75|tmp75|nst175" \
+    "PSU|CRPS PMBus modules at i2c-7 0x58-0x5a, driver pmbus|pmbus|^7-00|MFR_" \
+    "NC-SI NIC|Intel E810 behind NC-SI|ncsi" \
+    "fans|AST2600 PWM/tach, driver aspeed-g6-pwm-tach (hwmon)|pwm|tach" \
+    "ADC|AST2600 ADC, driver aspeed_adc (iio)|adc"
+do
+    what=${e%%|*}; rest=${e#*|}; exp=${rest%%|*}; pat=${rest#*|}
+    ck "$what: expected $exp"
+    grep -i -E "$pat" "$OUT/chips.txt" 2>/dev/null | grep -v '^#' | head -n 6 | sed 's/^/    found /' >> "$CK"
+done
 
 sect "KVM, VGA, virtual media, I3C"
 ck "expected: video engine video@1e700000 and VGA display@1e6e6000 enabled; USB virtual hub enabled (virtual media / KVM keyboard)"
