@@ -9,3 +9,13 @@ then
 	echo "Skipping image-u-boot: U-Boot is not rewritten by a BMC update."
 	rm -f "${image}u-boot"
 fi
+
+# The full flash image (image-bmc, from *.static.mtd.all.tar) covers the whole chip:
+# U-Boot, the U-Boot environment with the MAC addresses, and the settings in rwfs.
+# Skip it as well unless the same file exists; use *.static.mtd.tar for updates.
+if test -e "${image}bmc" -a ! -e /run/initramfs/update-u-boot
+then
+	echo "Skipping image-bmc: the full flash image would rewrite U-Boot, its"
+	echo "environment (MAC addresses) and all settings; use the .static.mtd.tar package."
+	rm -f "${image}bmc"
+fi
