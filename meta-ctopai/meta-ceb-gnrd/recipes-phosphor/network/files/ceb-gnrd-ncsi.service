@@ -1,7 +1,7 @@
 [Unit]
 Description=Gate host-powered NC-SI interface on chassis power state
-After=xyz.openbmc_project.State.Chassis@0.service systemd-networkd.service
-Wants=xyz.openbmc_project.State.Chassis@0.service systemd-networkd.service
+After=xyz.openbmc_project.Chassis.Control.Power@0.service systemd-networkd.service
+Wants=xyz.openbmc_project.Chassis.Control.Power@0.service systemd-networkd.service
 
 [Service]
 Type=simple

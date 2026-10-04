@@ -312,7 +312,7 @@
         },
         {
             "Class": "fan",
-            "FFGainCoefficient": 0,
+            "FFGainCoefficient": 1.0,
             "FFOffCoefficient": 0,
             "ICoefficient": 0,
             "ILimitMax": 100,
@@ -330,7 +330,7 @@
         },
         {
             "Class": "fan",
-            "FFGainCoefficient": 0,
+            "FFGainCoefficient": 1.0,
             "FFOffCoefficient": 0,
             "ICoefficient": 0,
             "ILimitMax": 100,
@@ -348,7 +348,7 @@
         },
         {
             "Class": "fan",
-            "FFGainCoefficient": 0,
+            "FFGainCoefficient": 1.0,
             "FFOffCoefficient": 0,
             "ICoefficient": 0,
             "ILimitMax": 100,
@@ -366,7 +366,7 @@
         },
         {
             "Class": "fan",
-            "FFGainCoefficient": 0,
+            "FFGainCoefficient": 1.0,
             "FFOffCoefficient": 0,
             "ICoefficient": 0,
             "ILimitMax": 100,
@@ -384,7 +384,7 @@
         },
         {
             "Class": "fan",
-            "FFGainCoefficient": 0,
+            "FFGainCoefficient": 1.0,
             "FFOffCoefficient": 0,
             "ICoefficient": 0,
             "ILimitMax": 100,
@@ -402,7 +402,7 @@
         },
         {
             "Class": "fan",
-            "FFGainCoefficient": 0,
+            "FFGainCoefficient": 1.0,
             "FFOffCoefficient": 0,
             "ICoefficient": 0,
             "ILimitMax": 100,

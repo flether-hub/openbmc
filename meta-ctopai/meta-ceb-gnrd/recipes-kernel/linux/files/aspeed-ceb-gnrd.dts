@@ -93,8 +93,8 @@
  * interface at I/O port 0xCA2 (data) / 0xCA3 (status).  The kernel driver
  * refuses to probe without 'aspeed,lpc-io-reg'; KCS channel 3 only supports the
  * inferred status address, so a single address is given.  No SerIRQ
- * ('aspeed,lpc-interrupts') is configured: the board uses eSPI without virtual
- * wires, so the host polls the KCS status register. */
+ * ('aspeed,lpc-interrupts') is configured: the host BIOS/OS drivers poll the KCS
+ * status register. */
 &kcs3 {
     status = "okay";
     aspeed,lpc-io-reg = <0xca2>;
