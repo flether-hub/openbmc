@@ -582,9 +582,15 @@ class PanelWindow:
                 self.vga_preview.configure(image="", text="VGA 无信号")
             elif video.get("path"):
                 try:
-                    from PIL import Image, ImageTk
+                    # Tk cannot show JPEG itself: decode with Pillow and hand Tk a
+                    # PPM (python3-pil is enough, python3-pil.imagetk is not needed)
+                    from PIL import Image
                     with Image.open(video["path"]) as image:
-                        self.preview_image = ImageTk.PhotoImage(image.resize((400, 300)))
+                        rgb = image.convert("RGB").resize((400, 300))
+                    self.preview_image = tk.PhotoImage(
+                        data=b"P6 400 300 255\n" + rgb.tobytes(), format="PPM")
                     self.vga_preview.configure(image=self.preview_image, text="")
-                except (ImportError, OSError):
-                    self.vga_preview.configure(image="", text="图片：%s\n安装 python3-pil.imagetk 可在窗口内预览" % os.path.basename(video["path"]))
+                except ImportError:
+                    self.vga_preview.configure(image="", text="图片：%s\n安装 python3-pil（sudo apt install python3-pil）可在窗口内预览" % os.path.basename(video["path"]))
+                except (OSError, tk.TclError) as exc:
+                    self.vga_preview.configure(image="", text="图片：%s\n无法预览：%s" % (os.path.basename(video["path"]), exc))

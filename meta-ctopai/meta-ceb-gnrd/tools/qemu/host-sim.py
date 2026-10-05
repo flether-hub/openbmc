@@ -751,6 +751,7 @@ class Panel:
         # them high until they have been seen high once since the last reset.
         self.undriven = set(PULLED_UP)
         self.seen_resets = qmp.resets
+        self._prev = None
         threading.Thread(target=self._poller, daemon=True).start()
 
     def _poller(self):
@@ -816,8 +817,99 @@ class Panel:
             self.posts.append((time.strftime("%H:%M:%S"), code))
         st["post"] = code
         st["posts"] = list(self.posts)
-        st["log"] = list(LOG)[-80:]
+        self._log_changes(st)
+        st["log"] = list(LOG)[-200:]
         return st
+
+    # --- event log: what changed on the board since the last poll -------------
+    PIN_LOG = {
+        POWER_OUT: ("GPIOV2 BMC_CPU_POWER_BUTTON", "BMC→主机", True),
+        RESET_OUT: ("GPIOV3 BMC_CPU_RESET", "BMC→主机", True),
+        FLASH_SEL: ("GPIOM1 BMC_BIOS_FLASH_SELECT", "BMC→主机", False),
+        FAN_OVERRIDE: ("GPIOI6 BMC_FAN_BMC_OVERRIDE_N", "BMC→主机", False),
+        ALERT_LED: ("GPIOI5 BMC_SYS_ALERT_LED", "BMC→主机", False),
+        UID_LED: ("GPIOV1 BMC_UID_LED", "BMC→主机", False),
+        PWRGD: ("GPIOV4 BMC_CPU_PWRGD", "主机→BMC", False),
+        BOOT_OK: ("GPIOM7 BMC_BIOS_BOOT_OK", "主机→BMC", False),
+        PWR_BTN_IN: ("GPIOM2 BMC_POWER_BUTTON_INPUT", "主机→BMC", True),
+        UID_BTN: ("GPIOV0 BMC_UID_BUTTON_N", "主机→BMC", True),
+    }
+
+    def _log_changes(self, st):
+        prev, self._prev = getattr(self, "_prev", None), st
+        if prev is None:
+            return          # first poll: nothing to compare with
+
+        def fmt(v):
+            return "-" if v is None else v
+
+        for pin, (name, direction, low_active) in self.PIN_LOG.items():
+            if pin in WATCHED:
+                continue    # the host model logs these ("BMC: alert LED -> 1")
+            old, new = prev["pins"].get(pin), st["pins"].get(pin)
+            if old is not None and new is not None and old != new:
+                note = ""
+                if low_active:
+                    note = "（低有效，已动作）" if not new else "（低有效，已释放）"
+                log("信号 %s [%s] %d→%d%s" % (name, direction, old, new, note))
+        for name, new in st["temps"].items():
+            old = prev["temps"].get(name)
+            if old is not None and abs(new - old) >= 0.5:
+                log("温度传感器 %s：%.1f→%.1f °C" % (name, old, new))
+        for i, (a, b) in enumerate(zip(prev["fans"], st["fans"])):
+            if a.get("fixed") != b.get("fixed"):
+                fixed = b.get("fixed")
+                log("SYS_FAN%d %s" % (i, "恢复为跟随 PWM" if fixed in (None, -1)
+                                     else ("故障（0 RPM）" if fixed == 0
+                                           else "固定转速 %s RPM" % fixed)))
+            ra, rb = a.get("rpm"), b.get("rpm")
+            if ra is not None and rb is not None and abs(rb - ra) >= max(300, ra // 10):
+                log("SYS_FAN%d 转速 %s→%s RPM（PWM %s%%）" % (i, ra, rb, fmt(b.get("duty"))))
+        for i, (a, b) in enumerate(zip(prev["psus"], st["psus"])):
+            if b.get("model") != "crps":
+                continue
+            if a.get("present") != b.get("present"):
+                log("PSU%d %s" % (i, "插入" if b["present"] else "拔出"))
+            if a.get("ac-lost") != b.get("ac-lost"):
+                log("PSU%d AC %s" % (i, "掉电" if b["ac-lost"] else "恢复"))
+            if abs((a.get("pout-mw") or 0) - (b.get("pout-mw") or 0)) >= 10000:
+                log("PSU%d 输出功率 %.0f→%.0f W" % (i, (a.get("pout-mw") or 0) / 1000,
+                                                  (b.get("pout-mw") or 0) / 1000))
+            if abs((a.get("temp2-mc") or 0) - (b.get("temp2-mc") or 0)) >= 1000:
+                log("PSU%d 温度 %.0f→%.0f °C" % (i, (a.get("temp2-mc") or 0) / 1000,
+                                                (b.get("temp2-mc") or 0) / 1000))
+        pa, pb = prev["peci"], st["peci"]
+        if pa.get("cpu-online") != pb.get("cpu-online") and pb.get("cpu-online") is not None:
+            log("PECI CPU %s" % ("上线" if pb["cpu-online"] else "无响应"))
+        for key, label in (("cpu-temp-mc", "CPU"), ("dimm-temp-mc", "DIMM")):
+            if pa.get(key) is not None and pb.get(key) is not None                     and abs(pa[key] - pb[key]) >= 1000:
+                log("PECI %s 温度 %.0f→%.0f °C" % (label, pa[key] / 1000, pb[key] / 1000))
+        for i, (a, b) in enumerate(zip(prev["adc"], st["adc"])):
+            if a.get("mv") != b.get("mv") and b.get("mv") is not None:
+                log("ADC%d %s：ADC 引脚 %s→%s mV（电源轨 %.3f V）" % (
+                    i, b["name"], fmt(a.get("mv")), b["mv"], b["mv"] * b["scale"] / 1000))
+        if prev["rtc_battery"] != st["rtc_battery"] and st["rtc_battery"] is not None:
+            log("RTC 电池 %s" % ("正常" if st["rtc_battery"] else "没电"))
+        for key, label in (("open", "机箱开盖"), ("latched", "入侵锁存")):
+            if prev["chassis"].get(key) != st["chassis"].get(key) and st["chassis"].get(key) is not None:
+                log("%s：%s" % (label, "是" if st["chassis"][key] else "否"))
+        for key in st["espi"]:
+            a, b = prev["espi"].get(key), st["espi"].get(key)
+            if a != b and b is not None:
+                log("eSPI %s：%s→%s" % (key, fmt(a), b))
+        ua, ub = prev["usb"], st["usb"]
+        if ua.get("connected") != ub.get("connected") and ub.get("connected") is not None:
+            log("USB 主机侧：%s" % ("已连接" if ub["connected"] else "未连接"))
+        old_reports = len(ua.get("reports", []))
+        for r in ub.get("reports", [])[old_reports:][:5]:
+            log("USB HID 报告 port%s ep%s %s" % (r["port"], r["endpoint"], r["hex"]))
+        va, vb = prev["video"], st["video"]
+        if va.get("signal") != vb.get("signal") and vb.get("signal") is not None:
+            log("VGA 输入：%s" % ("有信号" if vb["signal"] else "无信号"))
+        if va.get("path") != vb.get("path") and vb.get("path"):
+            log("VGA 图片：%s" % os.path.basename(vb["path"]))
+        if st["post"] is not None and prev["post"] != st["post"]:
+            log("POST 码 0x%02X（端口 80h）" % st["post"])
 
 
 def serve_panel(panel, port, host, qmp):
