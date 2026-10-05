@@ -91,6 +91,8 @@ TEMPS = {
 WATCHED = {ALERT_LED: "alert LED", UID_LED: "UID LED",
            FLASH_SEL: "BIOS flash select (1 = BMC)",
            FAN_OVERRIDE: "fan override (1 = BMC)"}
+# Low-active BMC outputs with a board pull-up: high while the BMC has not driven them
+PULLED_UP = (POWER_OUT, RESET_OUT)
 # BMC outputs that keep their level while the BMC resets (GPIO reset tolerance)
 RETAINED = {POWER_OUT: "power button out", RESET_OUT: "reset out",
             FLASH_SEL: "BIOS flash select"}
@@ -508,6 +510,21 @@ def set_screen(qmp, state):
         pass        # a QEMU without the video engine model
 
 
+# BMC outputs as the board sees them: the level the BMC drives, or the board's
+# pull-up/down while the pin is not an output (BMC booting, line not requested).
+BOARD_PULL = {POWER_OUT: True, RESET_OUT: True, ALERT_LED: False, UID_LED: False,
+              FLASH_SEL: False, FAN_OVERRIDE: False}
+
+
+def board_level(qmp, pin):
+    index = ord(pin[4]) - ord("A")              # "gpioV2": group V, pin 2
+    bit = (index % 4) * 8 + int(pin[5:])
+    direction = qom(qmp, GPIO, "gpio-dir[%d]" % (index // 4))
+    if direction is not None and not direction >> bit & 1:
+        return BOARD_PULL[pin]
+    return qmp.get(pin)
+
+
 def qom(qmp, path, prop):
     """A property, or None when this QEMU does not have it."""
     try:
@@ -617,6 +634,12 @@ class Panel:
         self.posts = collections.deque(maxlen=64)
         self.last_post = None
         self.last_host = host.state
+        # Board pull-ups: the BMC's low-active outputs (power button, reset) are
+        # inputs, and so high, until the BMC drives them after it has booted
+        # (x86-power-control); QEMU's GPIO model reads 0 for them instead.  Show
+        # them high until they have been seen high once since the last reset.
+        self.undriven = set(PULLED_UP)
+        self.seen_resets = qmp.resets
         threading.Thread(target=self._poller, daemon=True).start()
 
     def _poller(self):
@@ -636,8 +659,16 @@ class Panel:
                 self.console.on_state(self.last_host, st["host"])
             self.last_host = st["host"]
         st["pins"] = {pin: q.get(pin) for pin in
-                      (POWER_OUT, RESET_OUT, ALERT_LED, UID_LED, FLASH_SEL,
-                       FAN_OVERRIDE, PWRGD, BOOT_OK, PWR_BTN_IN, UID_BTN)}
+                      (PWRGD, BOOT_OK, PWR_BTN_IN, UID_BTN)}
+        st["pins"].update({pin: board_level(q, pin) for pin in BOARD_PULL})
+        if q.resets != self.seen_resets:
+            self.seen_resets = q.resets
+            self.undriven = set(PULLED_UP)
+        for pin in list(self.undriven):
+            if st["pins"][pin]:
+                self.undriven.discard(pin)       # the BMC drives it high now
+            else:
+                st["pins"][pin] = True           # board pull-up
         st["temps"] = {name: (qom(q, path, "temperature") or 0) / 1000
                        for name, (path, _) in TEMPS.items()}
         st["fans"] = []
