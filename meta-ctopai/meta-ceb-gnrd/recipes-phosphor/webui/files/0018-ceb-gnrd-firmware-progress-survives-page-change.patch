@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] firmware: keep the update progress when the page is left
+
+The progress bar only lived in the firmware page component, so leaving the page
+during an update (for example to shut the host down for a BIOS update) and
+coming back showed an empty form.  Remember the running update (the update task
+of a BIOS update, the reboot wait of a BMC update) in the session storage of the
+tab and resume polling when the page is opened again.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific update flow]
+---
+--- a/src/views/Operations/Firmware/FirmwareFormUpdate.vue
++++ b/src/views/Operations/Firmware/FirmwareFormUpdate.vue
+@@ -200,6 +200,41 @@ const BIOS_REGIONS_FILE = 'bios-regions.txt';
+ 
+ const textDecoder = new TextDecoder();
+ 
++// CEB-GNRD: a running update is remembered (per browser tab) so that the progress
++// bar comes back when the user leaves the firmware page, for example to shut the
++// host down for a BIOS update, and returns to it.
++const RESUME_KEY = 'ceb-gnrd-firmware-update';
++const RESUME_MAX_MS = 60 * 60 * 1000;
++
++function saveResume(state) {
++  try {
++    sessionStorage.setItem(
++      RESUME_KEY,
++      JSON.stringify({ ...state, savedAt: Date.now() }),
++    );
++  } catch (error) {
++    // storage not available: the progress is then lost on leaving the page
++  }
++}
++
++function loadResume() {
++  try {
++    const state = JSON.parse(sessionStorage.getItem(RESUME_KEY));
++    if (state && Date.now() - state.savedAt < RESUME_MAX_MS) return state;
++  } catch (error) {
++    // no (or unreadable) saved state
++  }
++  return null;
++}
++
++function clearResume() {
++  try {
++    sessionStorage.removeItem(RESUME_KEY);
++  } catch (error) {
++    // nothing to remove
++  }
++}
++
+ // The entries of a tar file: [{ name, dataOffset, size }], and the offset of
+ // the end-of-archive blocks.
+ async function readTar(file) {
+@@ -319,6 +354,8 @@ export default {
+       pollErrors: 0,
+       // BMC reboot after a BMC update: { timer, start, seenDown, checking }
+       reboot: null,
++      // set when the page was left: late answers must not start timers
++      unmounted: false,
+     };
+   },
+   computed: {
+@@ -345,13 +382,17 @@ export default {
+   },
+   created() {
+     this.$store.dispatch('firmware/getUpdateServiceSettings');
++    const resume = loadResume();
++    if (resume) this.resumeUpdate(resume);
+   },
+   beforeUnmount() {
++    this.unmounted = true;
+     this.stopPolling();
+     this.stopRebootMonitor();
+   },
+   methods: {
+     async updateFirmware() {
++      clearResume();
+       this.startLoader();
+       this.progress = {
+         visible: true,
+@@ -389,8 +430,13 @@ export default {
+           this.progress.percent = 0;
+           this.progress.stage = 'stageVerify';
+           if (taskUri) {
+-            this.startPolling(taskUri);
+-          } else if (this.progress.purpose !== 'Host') {
++            saveResume({
++              phase: 'task',
++              purpose: this.progress.purpose,
++              taskUri,
++            });
++            if (!this.unmounted) this.startPolling(taskUri);
++          } else if (this.progress.purpose !== 'Host' && !this.unmounted) {
+             this.startRebootMonitor(false);
+           }
+         })
+@@ -473,14 +519,20 @@ export default {
+     // boots it.  Show a time based bar (BMC_REBOOT_ESTIMATE_S) while checking
+     // every few seconds whether this BMC answers again, then reload the page;
+     // the login page appears if the session did not survive the update.
+-    startRebootMonitor(alreadyDown) {
++    startRebootMonitor(alreadyDown, start = Date.now()) {
+       this.stopRebootMonitor();
+       this.reboot = {
+         timer: null,
+-        start: Date.now(),
++        start,
+         seenDown: alreadyDown,
+         checking: false,
+       };
++      saveResume({
++        phase: 'reboot',
++        purpose: this.progress.purpose,
++        start,
++        seenDown: alreadyDown,
++      });
+       this.progress.percent = 0;
+       this.progress.stage = alreadyDown
+         ? 'stageBmcRebooting'
+@@ -524,6 +576,12 @@ export default {
+       if (!reboot.timer) return;
+       if (!up) {
+         reboot.seenDown = true;
++        saveResume({
++          phase: 'reboot',
++          purpose: this.progress.purpose,
++          start: reboot.start,
++          seenDown: true,
++        });
+         this.progress.stage = 'stageBmcRebooting';
+       } else if (reboot.seenDown) {
+         this.stopRebootMonitor();
+@@ -531,6 +589,7 @@ export default {
+         this.progress.remaining = '';
+         this.progress.stage = 'stageBmcBack';
+         this.progress.state = 'done';
++        clearResume();
+         this.endLoader();
+         setTimeout(() => window.location.reload(), 3000);
+       } else if (elapsed > BMC_WAIT_DOWN_S) {
+@@ -539,6 +598,7 @@ export default {
+         this.progress.percent = 100;
+         this.progress.remaining = '';
+         this.progress.state = 'done';
++        clearResume();
+         this.endLoader();
+         this.infoToast(
+           i18n.global.t('pageFirmware.toast.verifyUpdateMessage'),
+@@ -549,7 +609,30 @@ export default {
+         );
+       }
+     },
++    // The page was left and opened again while an update is running: show the
++    // progress bar again and continue where the saved state says.
++    resumeUpdate(resume) {
++      this.startLoader();
++      this.progress = {
++        visible: true,
++        purpose: resume.purpose,
++        percent: 0,
++        stage: 'stageVerify',
++        state: 'running',
++        remaining: '',
++      };
++      if (resume.phase === 'task' && resume.taskUri) {
++        this.startPolling(resume.taskUri);
++      } else if (resume.phase === 'reboot') {
++        this.startRebootMonitor(!!resume.seenDown, resume.start);
++      } else {
++        clearResume();
++        this.endLoader();
++        this.progress.visible = false;
++      }
++    },
+     finish(success) {
++      clearResume();
+       this.stopPolling();
+       this.endLoader();
+       this.progress.state = success ? 'done' : 'failed';
