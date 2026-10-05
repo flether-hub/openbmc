@@ -22,4 +22,5 @@ SRC_URI += " \
     file://0012-aspeed-read-only-fan-speed-PWM-duty-and-POST-code-pr.patch \
     file://0013-aspeed-gpio-a-pin-switched-to-output-drives-the-last.patch \
     file://0014-aspeed-AST2600-video-engine-with-a-still-picture-for.patch \
+    file://0015-aspeed-gpio-read-only-gpio-dir-N-properties.patch \
     "

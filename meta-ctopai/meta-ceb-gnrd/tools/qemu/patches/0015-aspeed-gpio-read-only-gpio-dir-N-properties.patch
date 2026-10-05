@@ -1,0 +1,55 @@
+From 0b36dc96f57810841b26aee8edb76c9a11c4c333 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 15:29:54 +0800
+Subject: [PATCH] aspeed/gpio: read-only gpio-dir[N] properties
+
+The direction register of each set, so a board model or a control panel
+can tell a pin the BMC drives from one it leaves floating (which the
+board pulls up or down).
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
+---
+ hw/gpio/aspeed_gpio.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/hw/gpio/aspeed_gpio.c b/hw/gpio/aspeed_gpio.c
+index 4f55a90..53cb813 100644
+--- a/hw/gpio/aspeed_gpio.c
++++ b/hw/gpio/aspeed_gpio.c
+@@ -1352,6 +1352,16 @@ static void aspeed_gpio_set_set(Object *obj, Visitor *v,
+                        ~s->sets[set_idx].direction);
+ }
+ 
++/* gpio-dir[N] (read only): direction register of set N, 1 = output */
++static void aspeed_gpio_get_dir(Object *obj, Visitor *v, const char *name,
++                                void *opaque, Error **errp)
++{
++    AspeedGPIOState *s = ASPEED_GPIO(obj);
++    uint32_t dir = s->sets[*(int *)opaque].direction;
++
++    visit_type_uint32(v, name, &dir, errp);
++}
++
+ static void aspeed_gpio_get_set(Object *obj, Visitor *v,
+                                         const char *name, void *opaque,
+                                         Error **errp)
+@@ -1521,6 +1531,16 @@ static void aspeed_gpio_init(Object *obj)
+         object_property_add(obj, name, "uint32", aspeed_gpio_get_set,
+         aspeed_gpio_set_set, NULL, NULL);
+     }
++
++    for (int i = 0; i < agc->nr_gpio_sets; i++) {
++        g_autofree char *name = g_strdup_printf("gpio-dir[%d]", i);
++        static const int index[ASPEED_GPIO_MAX_NR_SETS] = {
++            0, 1, 2, 3, 4, 5, 6, 7
++        };
++
++        object_property_add(obj, name, "uint32", aspeed_gpio_get_dir, NULL,
++                            NULL, (void *)&index[i]);
++    }
+ }
+ 
+ static const VMStateDescription vmstate_gpio_regs = {
+-- 
+2.53.0.windows.1
+
