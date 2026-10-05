@@ -3,8 +3,8 @@
 #
 #  - entity-manager + fru-device: probe the board FRU EEPROMs over I2C and
 #    publish the FRU contents on D-Bus (xyz.openbmc_project.FruDevice)
-#  - dbus-sensors: PECI-based CPU/DIMM temperature sensors for the Intel
-#    host (IntelCPUSensor) plus the generic sensor set
+#  - dbus-sensors: the generic sensor set (no IntelCPUSensor: the PECI CPU/DIMM
+#    temperatures are read by ceb-gnrd-temp-max, which publishes the maxima)
 #  - phosphor-host-postd: snoops BIOS POST codes (I/O port 0x80) via
 #    LPC/eSPI and publishes them on D-Bus
 #  - phosphor-post-code-manager: records BIOS POST code history

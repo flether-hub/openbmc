@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """CEB-GNRD CPU / DIMM maximum temperature sensors.
 
-The PECI based IntelCPUSensor daemon publishes one temperature sensor per CPU
-core and per DIMM.  Fan control only needs the hottest value of each group, so
-this service publishes exactly two D-Bus sensors:
+The kernel PECI drivers (peci_cputemp, peci_dimmtemp) expose one temperature per
+CPU core and per DIMM as hwmon attributes.  They are deliberately not published
+as D-Bus sensors (no IntelCPUSensor configuration), so IPMI, Redfish and the web
+page show no per-core or per-DIMM sensor.  This service reads them and publishes
+exactly two D-Bus sensors, the hottest value of each group:
 
     /xyz/openbmc_project/sensors/temperature/CPU_MAX_TEMP
     /xyz/openbmc_project/sensors/temperature/DIMM_MAX_TEMP
 
 which phosphor-pid-control uses as its inputs (see ceb-gnrd.json).
 
-The source sensors are found by service name (xyz.openbmc_project.IntelCPUSensor)
-and by name pattern:
-  * DIMM : the sensor name contains "dimm"
-  * CPU  : every other temperature sensor of that service, except margin style
-           readings (DTS) and the Tcontrol / Tthrottle / Tjmax thresholds
+The source temperatures are the temp*_input attributes of the hwmon devices whose
+name starts with "peci_cputemp" (CPU) or "peci_dimmtemp" (DIMM), found by scanning
+/sys/class/hwmon:
+  * DIMM : every temperature of a peci_dimmtemp device
+  * CPU  : every temperature of a peci_cputemp device, except margin style
+           readings (DTS) and the Tcontrol / Tthrottle / Tjmax values (by label)
 
 Upper thresholds (non-critical / critical / non-recoverable) are published on the
 Warning / Critical threshold interfaces and a private NonRecoverable interface (not
@@ -28,7 +31,7 @@ temperatures run the fans at 60 %.  The zone's own fail-safe speed is kept at
 the minimum on purpose: the number of readable fans must not decide the fan
 speed.  No alarm is raised for the substitute value.
 
-All discovered names and their group are written to the journal whenever the
+All discovered sources and their group are written to the journal whenever the
 set changes:  journalctl -u ceb-gnrd-temp-max
 """
 
@@ -49,7 +52,7 @@ LOG = logging.getLogger("ceb-gnrd-temp-max")
 BUS_NAME = "com.ctopai.CebGnrd.TempMax"
 SENSOR_ROOT = "/xyz/openbmc_project/sensors/temperature"
 ADC_ROOT = "/xyz/openbmc_project/sensors/voltage"
-SOURCE_SERVICE = "xyz.openbmc_project.IntelCPUSensor"
+HWMON_ROOT = "/sys/class/hwmon"
 VALUE_IFACE = "xyz.openbmc_project.Sensor.Value"
 UNIT_DEGREES_C = "xyz.openbmc_project.Sensor.Value.Unit.DegreesC"
 ASSOC_IFACE = "xyz.openbmc_project.Association.Definitions"
@@ -66,7 +69,7 @@ CHASSIS_STATE = ("xyz.openbmc_project.State.Chassis",
                  "/xyz/openbmc_project/state/chassis0",
                  "xyz.openbmc_project.State.Chassis", "CurrentPowerState")
 
-DIMM_RE = re.compile(r"dimm", re.IGNORECASE)
+TEMP_INPUT_RE = re.compile(r"temp(\d+)_input$")
 EXCLUDE_RE = re.compile(r"dts|tcontrol|tthrottle|tjmax|margin", re.IGNORECASE)
 
 POLL_SECONDS = 2
@@ -240,25 +243,57 @@ async def host_is_on(bus):
         return True  # unknown: assume on
 
 
-async def find_sources(bus):
-    """Return {sensor path: (service, group)} for all IntelCPUSensor temperatures."""
-    body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetSubTree", "sias",
-                      [SENSOR_ROOT, 0, [VALUE_IFACE]])
+def read_text(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def scan_sources():
+    """Return {temp*_input path: (group, "device label")} of the PECI hwmon devices."""
     found = {}
-    for path, services in body[0].items():
-        if SOURCE_SERVICE not in services:
+    try:
+        entries = sorted(os.listdir(HWMON_ROOT))
+    except OSError:
+        return found
+    for entry in entries:
+        hwmon = os.path.join(HWMON_ROOT, entry)
+        name = read_text(os.path.join(hwmon, "name")) or ""
+        if name.startswith("peci_cputemp"):
+            group = "CPU"
+        elif name.startswith("peci_dimmtemp"):
+            group = "DIMM"
+        else:
             continue
-        name = path.rsplit("/", 1)[-1]
-        if DIMM_RE.search(name):
-            found[path] = (SOURCE_SERVICE, "DIMM")
-        elif not EXCLUDE_RE.search(name):
-            found[path] = (SOURCE_SERVICE, "CPU")
+        try:
+            files = sorted(os.listdir(hwmon))
+        except OSError:
+            continue
+        for fname in files:
+            match = TEMP_INPUT_RE.match(fname)
+            if not match:
+                continue
+            label = read_text(os.path.join(hwmon, "temp%s_label" % match.group(1)))
+            label = label or "temp" + match.group(1)
+            if group == "CPU" and EXCLUDE_RE.search(label):
+                continue
+            found[os.path.join(hwmon, fname)] = (group, "%s %s" % (name, label))
     return found
 
 
-async def read_value(bus, service, path):
-    body = await call(bus, service, path, PROPS, "Get", "ss", [VALUE_IFACE, "Value"])
-    return float(body[0].value)
+def read_values(paths):
+    """Read the temperatures in degrees C; a path that cannot be read is left out
+    (the CPU is off or does not answer on PECI)."""
+    values = {}
+    for path in paths:
+        text = read_text(path)
+        try:
+            values[path] = int(text) / 1000.0
+        except (TypeError, ValueError):
+            pass
+    return values
 
 
 async def read_assoc(bus, service, path):
@@ -272,10 +307,9 @@ async def read_assoc(bus, service, path):
 async def find_default_assoc(bus):
     """Chassis associations of an ADC sensor of this board.
 
-    IntelCPUSensor only exists while the host is on, so the associations copied
-    from it are not available when the host is off.  The ADC sensors belong to
-    the same board, so their associations make the maximum sensors visible to
-    IPMI and Redfish at all times."""
+    The maximum sensors have no source D-Bus sensor to copy the associations
+    from.  The ADC sensors belong to the same board, so their associations make
+    the maximum sensors visible to IPMI and Redfish at all times."""
     try:
         body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetSubTree", "sias",
                           [ADC_ROOT, 0, [ASSOC_IFACE]])
@@ -337,39 +371,23 @@ async def main():
     known = None
     default_assoc = []
     while True:
-        try:
-            sources = await find_sources(bus)
-        except Exception as exc:
-            # The mapper reports ResourceNotFound while no temperature sensor
-            # exists yet (for example host off); that is not worth a warning.
-            if "ResourceNotFound" not in str(exc):
-                LOG.warning("cannot list temperature sensors: %s", exc)
-            sources = {}
-        names = {p.rsplit("/", 1)[-1]: g for p, (_, g) in sources.items()}
+        # sysfs reads are PECI transactions: keep them off the event loop
+        sources = await asyncio.to_thread(scan_sources)
+        names = {label: group for group, label in sources.values()}
         if names != known:
             known = names
-            LOG.info("source sensors: %d CPU, %d DIMM",
+            LOG.info("source temperatures: %d CPU, %d DIMM",
                      sum(1 for g in names.values() if g == "CPU"),
                      sum(1 for g in names.values() if g == "DIMM"))
             for name in sorted(names):
                 LOG.info("  %-4s %s", names[name], name)
+        readings = await asyncio.to_thread(read_values, list(sources))
 
         on = await host_is_on(bus)
         for group, sensor in sensors.items():
-            values = []
-            assoc = []
-            for path, (service, g) in sources.items():
-                if g != group:
-                    continue
-                try:
-                    value = await read_value(bus, service, path)
-                except Exception:
-                    continue
-                if math.isnan(value):
-                    continue
-                values.append(value)
-                if not assoc:
-                    assoc = await read_assoc(bus, service, path)
+            values = [readings[path] for path, (g, _) in sources.items()
+                      if g == group and path in readings
+                      and not math.isnan(readings[path])]
             real = max(values) if values else math.nan
             if values:
                 sensor.update(real)
@@ -383,12 +401,11 @@ async def main():
                                 sensor.sensor_name, level,
                                 "asserted" if obj.alarm else "cleared",
                                 real, obj.high)
-            if not assoc and not assocs[group].assoc:
+            if not assocs[group].assoc:
                 if not default_assoc:
                     default_assoc = await find_default_assoc(bus)
-                assoc = default_assoc
-            if assoc:
-                assocs[group].update(assoc)
+                if default_assoc:
+                    assocs[group].update(default_assoc)
         await asyncio.sleep(POLL_SECONDS)
 
 

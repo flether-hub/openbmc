@@ -1,14 +1,6 @@
 {
     "Exposes": [
         {
-            "Address": "0x30",
-            "Bus": 0,
-            "CpuID": 0,
-            "Name": "Xeon 6 CPU",
-            "PowerState": "On",
-            "Type": "XeonCPU"
-        },
-        {
             "Class": "Aspeed2600_Hwmon",
             "Name": "Chassis Intrusion",
             "Rearm": "Automatic",

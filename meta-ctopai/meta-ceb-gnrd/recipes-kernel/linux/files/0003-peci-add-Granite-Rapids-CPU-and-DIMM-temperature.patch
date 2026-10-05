@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] peci: add Granite Rapids to the CPU, CPU temperature and DIMM
+ temperature drivers
+
+The peci-cpu driver only knows CPUs up to Emerald Rapids, so on a Xeon 6
+(Granite Rapids, CPUID model 0xAD / 0xAE for the D parts) no peci_cputemp or
+peci_dimmtemp hwmon device is created.
+
+Add INTEL_GRANITERAPIDS_X and INTEL_GRANITERAPIDS_D with the Emerald Rapids
+tables: same RESOLVED_CORES register, same DIMM threshold register layout, 8
+channel ranks with 2 DIMMs each, DTS in 10.6 format, PECI revision 0x40.  The
+tables are copied, not taken from the Granite Rapids PECI specification: the
+readings must be checked on the board.
+
+Upstream-Status: Inappropriate [copied tables, not verified on Granite Rapids]
+---
+diff --git a/drivers/hwmon/peci/cputemp.c b/drivers/hwmon/peci/cputemp.c
+index f4277a1..ef2e73e 100644
+--- a/drivers/hwmon/peci/cputemp.c
++++ b/drivers/hwmon/peci/cputemp.c
+@@ -365,6 +365,8 @@ static int init_core_mask(struct peci_cputemp *priv)
+ 	case INTEL_ICELAKE_D:
+ 	case INTEL_SAPPHIRERAPIDS_X:
+ 	case INTEL_EMERALDRAPIDS_X:
++	case INTEL_GRANITERAPIDS_X:
++	case INTEL_GRANITERAPIDS_D:
+ 		ret = peci_ep_pci_local_read(peci_dev, 0, reg->bus, reg->dev,
+ 					     reg->func, reg->offset + 4, &data);
+ 		if (ret)
+@@ -547,6 +549,14 @@ static struct resolved_cores_reg resolved_cores_reg_emr = {
+ 	.offset = 0x80,
+ };
+ 
++/* Granite Rapids: same registers as Sapphire / Emerald Rapids (not verified) */
++static struct resolved_cores_reg resolved_cores_reg_gnr = {
++	.bus = 31,
++	.dev = 30,
++	.func = 6,
++	.offset = 0x80,
++};
++
+ static const struct cpu_info cpu_hsx = {
+ 	.reg		= &resolved_cores_reg_hsx,
+ 	.min_peci_revision = 0x33,
+@@ -577,6 +587,12 @@ static const struct cpu_info cpu_emr = {
+ 	.thermal_margin_to_millidegree = &dts_ten_dot_six_to_millidegree,
+ };
+ 
++static const struct cpu_info cpu_gnr = {
++	.reg    = &resolved_cores_reg_gnr,
++	.min_peci_revision = 0x40,
++	.thermal_margin_to_millidegree = &dts_ten_dot_six_to_millidegree,
++};
++
+ static const struct auxiliary_device_id peci_cputemp_ids[] = {
+ 	{
+ 		.name = "peci_cpu.cputemp.hsx",
+@@ -610,6 +626,10 @@ static const struct auxiliary_device_id peci_cputemp_ids[] = {
+ 		.name = "peci_cpu.cputemp.emr",
+ 		.driver_data = (kernel_ulong_t)&cpu_emr,
+ 	},
++	{
++		.name = "peci_cpu.cputemp.gnr",
++		.driver_data = (kernel_ulong_t)&cpu_gnr,
++	},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(auxiliary, peci_cputemp_ids);
+diff --git a/drivers/hwmon/peci/dimmtemp.c b/drivers/hwmon/peci/dimmtemp.c
+index a281476..f0c502c 100644
+--- a/drivers/hwmon/peci/dimmtemp.c
++++ b/drivers/hwmon/peci/dimmtemp.c
+@@ -34,6 +34,8 @@
+ #define DIMM_IDX_MAX_ON_SPR	2
+ #define CHAN_RANK_MAX_ON_EMR	8
+ #define DIMM_IDX_MAX_ON_EMR	2
++#define CHAN_RANK_MAX_ON_GNR	8
++#define DIMM_IDX_MAX_ON_GNR	2
+ 
+ #define CHAN_RANK_MAX		CHAN_RANK_MAX_ON_HSX
+ #define DIMM_IDX_MAX		DIMM_IDX_MAX_ON_HSX
+@@ -579,6 +581,13 @@ static int read_thresholds_emr(struct peci_dimmtemp *priv, int dimm_order,
+ 	return read_thresholds_spr(priv, dimm_order, chan_rank, data);
+ }
+ 
++/* Granite Rapids: same registers as Sapphire / Emerald Rapids (not verified) */
++static int read_thresholds_gnr(struct peci_dimmtemp *priv, int dimm_order,
++			       int chan_rank, u32 *data)
++{
++	return read_thresholds_spr(priv, dimm_order, chan_rank, data);
++}
++
+ static const struct dimm_info dimm_hsx = {
+ 	.chan_rank_max	= CHAN_RANK_MAX_ON_HSX,
+ 	.dimm_idx_max	= DIMM_IDX_MAX_ON_HSX,
+@@ -635,6 +644,13 @@ static const struct dimm_info dimm_emr = {
+ 	.read_thresholds = &read_thresholds_emr,
+ };
+ 
++static const struct dimm_info dimm_gnr = {
++	.chan_rank_max  = CHAN_RANK_MAX_ON_GNR,
++	.dimm_idx_max  = DIMM_IDX_MAX_ON_GNR,
++	.min_peci_revision = 0x40,
++	.read_thresholds = &read_thresholds_gnr,
++};
++
+ static const struct auxiliary_device_id peci_dimmtemp_ids[] = {
+ 	{
+ 		.name = "peci_cpu.dimmtemp.hsx",
+@@ -668,6 +684,10 @@ static const struct auxiliary_device_id peci_dimmtemp_ids[] = {
+ 		.name = "peci_cpu.dimmtemp.emr",
+ 		.driver_data = (kernel_ulong_t)&dimm_emr,
+ 	},
++	{
++		.name = "peci_cpu.dimmtemp.gnr",
++		.driver_data = (kernel_ulong_t)&dimm_gnr,
++	},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(auxiliary, peci_dimmtemp_ids);
+diff --git a/drivers/peci/cpu.c b/drivers/peci/cpu.c
+index fbccc1d..2d0d98e 100644
+--- a/drivers/peci/cpu.c
++++ b/drivers/peci/cpu.c
+@@ -325,6 +325,14 @@ static const struct peci_device_id peci_cpu_device_ids[] = {
+ 		.x86_vfm  = INTEL_EMERALDRAPIDS_X,
+ 		.data  = "emr",
+ 	},
++	{ /* Granite Rapids Xeon */
++		.x86_vfm = INTEL_GRANITERAPIDS_X,
++		.data	= "gnr",
++	},
++	{ /* Granite Rapids Xeon D */
++		.x86_vfm = INTEL_GRANITERAPIDS_D,
++		.data	= "gnr",
++	},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(peci, peci_cpu_device_ids);

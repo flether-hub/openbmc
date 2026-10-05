@@ -137,7 +137,7 @@ interfaces:
       source: U31 NST175H-QSPR at schematic I2C7 address 0x4b, address strap 011
       status: configured-measurement-only-no-thresholds
     - name: CPU_Temp
-      source: AST2600 PECI0 via BMC_CPU_PECI (package ball AT29), XeonCPU CPU0
+      source: AST2600 PECI0 via BMC_CPU_PECI (package ball AT29), kernel peci_cputemp hwmon (read by ceb-gnrd-temp-max)
       status: configured-kernel-and-host-dependent
     - name: DIMM_Temp_Max
       source: PECI DIMM temperature channels only; publish maximum across present DIMMs; I3C is not used for DIMM temperatures

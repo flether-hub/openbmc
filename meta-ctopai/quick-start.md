@@ -830,14 +830,20 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 
 * AST2600 PECI0 is enabled for the BMC_CPU_PECI connection (package ball AT29).
   The kernel enables `CONFIG_PECI`, `CONFIG_PECI_CPU`, `CONFIG_PECI_ASPEED`,
-  `CONFIG_SENSORS_PECI_CPUTEMP`, `CONFIG_SENSORS_PECI_DIMMTEMP`;
-  `VIRTUAL-RUNTIME_obmc-sensors-hwmon = "dbus-sensors"` selects the
-  IntelCPUSensor daemon. Only AST2600 I3C3 is enabled; DIMM temperature is read
-  over PECI, not I3C.
+  `CONFIG_SENSORS_PECI_CPUTEMP`, `CONFIG_SENSORS_PECI_DIMMTEMP`.  The stock
+  `peci-cpu` driver does not know Granite Rapids (Xeon 6, CPUID model 0xAD /
+  0xAE), so the kernel patch `0003-peci-add-Granite-Rapids-CPU-and-DIMM-temperature.patch`
+  adds it with the Emerald Rapids tables (copied, not verified on the board: check
+  `ls /sys/bus/peci/devices/0-30` for `peci_cputemp.*` / `peci_dimmtemp.*` and
+  the readings).  IntelCPUSensor is not built (`PACKAGECONFIG:remove`, no `XeonCPU`
+  entry in `ceb-gnrd.json`): no per-core or per-DIMM sensor appears in IPMI,
+  Redfish or the web page, only the two maxima below.  Only AST2600 I3C3 is
+  enabled; DIMM temperature is read over PECI, not I3C.
 * `ceb-gnrd-temp-max` (Python, dbus-fast) publishes two sensors,
   `/xyz/openbmc_project/sensors/temperature/CPU_MAX_TEMP` and `DIMM_MAX_TEMP`,
-  as the maximum of the IntelCPUSensor temperatures (names containing "dimm"
-  are DIMM; DTS, Tcontrol, Tthrottle, Tjmax and margin readings are excluded).
+  as the maximum of the temperatures of the kernel `peci_cputemp` (CPU) and
+  `peci_dimmtemp` (DIMM) hwmon devices, read from sysfs (DTS, Tcontrol, Tthrottle,
+  Tjmax and margin readings are excluded by label).
   Host off: 0. Host on and no reading: 70 degC, which both fan curves map to 60 % (no alarm).
   Upper thresholds only (non-critical / critical / non-recoverable):
   CPU 90 / 98 / 105 degC, DIMM 80 / 85 / 95 degC.  The first two use the Warning
@@ -1187,8 +1193,8 @@ Everything here needs a board (or is waiting for your decision):
 * PHY address 2, RGMII delays and U-Boot/Linux network on the real board.
 * NC-SI link timing after host power-on (retry interval and count are guesses).
 * PSU STATUS_BYTE probing, `temp2` as the PSU temperature, PSU sensor naming.
-* The names IntelCPUSensor gives the CPU and DIMM temperatures (used by
-  `ceb-gnrd-temp-max`) and the fan PWM object names.
+* The PECI hwmon labels and values of the CPU and DIMM temperatures (read by
+  `ceb-gnrd-temp-max`, which logs them) and the fan PWM object names.
 * Fan curve temperatures (placeholders), the IANA manufacturer ID (0x1A03 as
   given), firmware version rule.
 * Real-hardware checks of SEL records for each alarm, SEL rollover, the RTC
