@@ -1,0 +1,47 @@
+From 23ef0f67484079cfeb7453167f61fc625b1dbebc Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 15:34:59 +0800
+Subject: [PATCH] aspeed/video: signal a mode detection when the input appears
+
+When the host powers on after the BMC has booted, the aspeed-video driver
+had found no signal and waited for a mode detection interrupt that never
+came, so obmc-ikvm kept failing with "Failed to query timings".  Raise it
+when a signal appears, as the hardware does.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
+---
+ hw/misc/aspeed_video.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/hw/misc/aspeed_video.c b/hw/misc/aspeed_video.c
+index e470162..50845ea 100644
+--- a/hw/misc/aspeed_video.c
++++ b/hw/misc/aspeed_video.c
+@@ -188,13 +188,22 @@ static const MemoryRegionOps video_ops = {
+     },
+ };
+ 
+-/* The signal is lost: the watchdog tells a driver that is streaming */
++/*
++ * The signal is lost: the watchdog tells a driver that is streaming.  A signal
++ * appears: mode detection completes, which tells a driver that found no
++ * signal before (the host was off) to detect the mode again.
++ */
+ static void video_signal_changed(AspeedVideoState *s, bool had)
+ {
+-    if (had && !video_has_signal(s) &&
++    bool has = video_has_signal(s);
++
++    if (had && !has &&
+         (s->regs[REG(VE_SEQ_CTRL)] & VE_SEQ_CTRL_EN_WATCHDOG)) {
+         video_raise(s, VE_INT_MODE_DETECT_WD);
+     }
++    if (!had && has) {
++        video_raise(s, VE_INT_MODE_DETECT);
++    }
+ }
+ 
+ static char *video_get_image(Object *obj, Error **errp)
+-- 
+2.53.0.windows.1
+
