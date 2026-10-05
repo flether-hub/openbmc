@@ -566,6 +566,9 @@ class PanelWindow:
         self.vga_status.pack(anchor="w", pady=5)
         row = ttk.Frame(left); row.pack(anchor="w", pady=8)
         ttk.Button(row, text="选择 JPEG", command=self._choose_vga).pack(side="left", padx=3)
+        ttk.Button(left, text="加载内置 KVM 测试图", command=lambda: self._async_action(
+            lambda: self.services.set_vga(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                     "kvm", "test-pattern.jpg")))).pack(anchor="w", pady=3)
         self.button(row, "自动 POST / OS", "vga auto").pack(side="left", padx=3)
         self.button(row, "无信号", "vga off").pack(side="left", padx=3)
         self.button(row, "有信号", "vga on").pack(side="left", padx=3)
