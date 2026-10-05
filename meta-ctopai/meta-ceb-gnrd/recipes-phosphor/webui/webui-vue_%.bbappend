@@ -15,6 +15,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0013-ceb-gnrd-firmware-update-progress.patch \
     file://0014-ceb-gnrd-firmware-cards-side-by-side.patch \
     file://0015-ceb-gnrd-sensors-discrete-table.patch \
+    file://0016-ceb-gnrd-post-codes-newest-first.patch \
     file://zh-CN.json \
 "
 
