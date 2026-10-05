@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 12:40 UTC（北京时间 20:40）
+最后更新：2026-10-05 12:55 UTC（北京时间 20:55）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -118,12 +118,13 @@
 | `77a8624030` | `gpio_defs.json` 里 UID 按键名改成 `ID_BTN`（phosphor-buttons 只认这个名字） | `gpioinfo` 里 `BMC_UID_BUTTON_N` `[used]`，按键切换 identify 灯。**用户反馈：先能亮，重编后不亮，等 `gpioinfo`、`gpio_defs.json`、`gpiomon` 输出** |
 | `d37433c2d8` | `ceb-gnrd-alert-led.py`：入侵状态是完整枚举串，比较最后一段（否则每次启动都误记一条入侵 SEL） | 启动日志没有 "Chassis intrusion detected" |
 | `6e5868b21b` | `ceb-gnrd-alert-led.py`：`mapper_sensors()` 把结果变成元组又要求列表，找不到 sensor，电压告警从不点亮告警灯 | D3V0_BAT0 告警 → 告警灯红 |
-| _(本提交)_ | UID 按键重启后不亮：`phosphor-button-handler` 只在启动时查一次 UID 按键对象，而 `buttons` 守护进程先占总线名、后导出对象，两者同时启动就竞争，handler 忽略 UID 键（手工重启两个服务后又能亮，和现象一致）。给 handler 加 systemd drop-in，先等 `Buttons/ID` 对象出现（`ceb-gnrd-wait-buttons.sh`，最多 60 s，不阻塞）。**未编译验证** | 重启 BMC 后 `journalctl -u phosphor-button-handler` 应有 "Registering ID button handler"；按 UID 键灯切换 |
+| `44c7124c6a` | UID 按键重启后不亮：`phosphor-button-handler` 只在启动时查一次 UID 按键对象，而 `buttons` 守护进程先占总线名、后导出对象，两者同时启动就竞争，handler 忽略 UID 键（手工重启两个服务后又能亮，和现象一致）。给 handler 加 systemd drop-in，先等 `Buttons/ID` 对象出现（`ceb-gnrd-wait-buttons.sh`，最多 60 s，不阻塞）。**未编译验证** | 重启 BMC 后 `journalctl -u phosphor-button-handler` 应有 "Registering ID button handler"；按 UID 键灯切换 |
+| _(本提交)_ | Entity-Manager ADC 的 `ScaleFactor` 写反了：dbus-sensors 是 `(raw/1000)/ScaleFactor`，即 ScaleFactor 是除数，分压比 10K/1K 应写 1/11（0.090909）、2:1 写 0.5；原来写 11 和 2，读数变成引脚电压再除以 11（12 V 轨显示 0.099 V，3.3 V 轨显示 0.824 V），所有分压通道都报 Critical。已把 11→0.090909、2→0.5。模拟器的 ÷N 分压没有问题。**真板同样受影响；未编译验证** | 设 12.1 V 后网页读 12.1 V；只剩 D3V0_BAT0 告警 |
 
 开放问题（QEMU 线程）
 1. UID 灯重编后不亮、风扇 override 线仍低：见上面两行「等输出」。
 2. KVM 画面（补丁 0014/0016）在真实 QEMU 构建上没验证。
-3. D3V0_BAT0 额定 3.0 V、ScaleFactor 1，超过 ADC 2.5 V 参考电压，永远读 2.5 V 并告警；需对照原理图改 Entity-Manager 的分压/ScaleFactor。
+3. D3V0_BAT0 额定 3.0 V、ScaleFactor 1，超过 ADC 2.5 V 参考电压，永远读 2.5 V 并告警；需对照原理图加分压（如 2:1，ScaleFactor 0.5）。其他通道的 ScaleFactor 已改成 1/分压比。
 4. KVM 的 USB 键鼠输入（aspeed-vhub）没做，工作量约视频引擎的 3 倍；PCIe/USB 画面和 PCIe 插拔也没做（已询问，未答复）。
 5. 提过但没做：主机侧 KCS（带内 IPMI）、机箱入侵模型、用真实 x86 QEMU 当主机、MCTP/PLDM、BIOS 升级流程。
 6. 「ADC 填测量值 V、分压由模拟器自动处理」的面板改动由另一个线程在做（写本节时在工作区未提交）。

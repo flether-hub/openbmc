@@ -10,7 +10,7 @@
             "Index": 0,
             "Name": "P12V_SYS",
             "PowerState": "ChassisOn",
-            "ScaleFactor": 11.0,
+            "ScaleFactor": 0.090909,
             "Thresholds": [
                 { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 10.2 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 13.8 }
@@ -21,7 +21,7 @@
             "Index": 1,
             "Name": "P5V0_SYS",
             "PowerState": "ChassisOn",
-            "ScaleFactor": 11.0,
+            "ScaleFactor": 0.090909,
             "Thresholds": [
                 { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 4.25 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 5.75 }
@@ -32,7 +32,7 @@
             "Index": 2,
             "Name": "P3V3_SYS",
             "PowerState": "ChassisOn",
-            "ScaleFactor": 2.0,
+            "ScaleFactor": 0.5,
             "Thresholds": [
                 { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.805 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.795 }
@@ -131,7 +131,7 @@
             "Index": 11,
             "Name": "P3V3_STBY",
             "PowerState": "Always",
-            "ScaleFactor": 2.0,
+            "ScaleFactor": 0.5,
             "Thresholds": [
                 { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 2.805 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 3.795 }
