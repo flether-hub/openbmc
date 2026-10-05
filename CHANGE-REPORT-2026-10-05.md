@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 12:21 UTC（北京时间 20:21）
+最后更新：2026-10-05 12:35 UTC（北京时间 20:35）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -65,7 +65,9 @@
 
 ### 5. 设置
 
-* `eb73d3bce9`：电源恢复策略出厂默认值改成 `AlwaysOn`（来电开机），在 `phosphor-settings-defaults-native.bbappend`。已经保存过策略的 BMC 不受影响，要在网页里手动选一次或恢复出厂。最近一次截图里网页仍显示 Always off，原因未确认：可能是保存的旧值，也可能是镜像没有重编；在 BMC 里用 `busctl get-property xyz.openbmc_project.Settings /xyz/openbmc_project/control/host0/power_restore_policy xyz.openbmc_project.Control.Power.RestorePolicy PowerRestorePolicy` 看。
+* `eb73d3bce9`（用 `sed` 改原生配方的默认值，板上测下来没有生效：`/var/lib/phosphor-settings-manager` 不存在，说明没有保存值，运行时默认值仍是 AlwaysOff；`98e5c97e5f` 之后的提交已改成标准做法，见本条末尾）：电源恢复策略出厂默认值改成 `AlwaysOn`（来电开机）。已经保存过策略的 BMC 不受影响，要在网页里手动选一次或恢复出厂。最近一次截图里网页仍显示 Always off，原因未确认：可能是保存的旧值，也可能是镜像没有重编；在 BMC 里用 `busctl get-property xyz.openbmc_project.Settings /xyz/openbmc_project/control/host0/power_restore_policy xyz.openbmc_project.Control.Power.RestorePolicy PowerRestorePolicy` 看。
+
+* **改法（标准做法）**：删掉 `phosphor-settings-defaults-native.bbappend`，改在 `phosphor-settings-manager/settings.override.yml`（和 SOL 的覆盖同一个文件，已知有效）里覆盖 `/xyz/openbmc_project/control/host0/power_restore_policy`，`PowerRestorePolicy` 默认 `AlwaysOn`，`PowerRestoreDelay` 默认 0（合并脚本会整个替换列表，所以延迟也要写）。用 `merge_settings.py` 在本机合并上游模板验证过结果正确，没有编译。验证：新镜像第一次启动（没有保存过设置）后 `busctl get-property xyz.openbmc_project.Settings /xyz/openbmc_project/control/host0/power_restore_policy xyz.openbmc_project.Control.Power.RestorePolicy PowerRestorePolicy` 应为 `AlwaysOn`。
 
 ### 6. 仓库整理与文档
 

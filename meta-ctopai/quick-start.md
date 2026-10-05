@@ -959,7 +959,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
   `VIRTUAL-RUNTIME_obmc-discover-system-state` is `x86-power-control`, which also
   applies the power restore policy at BMC boot.  The factory default of the policy
   is AlwaysOn (the host powers on when AC power returns); it is set in
-  `phosphor-settings-defaults-native.bbappend`, and a policy already saved in the
+  `phosphor-settings-manager/settings.override.yml`, and a policy already saved in the
   read-write partition (changed in the web UI) is kept until a factory reset.
 * Private D-Bus names use the vendor domain: services and interfaces are
   `com.ctopai.CebGnrd.*` (`FanSettings`, `TempMax`, `Threshold.NonRecoverable`).

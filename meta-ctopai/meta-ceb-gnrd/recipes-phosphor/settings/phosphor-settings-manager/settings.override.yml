@@ -3,3 +3,15 @@
       Properties:
           Enable:
               Default: 'true'
+
+# Factory default of the power restore policy: AlwaysOn, the host powers on when
+# AC power returns (the upstream default is AlwaysOff).  The user can change it in
+# the web UI; a saved value is kept until a factory reset.  The whole list of the
+# object is replaced by the merge, so PowerRestoreDelay is repeated.
+/xyz/openbmc_project/control/host0/power_restore_policy:
+    - Interface: xyz.openbmc_project.Control.Power.RestorePolicy
+      Properties:
+          PowerRestorePolicy:
+              Default: RestorePolicy::Policy::AlwaysOn
+          PowerRestoreDelay:
+              Default: 0
