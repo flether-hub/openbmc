@@ -1,7 +1,7 @@
 {
     "gpio_definitions": [
         {
-            "name": "ID_BUTTON",
+            "name": "ID_BTN",
             "line_name": "BMC_UID_BUTTON_N",
             "direction": "both",
             "polarity": "active_low"
