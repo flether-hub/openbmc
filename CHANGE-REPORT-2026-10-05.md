@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 12:20 UTC（北京时间 20:20）
+最后更新：2026-10-05 12:05 UTC（北京时间 20:05）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -126,3 +126,7 @@
 4. KVM 的 USB 键鼠输入（aspeed-vhub）没做，工作量约视频引擎的 3 倍；PCIe/USB 画面和 PCIe 插拔也没做（已询问，未答复）。
 5. 提过但没做：主机侧 KCS（带内 IPMI）、机箱入侵模型、用真实 x86 QEMU 当主机、MCTP/PLDM、BIOS 升级流程。
 6. 「ADC 填测量值 V、分压由模拟器自动处理」的面板改动由另一个线程在做（写本节时在工作区未提交）。
+
+### 审核并整合提交（审核线程）
+
+`804b1ed653` 提交了此前工作区里未提交的 23 个文件（GNR-D PECI、风扇 ApplyFan 方法、QEMU 0018/0019、模拟器 GUI/host I/O 等，详见 `meta-ctopai/meta-ceb-gnrd/tools/qemu/CHANGE-REPORT-2026-10-05.md`）。审核结论：19 个 QEMU 补丁可顺序应用到 v11.0.2，内核 0003/0004 对固定提交源码 `git apply --check` 通过；未构建、未运行。同时修了 `quick-start.md` 里过时的风扇网页调用说明和 `run-qemu.sh` 的 `set --`。该提交用了 `git add -A meta-ctopai`。
