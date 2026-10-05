@@ -7,6 +7,8 @@
 #   patches/0002  AST2600 PWM/TACH controller: the aspeed-g6-pwm-tach driver reads
 #                 fan speeds that follow the PWM duty (QMP: /machine/soc/pwm
 #                 fan-max-rpm, fan0-rpm .. fan15-rpm)
+#   patches/0003  bmc-host-sim: the host power sequence on the BMC GPIOs inside QEMU
+#                 (run-qemu.sh adds it; host-sim.py becomes an optional console)
 #
 # Re-running it resets the source tree to the tag, re-applies the patches and
 # rebuilds.  Build dependencies (Ubuntu 22.04 or newer):

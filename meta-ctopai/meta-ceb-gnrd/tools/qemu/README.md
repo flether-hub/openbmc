@@ -1,14 +1,15 @@
 # CEB-GNRD in QEMU
 
 `run-qemu.sh` starts the built image on QEMU's `ast2600-evb` machine with the
-board parts that QEMU emulates at their real bus addresses; `host-sim.py` plays
-the motherboard behind the BMC's GPIOs through QEMU's QMP socket.  Nothing in
-the BMC firmware is changed for this.
+board parts that QEMU emulates at their real bus addresses.  The motherboard
+behind the BMC's GPIOs (host power sequence) runs inside the QEMU built by
+`build-qemu.sh`; with a stock QEMU, `host-sim.py` plays it through QEMU's QMP
+socket.  Nothing in the BMC firmware is changed for this.
 
 | Interface | Simulated by |
 |---|---|
-| Power button / reset outputs, PWRGD, BIOS boot OK | `host-sim.py` (power on, OS shutdown, forced off, reset, POST time) |
-| Front panel power button input, UID button | `host-sim.py` commands `power`, `power-hold`, `uid` |
+| Power button / reset outputs, PWRGD, BIOS boot OK | patched QEMU (`bmc-host-sim` device), else `host-sim.py`: power on, OS shutdown, forced off, reset, POST time |
+| Front panel power button input, UID button | `host-sim.py` commands `power`, `power-hold`, `uid` (or QMP, below) |
 | BIOS flash (SPI1, 64 MiB) and its select GPIO | `run-qemu.sh` (`~/qemu-bios.bin`); `host-sim.py` warns when the BMC takes the flash while the host is on |
 | NC-SI port (MAC3, eth1) | `run-qemu.sh` (QEMU answers NC-SI, DHCP 10.0.2.x) |
 | 4 temperature sensors (I2C7 0x48-0x4b) | `run-qemu.sh` (tmp105), `host-sim.py` command `temp` |
@@ -34,6 +35,20 @@ sudo apt install git build-essential ninja-build pkg-config python3-venv \
 |---|---|
 | 0001 | SCU reports the AHB clock (HCLK) the way the Linux clock driver computes it |
 | 0002 | PWM/TACH controller at 0x1e610000: tach channel N reads the fan on PWM channel N, `fan-max-rpm` (12000) x duty, or a fixed `fanN-rpm` |
+| 0003 | `bmc-host-sim` device: the host power sequence on the BMC GPIOs, so `ipmitool chassis power on/off/cycle/reset`, the web power page and the front panel buttons work as soon as QEMU starts |
+
+`run-qemu.sh` adds `-device bmc-host-sim,id=host,gpio=/machine/soc/gpio` when
+the QEMU has it and logs every host state change to `~/qemu-ceb-gnrd/host.log`
+(`tail -f` it).  `host-sim.py` still works as a console for it.  Without the
+script, over QMP (`/machine/peripheral/host`):
+
+| Property | Effect |
+|---|---|
+| `state` (read) | `off`, `starting`, `post`, `on`, `shutting-down` |
+| `press-power-button` / `press-uid-button` `<ms>` | press a front panel button |
+| `power-fail true` | power good drops at once |
+| `hang true\|false` | BIOS never signals POST complete |
+| `pwrgd-ms`, `post-ms`, `shutdown-ms` | timings (1000, 20000, 10000) |
 
 The fan speeds can also be set over QMP without `host-sim.py`:
 `qom-set /machine/soc/pwm fan2-rpm 0` (stalled fan), `fan2-rpm -1` (follow the
@@ -82,7 +97,8 @@ On the build machine (Ubuntu), first terminal:
 ~/openbmc/meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 ```
 
-Second terminal, once QEMU runs (Python 3, standard library only):
+Second terminal, once QEMU runs (Python 3, standard library only; with the
+patched QEMU this is optional, a console for the host inside QEMU):
 
 ```
 python3 ~/openbmc/meta-ctopai/meta-ceb-gnrd/tools/qemu/host-sim.py

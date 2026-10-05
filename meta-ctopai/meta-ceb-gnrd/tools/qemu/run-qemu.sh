@@ -14,6 +14,9 @@
 #   I2C1-6  (Linux i2c-0..5) 0x50     one 256-byte EEPROM per PCIe slot bus
 #   PWM/TACH fan speeds follow the PWM duty (needs the QEMU from build-qemu.sh)
 #   QMP     control socket used by host-sim.py (host power, buttons, temperatures)
+#   host    with the QEMU from build-qemu.sh the host power sequence (power button,
+#           reset, PWRGD, BIOS boot OK) runs inside QEMU (bmc-host-sim device,
+#           log in ~/qemu-ceb-gnrd/host.log); host-sim.py is then only a console
 #
 #   UART3   (BMC ttyS2) on ~/qemu-ceb-gnrd/host-uart.sock: the host serial port
 #           for SOL tests (QEMU has no VUART; see tools/qemu/README.md)
@@ -80,6 +83,13 @@ else
     echo "warning: this QEMU has no adm1266 model, the PSU slots use $PSU_MODEL" >&2
 fi
 
+# Host power sequence inside QEMU (patched QEMU); otherwise host-sim.py plays it
+HOST=""
+if "$QEMU" -device help 2>/dev/null | grep -q bmc-host-sim; then
+    HOST="-device bmc-host-sim,id=host,gpio=/machine/soc/gpio -trace bmc_host_sim_state -D $STATE/host.log"
+    echo "Simulated host inside QEMU, state changes in $STATE/host.log"
+fi
+
 echo "QMP socket for host-sim.py: $QMP"
 echo "Host serial console (UART3, for SOL tests): $STATE/host-uart.sock"
 # Serial ports: the first is UART5 (BMC debug console, this terminal), then
@@ -103,4 +113,5 @@ exec "$QEMU" -M ast2600-evb -m 1G -nographic -monitor none \
   -device $PSU_MODEL,bus=aspeed.i2c.bus.7,address=0x58,id=psu0 \
   -device $PSU_MODEL,bus=aspeed.i2c.bus.7,address=0x59,id=psu1 \
   $FRU \
-  $PCIE
+  $PCIE \
+  $HOST
