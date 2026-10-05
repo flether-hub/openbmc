@@ -109,13 +109,14 @@ def mapper_sensors(root):
 
     sensors = []
     for entry in payload:
-        if not isinstance(entry, list) or len(entry) != 2:
+        # (path, services): a tuple when it came from dict.items()
+        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
             continue
         path, services = entry
         if isinstance(services, dict):
             services = list(services.items())
         for service_entry in services:
-            if not isinstance(service_entry, list) or len(service_entry) != 2:
+            if not isinstance(service_entry, (list, tuple)) or len(service_entry) != 2:
                 continue
             service, interfaces = service_entry
             if isinstance(interfaces, dict):
