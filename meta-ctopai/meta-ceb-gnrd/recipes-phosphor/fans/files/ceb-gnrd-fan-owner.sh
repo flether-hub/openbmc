@@ -30,6 +30,7 @@ pwm_file() {
 
 # Do not switch the CPLD mux until all six BMC PWM and tach channels exist.
 ready=0
+missing=""
 attempt=0
 while [ "$attempt" -lt 60 ]; do
     fan_control_ready=0
@@ -41,6 +42,7 @@ while [ "$attempt" -lt 60 ]; do
 
     for hwmon in /sys/class/hwmon/hwmon*; do
         [ -d "$hwmon" ] || continue
+        [ -e "$hwmon/fan1_input" ] || continue
         channels_ready=1
         channel=1
         while [ "$channel" -le 6 ]; do
@@ -48,6 +50,7 @@ while [ "$attempt" -lt 60 ]; do
             pwm=$(pwm_file "$hwmon" "$channel")
             if [ -z "$pwm" ] || [ ! -r "$pwm" ] || [ ! -w "$pwm" ] || [ ! -r "$tach" ]; then
                 channels_ready=0
+                missing="$hwmon: fan$channel pwm='$pwm' tach='$tach'"
                 break
             fi
             channel=$((channel + 1))
@@ -64,6 +67,7 @@ done
 
 if [ "$ready" -ne 1 ]; then
     echo "Fan-control zone and six PWM/TACH channels did not become ready; leaving control with CPLD" >&2
+    echo "  fan-control zone found: $fan_control_ready; last missing channel: ${missing:-none (no hwmon with fan1_input)}" >&2
     exit 1
 fi
 

@@ -53,7 +53,7 @@ class PanelWindow:
         self.root = tk.Tk()
         self.root.title("CEB-GNRD 模拟控制面板")
         self.root.geometry("%dx%d" % (min(1320, self.root.winfo_screenwidth() - 60),
-                                     min(1000, self.root.winfo_screenheight() - 80)))
+                                     min(760, self.root.winfo_screenheight() - 80)))
         self.root.minsize(900, 500)
         style = ttk.Style(self.root)
         style.theme_use("clam")
@@ -114,9 +114,10 @@ class PanelWindow:
         tabs.pack(fill="both", expand=True, padx=10, pady=6)
         overview = ttk.Frame(tabs, padding=8)
         tabs.add(overview, text="硬件连接")
-        self.canvas = tk.Canvas(overview, height=430, background="#ffffff",
+        # just tall enough for the 15 rows (no empty area below the drawing)
+        self.canvas = tk.Canvas(overview, height=600, background="#ffffff",
                                 highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
+        self.canvas.pack(fill="x", anchor="n")
         self._build_diagram()
         self.diagram_width = None
         self.canvas.bind("<Configure>", self._resize_diagram)
@@ -148,7 +149,7 @@ class PanelWindow:
         bx, bw, hw = 16, 170, 214
         hx = max(650, width - hw - 16)
         top = 64
-        step = max(26, min(40, (height - 90) / (len(SIGNALS) + len(BUSES))))
+        step = max(24, min(34, (height - 90) / (len(SIGNALS) + len(BUSES))))
         mid = (bx + bw + hx) // 2
         bottom = top + (len(SIGNALS) + len(BUSES)) * step + 10
         c.create_rectangle(bx, 12, bx + bw, bottom, outline="#d9e2ef", fill="#eef4fc")
