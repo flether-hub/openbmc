@@ -62,3 +62,13 @@ Thumbs.db
 
 # Generated output
 /output/
+
+# Documentation / presentation working files (build scripts, inspect dumps,
+# renders); the finished documents are kept, the intermediates are not
+.tutorial-build/
+*.inspect.ndjson
+/artifacts/*/build/
+/artifacts/*/.codex-finalizer/
+
+# Node tooling (webui-vue patch checks, document scripts)
+node_modules/
