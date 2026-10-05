@@ -222,7 +222,7 @@
             "Connector": {
                 "Name": "SYS_FAN0",
                 "Pwm": 0,
-                "PwmName": "PWM1",
+                "PwmName": "PWM0",
                 "Tachs": [0]
             },
             "Index": 0,
@@ -235,7 +235,7 @@
             "Connector": {
                 "Name": "SYS_FAN1",
                 "Pwm": 1,
-                "PwmName": "PWM2",
+                "PwmName": "PWM1",
                 "Tachs": [1]
             },
             "Index": 1,
@@ -248,7 +248,7 @@
             "Connector": {
                 "Name": "SYS_FAN2",
                 "Pwm": 2,
-                "PwmName": "PWM3",
+                "PwmName": "PWM2",
                 "Tachs": [2]
             },
             "Index": 2,
@@ -261,7 +261,7 @@
             "Connector": {
                 "Name": "SYS_FAN3",
                 "Pwm": 3,
-                "PwmName": "PWM4",
+                "PwmName": "PWM3",
                 "Tachs": [3]
             },
             "Index": 3,
@@ -274,7 +274,7 @@
             "Connector": {
                 "Name": "SYS_FAN4",
                 "Pwm": 4,
-                "PwmName": "PWM5",
+                "PwmName": "PWM4",
                 "Tachs": [4]
             },
             "Index": 4,
@@ -287,7 +287,7 @@
             "Connector": {
                 "Name": "SYS_FAN5",
                 "Pwm": 5,
-                "PwmName": "PWM6",
+                "PwmName": "PWM5",
                 "Tachs": [5]
             },
             "Index": 5,
@@ -313,7 +313,7 @@
             "Name": "Fan0 Control",
             "OutLimitMax": 100,
             "OutLimitMin": 30,
-            "Outputs": ["PWM1"],
+            "Outputs": ["PWM0"],
             "PCoefficient": 0,
             "SlewNeg": 0,
             "SlewPos": 0,
@@ -331,7 +331,7 @@
             "Name": "Fan1 Control",
             "OutLimitMax": 100,
             "OutLimitMin": 30,
-            "Outputs": ["PWM2"],
+            "Outputs": ["PWM1"],
             "PCoefficient": 0,
             "SlewNeg": 0,
             "SlewPos": 0,
@@ -349,7 +349,7 @@
             "Name": "Fan2 Control",
             "OutLimitMax": 100,
             "OutLimitMin": 30,
-            "Outputs": ["PWM3"],
+            "Outputs": ["PWM2"],
             "PCoefficient": 0,
             "SlewNeg": 0,
             "SlewPos": 0,
@@ -367,7 +367,7 @@
             "Name": "Fan3 Control",
             "OutLimitMax": 100,
             "OutLimitMin": 30,
-            "Outputs": ["PWM4"],
+            "Outputs": ["PWM3"],
             "PCoefficient": 0,
             "SlewNeg": 0,
             "SlewPos": 0,
@@ -385,7 +385,7 @@
             "Name": "Fan4 Control",
             "OutLimitMax": 100,
             "OutLimitMin": 30,
-            "Outputs": ["PWM5"],
+            "Outputs": ["PWM4"],
             "PCoefficient": 0,
             "SlewNeg": 0,
             "SlewPos": 0,
@@ -403,7 +403,7 @@
             "Name": "Fan5 Control",
             "OutLimitMax": 100,
             "OutLimitMin": 30,
-            "Outputs": ["PWM6"],
+            "Outputs": ["PWM5"],
             "PCoefficient": 0,
             "SlewNeg": 0,
             "SlewPos": 0,

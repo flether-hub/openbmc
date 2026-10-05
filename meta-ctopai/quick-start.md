@@ -858,7 +858,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
   checking on the board.
 * Fans are driven by `phosphor-pid-control` from the Entity-Manager
   configuration (`ceb-gnrd.json`): six fan PID controllers (Fan0 Control to Fan5 Control, inputs SYS_FAN0-5, outputs
-  PWM1-PWM6, limit 30-100 %), one zone (MinThermalOutput 30) and two stepwise
+  PWM0-PWM5, limit 30-100 %), one zone (MinThermalOutput 30) and two stepwise
   curves on CPU_MAX_TEMP and DIMM_MAX_TEMP. The curve points are placeholders
   awaiting confirmation. The zone fail-safe is 30 % on purpose: the number of
   fans that can be read must not decide the fan speed; the temperature

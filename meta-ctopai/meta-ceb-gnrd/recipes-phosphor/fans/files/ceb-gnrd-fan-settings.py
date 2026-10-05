@@ -197,7 +197,7 @@ async def read_fan_rpms(bus):
 
 async def read_pwm_percent(bus, index):
     """Current PWM output of fan index in percent, None when it cannot be read."""
-    path = "%s/PWM%d" % (PWM_ROOT, index + 1)
+    path = "%s/PWM%d" % (PWM_ROOT, index)
     try:
         body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetObject", "sas", [path, [FANPWM_IFACE]])
         service = next(iter(body[0]))
