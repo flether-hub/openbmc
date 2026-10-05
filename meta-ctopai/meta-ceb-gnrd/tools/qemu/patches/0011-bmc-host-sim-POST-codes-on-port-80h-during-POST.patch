@@ -6,6 +6,8 @@ Subject: [PATCH 11/12] bmc-host-sim: POST codes on port 80h during POST
 With the new lpc link set, the simulated BIOS writes a series of POST
 codes to port 80h over the POST time, through the LPC snoop, ending with
 0xAD when POST completes; a hanging BIOS stops at 0x92.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/misc/bmc_host_sim.c | 48 ++++++++++++++++++++++++++++++++++++++++--
  1 file changed, 46 insertions(+), 2 deletions(-)

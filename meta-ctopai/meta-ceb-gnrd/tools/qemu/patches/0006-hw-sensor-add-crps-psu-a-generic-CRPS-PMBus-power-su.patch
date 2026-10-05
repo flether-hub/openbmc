@@ -12,6 +12,8 @@ be changed at run time; ac-lost drops the output and reports VIN_UV in
 STATUS_WORD/STATUS_INPUT, and present=false makes the address NACK as
 if the module was pulled.  Unsupported commands raise a CML fault so the
 driver skips them.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/sensor/Kconfig     |   5 +
  hw/sensor/crps_psu.c  | 277 ++++++++++++++++++++++++++++++++++++++++++

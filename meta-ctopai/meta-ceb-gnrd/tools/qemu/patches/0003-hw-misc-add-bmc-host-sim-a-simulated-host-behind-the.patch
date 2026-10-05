@@ -17,6 +17,8 @@ restarts POST.  Front panel and UID button presses, a power failure and
 a BIOS hang are run-time properties (qom-set), and qom-get state reports
 off, starting, post, on or shutting-down.  The pin names default to the
 CEB-GNRD wiring and can be changed with properties.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/misc/bmc_host_sim.c | 424 +++++++++++++++++++++++++++++++++++++++++
  hw/misc/meson.build    |   3 +-

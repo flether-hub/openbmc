@@ -16,6 +16,8 @@ both can be changed at run time with qom-set.  The count uses HCLK from
 the SCU, the tach clock divider and two pulses per revolution, matching
 the Linux driver.  With fan-max-rpm 0 and no fixed speeds (the default,
 used by the AST1700) the device behaves as before.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/arm/aspeed_ast2600.c      |  19 ++++
  hw/misc/aspeed_pwm.c         | 186 ++++++++++++++++++++++++++++++++---

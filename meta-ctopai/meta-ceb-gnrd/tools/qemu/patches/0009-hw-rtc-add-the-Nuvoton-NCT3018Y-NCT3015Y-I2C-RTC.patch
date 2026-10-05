@@ -9,6 +9,8 @@ time plus an offset set by the guest; time fields written in one
 transfer take effect together at its end.  Like the battery-backed part
 it keeps its time across a BMC reset.  battery-ok=false reports a low
 battery in the status register, which makes the driver reject the time.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/arm/Kconfig     |   1 +
  hw/rtc/Kconfig     |   5 +

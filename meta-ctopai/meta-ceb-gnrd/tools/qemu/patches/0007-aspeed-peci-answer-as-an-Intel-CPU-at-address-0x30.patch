@@ -13,6 +13,8 @@ Lake and later (resolved cores, memory controller bus, DIMM thresholds).
 Other addresses, or the CPU while cpu-online is false, time out.  The
 CPUID (Sapphire Rapids by default), Tjmax, the package and DIMM
 temperatures, the core count and the populated DIMMs are properties.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/misc/aspeed_peci.c         | 278 +++++++++++++++++++++++++++++++++-
  include/hw/misc/aspeed_peci.h |  13 ++

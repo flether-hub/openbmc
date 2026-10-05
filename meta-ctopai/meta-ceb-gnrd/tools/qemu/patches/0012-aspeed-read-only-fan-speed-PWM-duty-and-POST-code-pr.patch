@@ -7,6 +7,8 @@ Subject: [PATCH 12/12] aspeed: read-only fan speed, PWM duty and POST code
 For a control panel: fanN-speed (the RPM the fan runs at) and pwmN-duty
 (percent) on /machine/soc/pwm, and post-code on /machine/soc/lpc now
 reads back the last code snoop channel 0 latched.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/misc/aspeed_lpc.c         | 12 +++++++++-
  hw/misc/aspeed_pwm.c         | 45 ++++++++++++++++++++++++++++++++----

@@ -7,6 +7,8 @@ Add aspeed_scu_get_hclk_freq(), which derives HCLK from HPLL and the
 AXI/AHB ratio straps in SCU500 the same way the Linux clk-ast2600 driver
 does, so that models clocked by HCLK can produce the counts the guest
 expects.  Only the AST2600 SCU implements it; others return 0.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/misc/aspeed_scu.c         | 45 ++++++++++++++++++++++++++++++++++++
  include/hw/misc/aspeed_scu.h |  3 +++

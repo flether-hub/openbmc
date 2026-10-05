@@ -13,6 +13,8 @@ LPC snoop: HICR5/HICR6/SNPWADR/SNPWDR as the aspeed-lpc-snoop driver
 uses them, on their own GIC line (144).  aspeed_lpc_snoop_write() is a
 host write to an I/O port, and the write-only post-code property writes
 port 80h, so POST codes can come from a host model or from QMP.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/arm/aspeed_ast2600.c      | 26 +++++++++++++++-
  hw/misc/aspeed_lpc.c         | 60 ++++++++++++++++++++++++++++++++++++

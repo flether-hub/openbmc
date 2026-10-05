@@ -10,6 +10,8 @@ voltage set returns that voltage scaled to the selected reference
 (2.5 V, or 1.2 V when the AST2600 reference select is 1).  While the
 compensation mode is on, such channels read half scale, so the Linux
 driver computes a zero offset.  Channels left at -1 keep the old ramp.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/adc/aspeed_adc.c         | 85 ++++++++++++++++++++++++++++++++++++-
  include/hw/adc/aspeed_adc.h |  4 ++

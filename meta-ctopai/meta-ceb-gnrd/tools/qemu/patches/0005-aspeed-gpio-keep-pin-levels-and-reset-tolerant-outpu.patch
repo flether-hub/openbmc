@@ -10,6 +10,8 @@ pressed) and every input driven by the board read low until it changed
 again.  Keep the pin levels, the reset tolerance register and the
 direction and output value of the pins marked reset tolerant, as the
 hardware does.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/gpio/aspeed_gpio.c | 16 ++++++++++++++--
  1 file changed, 14 insertions(+), 2 deletions(-)

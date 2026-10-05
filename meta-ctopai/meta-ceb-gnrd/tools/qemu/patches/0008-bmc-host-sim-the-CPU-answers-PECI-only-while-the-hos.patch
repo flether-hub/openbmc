@@ -7,6 +7,8 @@ Subject: [PATCH 08/12] bmc-host-sim: the CPU answers PECI only while the host
 With the new peci link set, the simulated host takes the CPU off the
 PECI bus while it is off or starting, and puts it back once its power is
 good, as a real CPU does.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
 ---
  hw/misc/bmc_host_sim.c | 16 +++++++++++++++-
  1 file changed, 15 insertions(+), 1 deletion(-)
