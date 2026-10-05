@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 12:35 UTC（北京时间 20:35）
+最后更新：2026-10-05 12:40 UTC（北京时间 20:40）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -118,6 +118,7 @@
 | `77a8624030` | `gpio_defs.json` 里 UID 按键名改成 `ID_BTN`（phosphor-buttons 只认这个名字） | `gpioinfo` 里 `BMC_UID_BUTTON_N` `[used]`，按键切换 identify 灯。**用户反馈：先能亮，重编后不亮，等 `gpioinfo`、`gpio_defs.json`、`gpiomon` 输出** |
 | `d37433c2d8` | `ceb-gnrd-alert-led.py`：入侵状态是完整枚举串，比较最后一段（否则每次启动都误记一条入侵 SEL） | 启动日志没有 "Chassis intrusion detected" |
 | `6e5868b21b` | `ceb-gnrd-alert-led.py`：`mapper_sensors()` 把结果变成元组又要求列表，找不到 sensor，电压告警从不点亮告警灯 | D3V0_BAT0 告警 → 告警灯红 |
+| _(本提交)_ | UID 按键重启后不亮：`phosphor-button-handler` 只在启动时查一次 UID 按键对象，而 `buttons` 守护进程先占总线名、后导出对象，两者同时启动就竞争，handler 忽略 UID 键（手工重启两个服务后又能亮，和现象一致）。给 handler 加 systemd drop-in，先等 `Buttons/ID` 对象出现（`ceb-gnrd-wait-buttons.sh`，最多 60 s，不阻塞）。**未编译验证** | 重启 BMC 后 `journalctl -u phosphor-button-handler` 应有 "Registering ID button handler"；按 UID 键灯切换 |
 
 开放问题（QEMU 线程）
 1. UID 灯重编后不亮、风扇 override 线仍低：见上面两行「等输出」。
