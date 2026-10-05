@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 12:05 UTC（北京时间 20:05）
+最后更新：2026-10-05 12:20 UTC（北京时间 20:20）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -130,3 +130,11 @@
 ### 审核并整合提交（审核线程）
 
 `804b1ed653` 提交了此前工作区里未提交的 23 个文件（GNR-D PECI、风扇 ApplyFan 方法、QEMU 0018/0019、模拟器 GUI/host I/O 等，详见 `meta-ctopai/meta-ceb-gnrd/tools/qemu/CHANGE-REPORT-2026-10-05.md`）。审核结论：19 个 QEMU 补丁可顺序应用到 v11.0.2，内核 0003/0004 对固定提交源码 `git apply --check` 通过；未构建、未运行。同时修了 `quick-start.md` 里过时的风扇网页调用说明和 `run-qemu.sh` 的 `set --`。该提交用了 `git add -A meta-ctopai`。
+
+### 线程「把 CEB-GNRD 展开到 .tutorial-build」
+
+* `d9fe2246a7`：新增 `meta-ctopai/meta-ceb-gnrd/tools/expand-to-tutorial-build.py`。`.tutorial-build/` 是被 git 忽略的临时源码展开目录（见 `tools/qemu/README.md`），此前只放了 QEMU/PECI 的 base/tree 展开。用户要求 CEB-GNRD 相关代码能展开到这里，取最小改动的理解：把层本身和它依赖的仓库内文件按原目录结构复制过去。
+  * 复制内容：`meta-ctopai/meta-ceb-gnrd`、`meta-ctopai/conf`（`layer.conf`、`ctopai-openbmc` distro，bblayers 模板同时引用这两个层）、`meta-ctopai/quick-start.md`（第九章是本层说明）。只复制 git 跟踪的文件，取工作区内容（未提交的修改会带上，未跟踪的临时文件不会）。
+  * 目标默认 `.tutorial-build/ceb-gnrd/`，每次运行先删掉该目录再复制，`.tutorial-build/` 下其他内容不动；可传参数指定其他目标，但拒绝写到仓库内 `.tutorial-build` 以外的位置。
+  * 不包括：上游源码（QEMU、内核、webui-vue 等）的 base/tree 展开和打补丁，那需要联网取固定版本源码，没做。
+  * 验证：`python3 meta-ctopai/meta-ceb-gnrd/tools/expand-to-tutorial-build.py` 输出 `N files -> ...\.tutorial-build\ceb-gnrd`；`diff -r meta-ctopai/meta-ceb-gnrd .tutorial-build/ceb-gnrd/meta-ctopai/meta-ceb-gnrd` 无差异。已在本机运行两次（第二次覆盖），193 个文件，diff 一致。
