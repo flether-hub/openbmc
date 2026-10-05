@@ -9,8 +9,10 @@ sudo apt install python3-tk).
 """
 
 import threading
+import json
+import os
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog
 
 # [name, gpio, property, direction, active low, note]
 SIGNALS = [
@@ -42,14 +44,28 @@ ON, OFF, ACT, ALERT, BLUE, WIRE = "#22c55e", "#cbd2dc", "#f59e0b", "#ef4444", "#
 
 
 class PanelWindow:
-    def __init__(self, panel, command):
+    def __init__(self, panel, command, services):
         """panel: host-sim.py Panel (its .state is the polled board state);
         command(text) runs one console command and raises on bad input."""
         self.panel = panel
         self.command = command
+        self.services = services
         self.root = tk.Tk()
         self.root.title("CEB-GNRD 模拟控制面板")
-        self.root.geometry("1200x%d" % min(1000, self.root.winfo_screenheight() - 80))
+        self.root.geometry("%dx%d" % (min(1320, self.root.winfo_screenwidth() - 60),
+                                     min(1000, self.root.winfo_screenheight() - 80)))
+        self.root.minsize(900, 500)
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure(".", background="#f2f5fa", foreground="#19304c", font=("", 10))
+        style.configure("TButton", padding=(12, 7), background="#e8eef7", borderwidth=0)
+        style.map("TButton", background=[("active", "#d8e6fb")])
+        style.configure("TNotebook", background="#f2f5fa", borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(14, 9))
+        style.map("TNotebook.Tab", background=[("selected", "#dceaff")])
+        style.configure("TLabelframe", bordercolor="#d9e2ef", relief="solid")
+        style.configure("TLabelframe.Label", foreground="#355f93", font=("", 10, "bold"))
+        self.preview_key = None
         self.term_pos = 0
         self.drawn = {}
         self._scroll_area()
@@ -79,33 +95,14 @@ class PanelWindow:
 
     # ---- layout -------------------------------------------------------------
     def _scroll_area(self):
-        """Everything sits in a scrollable frame, so a small screen can scroll
-        to the parts below (vertical scroll bar, mouse wheel)."""
-        outer = tk.Canvas(self.root, highlightthickness=0)
-        bar = ttk.Scrollbar(self.root, orient="vertical", command=outer.yview)
-        outer.configure(yscrollcommand=bar.set)
-        bar.pack(side="right", fill="y")
-        outer.pack(side="left", fill="both", expand=True)
-        self.body = ttk.Frame(outer)
-        window = outer.create_window((0, 0), window=self.body, anchor="nw")
-        self.body.bind("<Configure>", lambda e: outer.configure(
-            scrollregion=outer.bbox("all")))
-        outer.bind("<Configure>", lambda e: outer.itemconfigure(
-            window, width=e.width))
-
-        def wheel(event):
-            if isinstance(event.widget, (tk.Text,)):
-                return
-            step = -1 if (event.num == 4 or event.delta > 0) else 1
-            outer.yview_scroll(step * 3, "units")
-        self.root.bind_all("<MouseWheel>", wheel)
-        self.root.bind_all("<Button-4>", wheel)
-        self.root.bind_all("<Button-5>", wheel)
+        """Each notebook page fits the client area; no whole-window scrollbar."""
+        self.body = ttk.Frame(self.root)
+        self.body.pack(fill="both", expand=True)
 
     def _build(self):
-        top = ttk.Frame(self.body, padding=(10, 6))
+        top = ttk.Frame(self.body, padding=(18, 16))
         top.pack(fill="x")
-        ttk.Label(top, text="CEB-GNRD 模拟控制面板", font=("", 13, "bold")).pack(side="left")
+        ttk.Label(top, text="CEB-GNRD  /  硬件模拟控制台", font=("", 16, "bold")).pack(side="left")
         ttk.Label(top, text="   主机：").pack(side="left")
         self.state_lbl = tk.Label(top, text="--", fg="white", bg=OFF, padx=10,
                                   font=("", 10, "bold"))
@@ -113,17 +110,23 @@ class PanelWindow:
         self.mode_lbl = ttk.Label(top, text="", foreground="#6b7280")
         self.mode_lbl.pack(side="left", padx=12)
 
-        self.canvas = tk.Canvas(self.body, height=430, background="#ffffff",
-                                highlightthickness=0)
-        self.canvas.pack(fill="x", padx=10)
-        self._build_diagram()
-
         tabs = ttk.Notebook(self.body)
         tabs.pack(fill="both", expand=True, padx=10, pady=6)
+        overview = ttk.Frame(tabs, padding=8)
+        tabs.add(overview, text="硬件连接")
+        self.canvas = tk.Canvas(overview, height=430, background="#ffffff",
+                                highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self._build_diagram()
+        self.diagram_width = None
+        self.canvas.bind("<Configure>", self._resize_diagram)
+
         self._tab_host(tabs)
         self._tab_fans(tabs)
         self._tab_psus(tabs)
         self._tab_sensors(tabs)
+        self._tab_interfaces(tabs)
+        self._tab_kvm_usb(tabs)
         self._tab_console(tabs)
         self._tab_log(tabs)
 
@@ -131,18 +134,29 @@ class PanelWindow:
         ttk.Label(self.body, textvariable=self.status, foreground=ALERT).pack(
             fill="x", padx=10, pady=(0, 4))
 
-    def _build_diagram(self):
+    def _resize_diagram(self, event):
+        dimensions = (event.width, event.height)
+        if dimensions != self.diagram_width:
+            self.diagram_width = dimensions
+            self._build_diagram(*dimensions)
+
+    def _build_diagram(self, width=1260, height=640):
         c = self.canvas
-        bx, bw, hx, hw = 20, 210, 900, 240
-        top, step = 40, 32
+        c.delete("all")
+        for child in c.winfo_children():
+            child.destroy()
+        bx, bw, hw = 16, 170, 214
+        hx = max(650, width - hw - 16)
+        top = 64
+        step = max(26, min(40, (height - 90) / (len(SIGNALS) + len(BUSES))))
         mid = (bx + bw + hx) // 2
         bottom = top + (len(SIGNALS) + len(BUSES)) * step + 10
-        c.configure(height=bottom + 10)
-        c.create_rectangle(bx, 6, bx + bw, bottom, outline="#d6d9e0", fill="#f4f5f7", width=2)
-        c.create_text(bx + 12, 22, text="AST2600 BMC", anchor="w", font=("", 11, "bold"))
-        c.create_rectangle(hx, 6, hx + hw, bottom, outline="#d6d9e0", fill="#f4f5f7", width=2)
-        c.create_text(hx + 12, 22, text="主机主板 (GNR-D / CPLD)", anchor="w",
-                      font=("", 11, "bold"))
+        c.create_rectangle(bx, 12, bx + bw, bottom, outline="#d9e2ef", fill="#eef4fc")
+        c.create_rectangle(hx, 12, hx + hw, bottom, outline="#d9e2ef", fill="#eef4fc")
+        c.create_text(bx + 14, 32, text="AST2600", anchor="w", fill="#225ba4", font=("", 15, "bold"))
+        c.create_text(bx + 14, 51, text="BMC · GPIO / 外设", anchor="w", fill="#70849d", font=("", 9))
+        c.create_text(hx + 14, 32, text="GNR-D / CPLD", anchor="w", fill="#225ba4", font=("", 14, "bold"))
+        c.create_text(hx + 14, 51, text="主机 · 输入与输出", anchor="w", fill="#70849d", font=("", 9))
         self.wires, self.leds = {}, {}
         for i, (name, gpio, key, direction, low, note) in enumerate(SIGNALS):
             y = top + i * step + 10
@@ -153,6 +167,7 @@ class PanelWindow:
                 c.create_oval(hx + 8, y - 7, hx + 22, y + 7, fill=OFF, outline=""))
             self.wires[key] = c.create_line(bx + bw, y, hx, y, fill=WIRE, width=2,
                                             arrow="last" if direction == "b2h" else "first")
+            c.create_rectangle(mid - 175, y - 18, mid + 175, y + 17, fill="#ffffff", outline="")
             c.create_text(mid, y - 7, text=name, font=("", 9))
             c.create_text(mid, y + 8, text=note, fill="#6b7280", font=("", 8))
             if key in HOST_LABELS:
@@ -284,19 +299,21 @@ class PanelWindow:
             sc.bind("<ButtonRelease-1>", lambda e, c=cmd, s=sc: self.run("%s %d" % (c, s.get())))
             self.temp_scales[key] = sc
 
-        adc = ttk.LabelFrame(f, text="ADC（引脚电压 × 分压比 = 电源轨）", padding=8)
+        adc = ttk.LabelFrame(f, text="电源轨电压 V（自动分压）", padding=8)
         adc.pack(side="left", fill="both", expand=True, padx=10)
         self.adc_rows = []
         for i in range(16):
             name = ttk.Label(adc, text="", font=("Courier", 9))
             name.grid(row=i, column=0, sticky="w")
-            rail = ttk.Label(adc, text="", font=("Courier", 9), width=22)
+            rail = ttk.Label(adc, text="", font=("Courier", 9), width=30)
             rail.grid(row=i, column=1, sticky="w")
             mv = tk.StringVar()
             ttk.Entry(adc, textvariable=mv, width=7).grid(row=i, column=2)
             self.button(adc, "设置", lambda i=i, mv=mv: "adc %d %s" % (i, mv.get()),
                         width=5).grid(row=i, column=3, padx=2)
             self.adc_rows.append((name, rail, mv))
+        ttk.Label(adc, text="填写测量值，如 12.1；÷N 表示模拟器自动分压。\n引脚超过 2.5 V 时保留 ADC 饱和行为。",
+                  foreground="#70849d").grid(row=16, column=0, columnspan=4, sticky="w", pady=8)
 
         rtc = ttk.LabelFrame(f, text="RTC NCT3015Y", padding=8)
         rtc.pack(side="left", fill="y")
@@ -432,11 +449,15 @@ class PanelWindow:
                     rail.configure(text="原版 QEMU")
                     continue
                 volts = min(a["mv"], 2500) * a["scale"] / 1000
-                rail.configure(text="跳变" if a["mv"] < 0 else "%.2f V%s" % (
-                    volts, "  超出 2.5V 参考" if a["mv"] > 2500 else ""))
-                mv.set(str(a["mv"]))
+                rail.configure(text="%.3f V · %s%s" % (
+                    volts, "÷%s" % a["scale"] if a["scale"] != 1 else "直连",
+                    " · 饱和" if a["mv"] > 2500 else ""))
+                # Do not replace a value while the user is editing that entry.
+                if not isinstance(focus, ttk.Entry) or str(focus.cget("textvariable")) != str(mv):
+                    mv.set("%.3f" % (a["mv"] * a["scale"] / 1000))
         rb = st.get("rtc_battery")
         self.rtc_lbl.configure(text="电池：--" if rb is None else ("电池：正常" if rb else "电池：没电"))
+        self._refresh_interfaces(st)
 
         # console and log
         if self.panel.console:
@@ -452,3 +473,117 @@ class PanelWindow:
 
     def mainloop(self):
         self.root.mainloop()
+
+    def _tab_interfaces(self, tabs):
+        f = ttk.Frame(tabs, padding=16)
+        tabs.add(f, text="eSPI / CHASI#")
+        self.interface_status = ttk.Label(f, text="等待硬件状态", justify="left")
+        self.interface_status.pack(anchor="w", pady=8)
+        row = ttk.Frame(f); row.pack(anchor="w", pady=6)
+        self.button(row, "开盖（CHASI# 拉低）", "chassis open").pack(side="left", padx=4)
+        self.button(row, "合盖", "chassis closed").pack(side="left", padx=4)
+        ttk.Label(f, text="合盖不直接清除锁存告警；由 BMC intrusion 服务执行重新布防。").pack(anchor="w")
+        row = ttk.Frame(f); row.pack(anchor="w", pady=8)
+        self.button(row, "断言 eSPI RESET#", "espi reset assert").pack(side="left", padx=4)
+        self.button(row, "释放 eSPI RESET#", "espi reset release").pack(side="left", padx=4)
+        self.button(row, "注入 Peripheral 错误", "espi error 400").pack(side="left", padx=4)
+        row = ttk.Frame(f); row.pack(anchor="w", pady=8)
+        ttk.Label(row, text="KCS IPMI（十六进制字节）").pack(side="left")
+        self.ipmi_request = tk.StringVar(value="18 01")
+        ttk.Entry(row, textvariable=self.ipmi_request, width=24).pack(side="left", padx=6)
+        self.button(row, "发送 · 查看事件日志", lambda: "ipmi " + self.ipmi_request.get()).pack(side="left")
+
+    def _tab_kvm_usb(self, tabs):
+        f = ttk.Frame(tabs, padding=16)
+        tabs.add(f, text="VGA / USB")
+        left = ttk.LabelFrame(f, text="主机 VGA 输入 · 800×600 JPEG", padding=12)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        self.vga_preview = ttk.Label(left, text="等待 VGA 图片")
+        self.vga_preview.pack()
+        row = ttk.Frame(left); row.pack(anchor="w", pady=8)
+        ttk.Button(row, text="选择 JPEG", command=self._choose_vga).pack(side="left", padx=3)
+        self.button(row, "自动 POST / OS", "vga auto").pack(side="left", padx=3)
+        self.button(row, "无信号", "vga off").pack(side="left", padx=3)
+        self.button(row, "有信号", "vga on").pack(side="left", padx=3)
+        ttk.Label(left, text="这里预览主机输入图；BMC 的实际 KVM 输出请在 BMC Web 页面查看。").pack(anchor="w")
+        right = ttk.LabelFrame(f, text="USB 主机侧接收", padding=12)
+        right.grid(row=0, column=1, sticky="nsew")
+        self.usb_status = ttk.Label(right, text="等待枚举", justify="left")
+        self.usb_status.pack(anchor="w")
+        self.usb_text = tk.Text(right, height=8, width=42, font=("Courier", 10), bg="#101f33", fg="#d4e5fb")
+        self.usb_text.pack(fill="both", expand=True, pady=6)
+        row = ttk.Frame(right); row.pack(anchor="w")
+        self.button(row, "重新枚举", "usb reconnect").pack(side="left", padx=3)
+        self.usb_port = tk.StringVar(value="1")
+        ttk.Label(right, text="在 BMC KVM 输入键盘/鼠标；这里显示 gadget 实际发出的报告。").pack(anchor="w")
+        media_page = ttk.Frame(tabs, padding=16)
+        tabs.add(media_page, text="虚拟媒体")
+        media = ttk.LabelFrame(media_page, text="虚拟媒体 · 只读 ISO / IMG", padding=12)
+        media.pack(fill="both", expand=True)
+        ttk.Label(media, text="先在 BMC Web 的虚拟媒体页面挂载或弹出镜像。\n本面板仅模拟主机 USB 侧，并检查枚举、容量和首扇区读取。",
+                  justify="left").pack(anchor="w", pady=8)
+        self.media_label = ttk.Label(media, text="尚未执行读取检查", justify="left")
+        self.media_label.pack(anchor="w", pady=8)
+        row = ttk.Frame(media); row.pack(anchor="w", pady=8)
+        ttk.Label(row, text="USB 存储端口").pack(side="left")
+        self.media_port_box = ttk.Combobox(row, textvariable=self.usb_port, width=5, state="readonly")
+        self.media_port_box.pack(side="left", padx=8)
+        self.media_read_button = self.button(row, "读取容量和首扇区", lambda: "usb media " + self.usb_port.get())
+        self.media_read_button.pack(side="left", padx=4)
+        self.media_result = tk.Text(media, height=14, font=("Courier", 10), bg="#101f33", fg="#d4e5fb")
+        self.media_result.pack(fill="both", expand=True, pady=8)
+        f.columnconfigure(0, weight=1); f.columnconfigure(1, weight=1)
+
+    def _async_action(self, action):
+        def work():
+            try:
+                action()
+                msg = "操作已提交"
+            except Exception as exc:
+                msg = str(exc)
+            self.root.after(0, lambda: self.status.set(msg))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _choose_vga(self):
+        path = filedialog.askopenfilename(title="选择 VGA 输入", filetypes=[("JPEG", "*.jpg *.jpeg")])
+        if path:
+            self._async_action(lambda: self.services.set_vga(path))
+
+    def _refresh_interfaces(self, st):
+        espi, chassis, usb, video = (st.get(k, {}) for k in ("espi", "chassis", "usb", "video"))
+        flag = lambda x: "未实现" if x is None else ("是" if x else "否")
+        self.interface_status.configure(text="eSPI Peripheral 就绪：%s    VW 就绪：%s    Boot 就绪：%s    RESET# 断言：%s\n机箱开盖：%s    入侵锁存：%s" % (
+            flag(espi.get("peripheral-ready")), flag(espi.get("vw-ready")), flag(espi.get("boot-ready")),
+            flag(espi.get("host-reset")), flag(chassis.get("open")), flag(chassis.get("latched"))))
+        devices = usb.get("devices", [])
+        self.usb_status.configure(text="USB：%s\n%s%s" % (
+            "已连接" if usb.get("connected") else "未连接",
+            "  ".join("端口%s %s:%s" % (d["port"], d["vid"], d["pid"]) for d in devices),
+            "\n" + usb["error"] if usb.get("error") else ""))
+        text = usb.get("keyboard_text", "") + "\n\nHID 报告：\n" + "\n".join(
+            "port%s ep%s  %s" % (r["port"], r["endpoint"], r["hex"]) for r in usb.get("reports", [])[-12:])
+        if self.changed("usb-text", text):
+            self.usb_text.delete("1.0", "end"); self.usb_text.insert("end", text); self.usb_text.see("end")
+        ports = [str(d["port"]) for d in devices if any(i["class"] == 8 for i in d["interfaces"])]
+        self.media_port_box.configure(values=ports)
+        if self.usb_port.get() not in ports:
+            self.usb_port.set(ports[0] if ports else "")
+        self.media_read_button.configure(state="normal" if ports else "disabled")
+        result = usb.get("media_result")
+        self.media_label.configure(text="检测到 USB 存储端口：" + (", ".join(ports) or "无；请在 BMC Web 挂载后等待枚举"))
+        if self.changed("media-result", result):
+            self.media_result.delete("1.0", "end")
+            self.media_result.insert("end", json.dumps(result, ensure_ascii=False, indent=2) if result else "尚未执行读取检查")
+        key = (video.get("path"), video.get("signal"), video.get("generation"))
+        if key != self.preview_key:
+            self.preview_key = key
+            if not video.get("signal"):
+                self.vga_preview.configure(image="", text="VGA 无信号")
+            elif video.get("path"):
+                try:
+                    from PIL import Image, ImageTk
+                    with Image.open(video["path"]) as image:
+                        self.preview_image = ImageTk.PhotoImage(image.resize((400, 300)))
+                    self.vga_preview.configure(image=self.preview_image, text="")
+                except (ImportError, OSError):
+                    self.vga_preview.configure(image="", text="图片：%s\n安装 python3-pil.imagetk 可在窗口内预览" % os.path.basename(video["path"]))

@@ -17,8 +17,8 @@ D-Bus API (reachable through the bmcweb D-Bus REST interface):
   property Persist (b, read/write)
   method   Save()  snapshot the current Entity-Manager values (or delete the
                    stored file when Persist is false)
-  method   SelectAll() / SelectFan0..5()  then SetAdaptive() / SetFixed20..100()
-                   act on the selected fan(s); no arguments (web page)
+  method   ApplyFan<0..5|All><Adaptive|Fixed20..100><Keep|Forget>() -> b
+                   atomic target/mode/duty/persistence operation (web page)
   method   KeepSettings() / ForgetSettings()  set Persist and save (no arguments,
                    for the web page)
   method   GetFans() -> ay  status of the six fans (used by the IPMI OEM command)
@@ -241,7 +241,7 @@ class FanSettings(ServiceInterface):
         super().__init__(IFACE)
         self.bus = bus
         self.persist = False
-        self.selected = 0xFF  # fan chosen by the argument-free web methods
+        self.operation_lock = asyncio.Lock()
 
     @dbus_property(access=PropertyAccess.READWRITE)
     def Persist(self) -> "b":
@@ -258,21 +258,23 @@ class FanSettings(ServiceInterface):
         """Store the current fan settings, or forget them when Persist is false."""
         return await self.do_save()
 
-    # The web page (bmcweb D-Bus REST) cannot pass scalar arguments, so these two
-    # methods have none: the page sets the limits through Redfish, then calls one.
+    # Legacy persistence controls. The current web page uses a single ApplyFan*
+    # call containing target, mode, duty and persistence.
     @method()
     async def KeepSettings(self) -> "b":
         """Keep the current fan settings after a BMC reboot."""
-        self.persist = True
-        self.emit_properties_changed({"Persist": True})
-        return await self.do_save()
+        async with self.operation_lock:
+            self.persist = True
+            self.emit_properties_changed({"Persist": True})
+            return await self._do_save()
 
     @method()
     async def ForgetSettings(self) -> "b":
         """Do not keep the fan settings: a BMC reboot returns to adaptive mode."""
-        self.persist = False
-        self.emit_properties_changed({"Persist": False})
-        return await self.do_save()
+        async with self.operation_lock:
+            self.persist = False
+            self.emit_properties_changed({"Persist": False})
+            return await self._do_save()
 
     @method()
     async def GetFans(self) -> "ay":
@@ -304,71 +306,11 @@ class FanSettings(ServiceInterface):
         """Set one fan (0..5) or all fans (0xFF) to adaptive (0) or fixed (1) mode."""
         return await self.apply_fan(fan, mode, duty, persist)
 
-    # The web page cannot pass arguments (bmcweb's D-Bus REST has no usable scalar
-    # arguments here, and writing Entity-Manager through Redfish fails), so it
-    # calls argument-free methods in three steps: SelectAll / SelectFan<n>, then
-    # SetAdaptive / SetFixed<duty> for the selected fan(s), then KeepSettings or
-    # ForgetSettings.
-    @method()
-    async def SelectAll(self) -> "b":
-        self.selected = 0xFF
-        return True
-
-    @method()
-    async def SelectFan0(self) -> "b":
-        self.selected = 0
-        return True
-
-    @method()
-    async def SelectFan1(self) -> "b":
-        self.selected = 1
-        return True
-
-    @method()
-    async def SelectFan2(self) -> "b":
-        self.selected = 2
-        return True
-
-    @method()
-    async def SelectFan3(self) -> "b":
-        self.selected = 3
-        return True
-
-    @method()
-    async def SelectFan4(self) -> "b":
-        self.selected = 4
-        return True
-
-    @method()
-    async def SelectFan5(self) -> "b":
-        self.selected = 5
-        return True
-
-    @method()
-    async def SetAdaptive(self) -> "b":
-        return await self.apply_fan(self.selected, 0, 0, 1 if self.persist else 0)
-
-    @method()
-    async def SetFixed20(self) -> "b":
-        return await self.apply_fan(self.selected, 1, 20, 1 if self.persist else 0)
-
-    @method()
-    async def SetFixed40(self) -> "b":
-        return await self.apply_fan(self.selected, 1, 40, 1 if self.persist else 0)
-
-    @method()
-    async def SetFixed60(self) -> "b":
-        return await self.apply_fan(self.selected, 1, 60, 1 if self.persist else 0)
-
-    @method()
-    async def SetFixed80(self) -> "b":
-        return await self.apply_fan(self.selected, 1, 80, 1 if self.persist else 0)
-
-    @method()
-    async def SetFixed100(self) -> "b":
-        return await self.apply_fan(self.selected, 1, 100, 1 if self.persist else 0)
-
     async def apply_fan(self, fan, mode, duty, persist) -> bool:
+        async with self.operation_lock:
+            return await self._apply_fan(fan, mode, duty, persist)
+
+    async def _apply_fan(self, fan, mode, duty, persist) -> bool:
         if fan != 0xFF and fan >= FAN_COUNT:
             LOG.warning("SetFan: invalid fan %d", fan)
             return False
@@ -395,9 +337,13 @@ class FanSettings(ServiceInterface):
                  duty, persist, changed)
         self.persist = bool(persist)
         self.emit_properties_changed({"Persist": self.persist})
-        return await self.do_save()
+        return await self._do_save()
 
     async def do_save(self) -> bool:
+        async with self.operation_lock:
+            return await self._do_save()
+
+    async def _do_save(self) -> bool:
         if not self.persist:
             delete_state()
             LOG.info("Save: persistence off, the next BMC reboot returns to adaptive mode")
@@ -420,6 +366,29 @@ class FanSettings(ServiceInterface):
             return False
 
 
+def _web_apply_method(name, fan, mode, duty, persist):
+    """Each REST method carries its complete operation in its member name.
+
+    dbus-fast discovers the decorated members when ServiceInterface is created.
+    No selected target or pending persistence choice is shared between clients.
+    """
+    async def apply(self) -> "b":
+        return await self.apply_fan(fan, mode, duty, persist)
+    return method(name=name)(apply)
+
+
+for _fan in range(FAN_COUNT + 1):
+    _target = "All" if _fan == FAN_COUNT else str(_fan)
+    for _mode, _duty in [(0, 0)] + [(1, d) for d in (20, 40, 60, 80, 100)]:
+        for _persist in (0, 1):
+            _name = "ApplyFan%s%s%s" % (
+                _target, "Adaptive" if _mode == 0 else "Fixed%d" % _duty,
+                "Keep" if _persist else "Forget")
+            setattr(FanSettings, _name, _web_apply_method(
+                _name, 0xFF if _fan == FAN_COUNT else _fan,
+                _mode, _duty, _persist))
+
+
 async def apply_stored(bus, state):
     changed = await write_config(bus, PID_IFACE, state.get("controllers", {}))
     changed += await write_config(bus, ZONE_IFACE, state.get("zones", {}))
@@ -432,9 +401,17 @@ async def maintain(bus, iface):
     while True:
         state = load_state()
         if state and state.get("persist"):
-            iface.persist = True
             try:
-                changed = await apply_stored(bus, state)
+                async with iface.operation_lock:
+                    # Re-read after acquiring the lock: a user may have replaced
+                    # or deleted the file while the restore task was waiting.
+                    state = load_state()
+                    changed = 0
+                    if state and state.get("persist"):
+                        if not iface.persist:
+                            iface.persist = True
+                            iface.emit_properties_changed({"Persist": True})
+                        changed = await apply_stored(bus, state)
                 if first:
                     LOG.info("restored persisted fan settings (%d value(s) changed)", changed)
                     first = False

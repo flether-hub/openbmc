@@ -9,6 +9,7 @@ SRC_URI:append = " \
         file://0001-soc-aspeed-add-AST2600-eSPI-peripheral-ready-driver.patch \
         file://0002-hwmon-add-AST2600-chassis-intrusion-driver.patch \
         file://0003-peci-add-Granite-Rapids-CPU-and-DIMM-temperature.patch \
+        file://0004-pmbus-ratelimit-optional-device-probe-message.patch \
         "
 
 # The board device tree is a new file; the dtb is built through KERNEL_DEVICETREE.

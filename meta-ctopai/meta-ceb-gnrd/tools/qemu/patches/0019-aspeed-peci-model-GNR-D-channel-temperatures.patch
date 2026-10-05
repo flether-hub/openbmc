@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000019 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD simulator <qemu-ceb-gnrd@localhost>
+Date: Mon, 5 Oct 2026 18:00:00 +0800
+Subject: [PATCH] aspeed/peci: model GNR-D package and channel temperatures
+
+Default the CEB-GNRD software-test CPU to family 6/model AE, revision 4.2.
+Follow GNR-D EDS-A 737226 revision 2.1.2 Table 73: PCS 14 has eight
+channels and duplicates each channel maximum in bytes 0 and 1. An empty
+channel returns zero; an invalid channel returns completion code 0x90.
+
+Do not return Sapphire Rapids core masks or DIMM threshold registers for
+GNR-D. The model supports the root-domain package temperature and PCS 14
+CLTT/TSOD path only; it does not implement GNR-D domain/MMIO accesses.
+Setting cpuid to 0x806f8 retains the previous Sapphire Rapids model.
+Temperature controls still use the existing QMP/GUI properties.
+
+Upstream-Status: Inappropriate [CEB-GNRD software-test model]
+---
+diff --git a/hw/misc/aspeed_peci.c b/hw/misc/aspeed_peci.c
+--- a/hw/misc/aspeed_peci.c
++++ b/hw/misc/aspeed_peci.c
+@@ -102,6 +102,14 @@
+     return s->cpu_temp_mc - (int32_t)(core % 4) * 1000;
+ }
+ 
++/* GNR-D CPUID family 6/model AE; stepping is intentionally ignored. */
++static bool aspeed_peci_is_gnrd(AspeedPECIState *s)
++{
++    unsigned model = ((s->cpuid >> 4) & 0x0f) | ((s->cpuid >> 12) & 0xf0);
++
++    return ((s->cpuid >> 8) & 0x0f) == 6 && model == 0xae;
++}
++
+ static uint8_t aspeed_peci_rd_pkg_cfg(AspeedPECIState *s, uint8_t index,
+                                       uint16_t param, uint32_t *data)
+ {
+@@ -121,12 +129,26 @@
+         *data = aspeed_peci_dts(s, tcontrol_mc - s->cpu_temp_mc, false);
+         return ASPEED_PECI_CC_RSP_SUCCESS;
+     case PECI_PCS_MODULE_TEMP:
+-        if (param >= s->cores) {
++        if (aspeed_peci_is_gnrd(s) || param >= s->cores) {
+             return ASPEED_PECI_CC_INVALID_REQ;
+         }
+         *data = aspeed_peci_dts(s, aspeed_peci_core_temp(s, param), true);
+         return ASPEED_PECI_CC_RSP_SUCCESS;
+     case PECI_PCS_DDR_DIMM_TEMP:
++        if (aspeed_peci_is_gnrd(s)) {
++            if (param >= PECI_DIMM_CHANNELS) {
++                return ASPEED_PECI_CC_INVALID_REQ;
++            }
++            *data = 0;
++            if (extract32(s->dimm_mask, param * PECI_DIMM_SLOTS,
++                          PECI_DIMM_SLOTS)) {
++                uint32_t deg = MAX(s->dimm_temp_mc, 0) / 1000;
++
++                /* EDS-A Table 73: duplicate the channel maximum. */
++                *data = MIN(deg, 0xff) * 0x101;
++            }
++            return ASPEED_PECI_CC_RSP_SUCCESS;
++        }
+         if (param >= PECI_DIMM_CHANNELS ||
+             !extract32(s->dimm_mask, param * PECI_DIMM_SLOTS,
+                        PECI_DIMM_SLOTS)) {
+@@ -160,6 +182,10 @@
+                                         : (1ULL << s->cores) - 1;
+ 
+     *data = 0;
++    /* This model has no GNR-D domain/MMIO register implementation. */
++    if (aspeed_peci_is_gnrd(s)) {
++        return ASPEED_PECI_CC_INVALID_REQ;
++    }
+     if (tx_len >= 12 && tx[2] == PECI_ENDPT_LOCAL_PCI) {
+         uint32_t addr = ldl_le_p(&tx[8]);
+         uint32_t reg = extract32(addr, 0, 12);
+@@ -210,7 +236,7 @@
+     switch (tx[0]) {
+     case PECI_CMD_GET_DIB:
+         rx[0] = 0x01;                   /* one device in the package */
+-        rx[1] = 0x40;                   /* PECI revision 4.0 */
++        rx[1] = aspeed_peci_is_gnrd(s) ? 0x42 : 0x40;
+         return true;
+     case PECI_CMD_GET_TEMP:
+         stw_le_p(rx, aspeed_peci_dts(s, s->cpu_temp_mc, true));
+@@ -369,14 +395,15 @@
+ /*
+  * The CPU can be changed at run time with qom-set /machine/soc/peci:
+  * cpu-online (false while the host is off), cpu-temp-mc, dimm-temp-mc,
+- * tjmax, cores, dimm-mask and cpuid (default Sapphire Rapids, 0x806f8).
++ * tjmax, cores, dimm-mask and cpuid (default GNR-D, 0xa06e0).
++ * Sapphire Rapids remains available with cpuid 0x806f8.
+  */
+ static void aspeed_peci_init(Object *obj)
+ {
+     AspeedPECIState *s = ASPEED_PECI(obj);
+ 
+     s->cpu_online = true;
+-    s->cpuid = 0x000806f8;
++    s->cpuid = 0x000a06e0;
+     s->tjmax = 100;
+     s->cpu_temp_mc = 55000;
+     s->cores = 16;
+-- 
+2.47.0

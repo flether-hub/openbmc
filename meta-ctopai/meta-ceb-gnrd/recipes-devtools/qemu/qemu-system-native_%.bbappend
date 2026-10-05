@@ -25,4 +25,6 @@ SRC_URI += " \
     file://0015-aspeed-gpio-read-only-gpio-dir-N-properties.patch \
     file://0016-aspeed-video-signal-a-mode-detection-when-the-input-.patch \
     file://0017-aspeed-adc-compensation-mode-always-reads-half-scale.patch \
+    file://0018-aspeed-integrate-espi-usb-chassis-and-video.patch \
+    file://0019-aspeed-peci-model-GNR-D-channel-temperatures.patch \
     "

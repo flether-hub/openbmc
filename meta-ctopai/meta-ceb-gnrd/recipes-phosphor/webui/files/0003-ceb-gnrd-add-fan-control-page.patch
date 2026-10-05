@@ -106,7 +106,7 @@ new file mode 100644
 index 0000000..065091b
 --- /dev/null
 +++ b/src/views/Settings/FanControl/FanControl.vue
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,211 @@
 +<template>
 +  <b-container fluid="xl">
 +    <page-title :description="$t('pageFanControl.description')" />
@@ -299,16 +299,14 @@ index 0000000..065091b
 +    },
 +    async saveSettings() {
 +      const select =
-+        this.selectedFan === 'all' ? 'SelectAll' : `SelectFan${this.selectedFan}`;
++        this.selectedFan === 'all' ? 'All' : `${this.selectedFan}`;
 +      const apply =
-+        this.mode === 'fixed' ? `SetFixed${this.fixedSpeed}` : 'SetAdaptive';
-+      const keep = this.persist ? 'KeepSettings' : 'ForgetSettings';
++        this.mode === 'fixed' ? `Fixed${this.fixedSpeed}` : 'Adaptive';
++      const keep = this.persist ? 'Keep' : 'Forget';
 +      this.isSaving = true;
 +      try {
-+        // Keep the choice first so that the saved file holds the final values.
-+        for (const action of [select, apply, keep]) {
-+          if ((await this.callService(action)) !== true) throw new Error(action);
-+        }
++        const action = `ApplyFan${select}${apply}${keep}`;
++        if ((await this.callService(action)) !== true) throw new Error(action);
 +        await this.loadSettings();
 +        this.successToast(this.$t('pageFanControl.saveSuccess'));
 +      } catch {

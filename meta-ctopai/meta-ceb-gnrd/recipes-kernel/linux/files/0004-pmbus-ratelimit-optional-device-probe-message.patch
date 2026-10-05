@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000004 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Date: Mon, 5 Oct 2026 18:00:00 +0800
+Subject: [PATCH] hwmon: pmbus: rate-limit unavailable status-register warning
+
+Optional hot-plug PSU addresses may disappear during probe. Keep the probe
+failure and its -ENODEV result unchanged, but record the diagnostic as a
+rate-limited warning. The board's console policy retains warnings in the
+kernel ring buffer without printing them over serial login input.
+
+Upstream-Status: Inappropriate [board console policy]
+---
+diff --git a/drivers/hwmon/pmbus/pmbus_core.c b/drivers/hwmon/pmbus/pmbus_core.c
+--- a/drivers/hwmon/pmbus/pmbus_core.c
++++ b/drivers/hwmon/pmbus/pmbus_core.c
+@@ -2756,4 +2756,4 @@
+ 		if (ret < 0 || ret == 0xff) {
+-			dev_err(dev, "PMBus status register not found\n");
++			dev_warn_ratelimited(dev, "PMBus status register not found\n");
+ 			return -ENODEV;
+ 		}
+-- 
+2.47.0

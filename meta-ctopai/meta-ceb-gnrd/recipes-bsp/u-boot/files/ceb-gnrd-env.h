@@ -5,6 +5,12 @@
  * CEB_GNRD_ENV is concatenated into CONFIG_EXTRA_ENV_SETTINGS by
  * 0001-ceb-gnrd-board-device-tree-network-and-environment.patch.
  *
+ * ethaddr / eth1addr: stable locally administered bring-up defaults for
+ * ethernet0 (MAC2/RGMII) and ethernet1 (MAC3/NC-SI). Provision unique MACs
+ * per physical board or concurrent simulator instance in the saved
+ * environment. A valid saved environment takes precedence over defaults;
+ * adding these defaults does not migrate an existing saved environment.
+ *
  * netupdate: fetch the kernel FIT and the read-only root filesystem from the
  * TFTP server and write them to the SPI flash.  U-Boot itself, its environment
  * (0x000000-0x0fffff) and the read-write partition (rwfs, 0x3600000) are left
@@ -17,6 +23,8 @@
  * netupdate_rofs.
  */
 #define CEB_GNRD_ENV	\
+	"ethaddr=02:26:00:00:00:01\0"	\
+	"eth1addr=02:26:00:00:00:02\0"	\
 	"netupdate_kernel=image-kernel\0"	\
 	"netupdate_rofs=image-rofs\0"	\
 	"netupdate="	\

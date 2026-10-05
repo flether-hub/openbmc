@@ -563,7 +563,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * **SOL**：走 AST2600 的 VUART1（主机看到的是 COM1，I/O 0x3F8，经 eSPI），可双向；obmc-console 用 `ttyVUART0`，BIOS 的串口重定向要选 COM1。UART3 RX 仍保留但不再是 SOL 来源。网页 SOL 可以输入（原来的只读补丁 `0005` 已移除）。
 * **风扇控制**：6 个风扇可单独或统一设置（网页下拉框是“全部风扇”和 `SYS_FAN0` 到 `SYS_FAN5`），模式只有“自适应”（最低 30%、最高 100%，固定默认值，没有最低转速滑块）和“固定转速”（20/40/60/80/100%）。页面下方有命令框：上面一个是读取每个风扇转速和模式的命令，下面一个随当前选择实时生成设置命令。风扇控制器（Pid）在 Entity-Manager 里叫 `Fan0 Control` 到 `Fan5 Control`，不能和风扇本身的 `SYS_FAN0` 到 `SYS_FAN5` 同名。
   * **IPMI OEM 命令**（netfn 0x30，只有两条，ipmitool 不用改，KCS 和 LAN 都可用，已加入白名单；由 `ceb-gnrd-ipmi-fan` 库实现，转发给 `ceb-gnrd-fan-settings` 服务）：`ipmitool raw 0x30 0x01` 读取，返回 25 字节：第 0 字节“重启后保留”标志，之后每个风扇 4 字节（模式 0 自适应/1 固定、占空比 %（`0xFF` 表示读不到）、RPM 低字节、RPM 高字节）；`ipmitool raw 0x30 0x02 <风扇 0-5 或 0xFF 全部> <模式> <占空比十六进制> <保留 0/1>` 设置，例如 `ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01` 是全部风扇固定 60% 并保留；需要 Admin 权限。
-  * **网页保存的实现**：bmcweb 的 D-Bus REST 在这个版本里不能给方法传参数，Entity-Manager 对 Pid 属性的写入又会“值已改但返回 InvalidArgs”，所以网页分三次调用 `ceb-gnrd-fan-settings` 里不带参数的方法：`SelectAll` 或 `SelectFan0` 到 `SelectFan5` 选风扇，再 `SetAdaptive` 或 `SetFixed20/40/60/80/100`，最后 `KeepSettings` 或 `ForgetSettings` 决定是否保留；服务写 Entity-Manager 后会回读确认。勾选“BMC 重启后保留这些设置”时，设置保存到 `/var/lib/ceb-gnrd/fan-settings.json`，重启和断电重启后恢复，不勾选则 BMC 重启后回到自适应。该功能依赖 bmcweb 的 `dbus-rest`。
+  * **网页保存的实现**：bmcweb 的 D-Bus REST 在这个版本里不能给方法传参数，Entity-Manager 对 Pid 属性的写入又会“值已改但返回 InvalidArgs”，所以网页每次保存只调用 `ceb-gnrd-fan-settings` 里一个不带参数的方法 `ApplyFan<0..5|All><Adaptive|Fixed20/40/60/80/100><Keep|Forget>`，方法名已包含风扇、模式和是否保留，避免多客户端交错覆盖；服务写 Entity-Manager 后会回读确认。勾选“BMC 重启后保留这些设置”时，设置保存到 `/var/lib/ceb-gnrd/fan-settings.json`，重启和断电重启后恢复，不勾选则 BMC 重启后回到自适应。该功能依赖 bmcweb 的 `dbus-rest`。
 * **升级后保留**：普通固件升级不会清读写分区；需要清读写分区的升级会按白名单保存时区、主机名、SSH 主机密钥、网站证书和风扇设置。恢复出厂则全部清除（MAC 不受影响）。
 
 ### 4. IPMI
@@ -878,9 +878,8 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
   setting.  Entity-Manager answers a write to a Pid property with InvalidArgs
   although the value is changed (root cause not pursued), so the service reads the value
   back and accepts it when it matches.  bmcweb's D-Bus REST cannot pass scalar
-  arguments in this version, so the page calls argument-free methods in three
-  steps: `SelectAll` / `SelectFan0..5`, `SetAdaptive` / `SetFixed20..100`, then
-  `KeepSettings` / `ForgetSettings`.
+  arguments in this version, so the page makes one argument-free call whose
+  method name carries the whole request: `ApplyFan<0..5|All><Adaptive|Fixed20..100><Keep|Forget>`.
 * The same control is exposed as two IPMI OEM commands, netfn 0x30:
   `0x01` Get (flag byte, then mode/duty/RPM-low/RPM-high for SYS_FAN0..5, 25
   bytes, duty `0xFF` = unknown) and `0x02` Set (fan 0-5 or 0xFF, mode, duty,

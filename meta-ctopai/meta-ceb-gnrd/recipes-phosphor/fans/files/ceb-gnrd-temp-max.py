@@ -271,7 +271,7 @@ class SensorObjectManager(ServiceInterface):
             },
             ASSOC_IFACE: {"Associations": Variant("a(sss)", assoc.assoc)},
         }
-        for obj, _, _ in thresholds:
+        for obj in thresholds:
             interfaces[obj.interface_name] = obj.properties()
         return interfaces
 

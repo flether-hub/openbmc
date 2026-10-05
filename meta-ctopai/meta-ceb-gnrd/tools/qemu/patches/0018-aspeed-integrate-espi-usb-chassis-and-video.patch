@@ -1,0 +1,966 @@
+From 0000000000000000000000000000000000000018 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD simulator <qemu-ceb-gnrd@localhost>
+Date: Mon, 5 Oct 2026 18:00:00 +0800
+Subject: [PATCH] aspeed: integrate host eSPI, USB vHub, chassis and VGA models
+
+Route legacy COM1/KCS/POST I/O through the Peripheral channel and model
+software readiness, reset and boot Virtual Wires. Add QMP host USB tokens
+for the real Linux gadget drivers and the CHASI# sticky latch. Finish VGA
+mode detection without input and limit JPEG DMA size.
+
+This is a software-test model: eSPI OOB/flash, USB isochronous transfers,
+electrical timing and migration of the new controllers are not implemented.
+Apply after the existing 0001..0017 patches against QEMU 11.0.2.
+
+Upstream-Status: Inappropriate [CEB-GNRD simulation only]
+---
+diff --git a/hw/arm/aspeed_ast2600.c b/hw/arm/aspeed_ast2600.c
+--- a/hw/arm/aspeed_ast2600.c
++++ b/hw/arm/aspeed_ast2600.c
+@@ -685,22 +685,6 @@
+     sysbus_connect_irq(SYS_BUS_DEVICE(&s->lpc), 1 + ASPEED_LPC_NR_SUBDEVS,
+                        qdev_get_gpio_in(DEVICE(&a->a7mpcore), 144));
+ 
+-    /*
+-     * VUART: a 16550 for the BMC whose other side is the host's serial port
+-     * (SOL).  The control registers above the 16550 ones (0x20-0x3f) read
+-     * as zero.  Its line is the chardev with id "vuart", if there is one.
+-     */
+-    if (qemu_chr_find("vuart")) {
+-        qdev_prop_set_chr(DEVICE(&s->vuart), "chardev",
+-                          qemu_chr_find("vuart"));
+-    }
+-    if (!aspeed_soc_uart_realize(s->memory, &s->vuart,
+-                                 sc->memmap[ASPEED_DEV_VUART], errp)) {
+-        return;
+-    }
+-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->vuart), 0,
+-                       aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_VUART));
+-
+     /* Connect the LPC IRQ to the GIC. It is otherwise unused. */
+     sysbus_connect_irq(SYS_BUS_DEVICE(&s->lpc), 0,
+                        aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_LPC));
+@@ -768,6 +752,30 @@
+                     sc->memmap[ASPEED_DEV_VIDEO]);
+     sysbus_connect_irq(SYS_BUS_DEVICE(&s->video_engine), 0,
+                        qdev_get_gpio_in(DEVICE(&a->a7mpcore), 7));
++
++    /* Host-facing interfaces; the BMC firmware uses its board drivers unchanged. */
++    {
++        DeviceState *espi = qdev_new("aspeed.espi-sim");
++        DeviceState *vhub = qdev_new("aspeed.vhub-sim");
++        DeviceState *chassis = qdev_new("aspeed.chassis-sim");
++        object_property_add_child(OBJECT(s), "espi", OBJECT(espi));
++        object_property_set_link(OBJECT(espi), "lpc", OBJECT(&s->lpc), &error_abort);
++        if (!sysbus_realize_and_unref(SYS_BUS_DEVICE(espi), errp)) { return; }
++        aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(espi), 0, 0x1e6ee000);
++        aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(espi), 1, 0x1e787000);
++        sysbus_connect_irq(SYS_BUS_DEVICE(espi), 1,
++                           qdev_get_gpio_in(DEVICE(&a->a7mpcore), 147));
++        sysbus_connect_irq(SYS_BUS_DEVICE(espi), 0,
++                           qdev_get_gpio_in(DEVICE(&a->a7mpcore), 42));
++        object_property_add_child(OBJECT(s), "usb-vhub", OBJECT(vhub));
++        if (!sysbus_realize_and_unref(SYS_BUS_DEVICE(vhub), errp)) { return; }
++        aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(vhub), 0, 0x1e6a0000);
++        sysbus_connect_irq(SYS_BUS_DEVICE(vhub), 0,
++                           qdev_get_gpio_in(DEVICE(&a->a7mpcore), 5));
++        object_property_add_child(OBJECT(s), "chassis", OBJECT(chassis));
++        if (!sysbus_realize_and_unref(SYS_BUS_DEVICE(chassis), errp)) { return; }
++        aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(chassis), 0, 0x1e6ef010);
++    }
+ 
+     /* PWM/TACH */
+     object_property_set_link(OBJECT(&s->pwm), "scu", OBJECT(&s->scu),
+diff --git a/hw/misc/aspeed_chassis_sim.c b/hw/misc/aspeed_chassis_sim.c
+new file mode 100644
+--- /dev/null
++++ b/hw/misc/aspeed_chassis_sim.c
+@@ -0,0 +1,74 @@
++/* AST2600 CHASI# input and sticky intrusion latch. */
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#include "qemu/osdep.h"
++#include "qemu/module.h"
++#include "qapi/error.h"
++#include "hw/core/sysbus.h"
++#include "qom/object.h"
++
++#define TYPE_CHASSIS_SIM "aspeed.chassis-sim"
++OBJECT_DECLARE_SIMPLE_TYPE(ChassisSimState, CHASSIS_SIM)
++struct ChassisSimState {
++    SysBusDevice parent_obj;
++    MemoryRegion iomem;
++    uint32_t ctrl;
++    bool open;
++    bool latched;
++};
++static uint64_t chassis_read(void *opaque, hwaddr addr, unsigned size)
++{
++    ChassisSimState *s = opaque;
++    return (s->ctrl & ~4U) | (s->latched ? 4U : 0);
++}
++static void chassis_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
++{
++    ChassisSimState *s = opaque;
++    s->ctrl = val & ~4U; /* STATUS is read-only, CLEAR is bit 0. */
++    if (val & 1) { s->latched = s->open; }
++}
++static const MemoryRegionOps chassis_ops = {
++    .read = chassis_read, .write = chassis_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++static bool chassis_open(Object *obj, Error **errp)
++{
++    return CHASSIS_SIM(obj)->open;
++}
++static void chassis_set_open(Object *obj, bool value, Error **errp)
++{
++    ChassisSimState *s = CHASSIS_SIM(obj);
++    s->open = value;
++    if (value) { s->latched = true; }
++}
++static bool chassis_latched(Object *obj, Error **errp)
++{
++    return CHASSIS_SIM(obj)->latched;
++}
++static void chassis_init(Object *obj)
++{
++    ChassisSimState *s = CHASSIS_SIM(obj);
++    memory_region_init_io(&s->iomem, obj, &chassis_ops, s, TYPE_CHASSIS_SIM, 4);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++    object_property_add_bool(obj, "open", chassis_open, chassis_set_open);
++    object_property_add_bool(obj, "latched", chassis_latched, NULL);
++}
++static void chassis_reset(DeviceState *dev)
++{
++    /* The battery-domain latch and physical input survive a BMC reboot. */
++    CHASSIS_SIM(dev)->ctrl = 0;
++}
++static void chassis_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    dc->desc = "AST2600 CHASI# software-test latch (polling, no IRQ)";
++    dc->user_creatable = false;
++    device_class_set_legacy_reset(dc, chassis_reset);
++}
++static const TypeInfo chassis_type = {
++    .name = TYPE_CHASSIS_SIM, .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(ChassisSimState), .instance_init = chassis_init,
++    .class_init = chassis_class_init,
++};
++static void chassis_register(void) { type_register_static(&chassis_type); }
++type_init(chassis_register)
+diff --git a/hw/misc/aspeed_espi_sim.c b/hw/misc/aspeed_espi_sim.c
+new file mode 100644
+--- /dev/null
++++ b/hw/misc/aspeed_espi_sim.c
+@@ -0,0 +1,317 @@
++/* AST2600 Peripheral/VW controller for host-side software simulation.
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ * No OOB, flash channel or electrical link timing is modeled.
++ */
++#include "qemu/osdep.h"
++#include "qemu/bitops.h"
++#include "qemu/module.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "hw/core/irq.h"
++#include "hw/core/qdev-properties.h"
++#include "hw/core/sysbus.h"
++#include "hw/misc/aspeed_lpc.h"
++#include "qom/object.h"
++#include "migration/vmstate.h"
++
++#define TYPE_ESPI_SIM "aspeed.espi-sim"
++OBJECT_DECLARE_SIMPLE_TYPE(ESPISimState, ESPI_SIM)
++struct ESPISimState {
++    SysBusDevice parent_obj;
++    MemoryRegion iomem;
++    MemoryRegion vuart;
++    qemu_irq irq;
++    qemu_irq vuart_irq;
++    AspeedLPCState *lpc;
++    uint32_t regs[0x1000 / 4];
++    bool reset_asserted;
++    uint32_t cycles;
++    char *result;
++    uint8_t uart_regs[2][8];
++    uint8_t uart_divisor[2][2];
++    uint8_t uart_fifo[2][256];
++    uint16_t uart_head[2], uart_count[2];
++    uint32_t vuart_ctrl[8];
++};
++#define R(x) ((x) / 4)
++#define CTRL 0x000
++#define ISR 0x008
++#define IER 0x00c
++#define SYSEVT 0x098
++#define PERIF_READY BIT(1)
++#define VW_READY BIT(3)
++#define BOOT_WIRES (BIT(20) | BIT(23))
++
++static bool espi_ready(ESPISimState *s, uint32_t bit)
++{
++    return !s->reset_asserted && (s->regs[R(CTRL)] & bit);
++}
++static void espi_irq(ESPISimState *s)
++{
++    qemu_set_irq(s->irq, !!(s->regs[R(ISR)] & s->regs[R(IER)]));
++}
++static bool uart_rx_irq(ESPISimState *s, unsigned side)
++{
++    return (s->uart_regs[side][1] & BIT(0)) && s->uart_count[side];
++}
++static bool uart_tx_irq(ESPISimState *s, unsigned side)
++{
++    return (s->uart_regs[side][1] & BIT(1)) && s->uart_count[!side] < 256;
++}
++static void uart_irq(ESPISimState *s)
++{
++    qemu_set_irq(s->vuart_irq, uart_rx_irq(s, 0) || uart_tx_irq(s, 0));
++}
++static uint8_t uart_read(ESPISimState *s, unsigned side, unsigned reg)
++{
++    uint8_t val;
++    if (reg < 2 && (s->uart_regs[side][3] & BIT(7))) {
++        return s->uart_divisor[side][reg]; /* divisor latch */
++    }
++    switch (reg) {
++    case 0:
++        if (!s->uart_count[side]) { return 0; }
++        val = s->uart_fifo[side][s->uart_head[side]++ & 255];
++        s->uart_count[side]--; uart_irq(s); return val;
++    case 2:
++        return 0xc0 | (uart_rx_irq(s, side) ? 4 :
++                       uart_tx_irq(s, side) ? 2 : 1);
++    case 5:
++        return (s->uart_count[side] ? BIT(0) : 0) |
++               (s->uart_count[!side] < 256 ? BIT(5) | BIT(6) : 0);
++    case 6: return 0xb0; /* CTS, DSR, DCD */
++    default: return s->uart_regs[side][reg];
++    }
++}
++static bool uart_write(ESPISimState *s, unsigned side, unsigned reg, uint8_t val)
++{
++    if (reg < 2 && (s->uart_regs[side][3] & BIT(7))) {
++        s->uart_divisor[side][reg] = val;
++    } else if (reg == 0) {
++        unsigned peer = !side;
++        if (s->uart_count[peer] == 256) { return false; }
++        s->uart_fifo[peer][(s->uart_head[peer] + s->uart_count[peer]) & 255] = val;
++        s->uart_count[peer]++;
++    } else if (reg == 2) {
++        if (val & BIT(1)) { s->uart_count[side] = 0; }
++    } else {
++        s->uart_regs[side][reg] = val;
++    }
++    uart_irq(s);
++    return true;
++}
++static uint64_t vuart_read(void *opaque, hwaddr addr, unsigned size)
++{
++    ESPISimState *s = opaque;
++    return addr < 0x20 ? uart_read(s, 0, addr >> 2) :
++                        s->vuart_ctrl[(addr - 0x20) >> 2];
++}
++static void vuart_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
++{
++    ESPISimState *s = opaque;
++    if (addr < 0x20) { uart_write(s, 0, addr >> 2, val); }
++    else { s->vuart_ctrl[(addr - 0x20) >> 2] = val; }
++}
++static const MemoryRegionOps vuart_ops = {
++    .read = vuart_read, .write = vuart_write, .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 1, .max_access_size = 4 },
++};
++static uint64_t espi_read(void *opaque, hwaddr addr, unsigned size)
++{
++    ESPISimState *s = opaque;
++    return s->regs[R(addr)];
++}
++static void espi_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
++{
++    ESPISimState *s = opaque;
++    switch (addr) {
++    case ISR: s->regs[R(ISR)] &= ~val; break;
++    case IER: s->regs[R(IER)] |= val; break;
++    case 0x0fc: s->regs[R(IER)] &= ~val; break;
++    case 0x004: case 0x0a0: case 0x0a4: case 0x0a8: break;
++    default: s->regs[R(addr)] = val; break;
++    }
++    espi_irq(s);
++}
++static const MemoryRegionOps espi_ops = {
++    .read = espi_read, .write = espi_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++static bool espi_get_reset(Object *obj, Error **errp)
++{
++    return ESPI_SIM(obj)->reset_asserted;
++}
++static void espi_set_reset(Object *obj, bool value, Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(obj);
++    bool had = s->reset_asserted;
++    s->reset_asserted = value;
++    if (value) {
++        s->regs[R(CTRL)] &= ~(PERIF_READY | VW_READY);
++        s->regs[R(SYSEVT)] = 0;
++        s->regs[R(ISR)] = 0;
++    } else if (had) {
++        s->regs[R(ISR)] |= BIT(31);
++    }
++    espi_irq(s);
++}
++static bool espi_get_perif(Object *obj, Error **errp)
++{
++    return espi_ready(ESPI_SIM(obj), PERIF_READY);
++}
++static bool espi_get_vw(Object *obj, Error **errp)
++{
++    return espi_ready(ESPI_SIM(obj), VW_READY);
++}
++static bool espi_get_boot(Object *obj, Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(obj);
++    return espi_ready(s, VW_READY) &&
++           (s->regs[R(SYSEVT)] & BOOT_WIRES) == BOOT_WIRES;
++}
++static char *espi_get_result(Object *obj, Error **errp)
++{
++    return g_strdup(ESPI_SIM(obj)->result ?: "");
++}
++/* QMP host-cycle: "read PORT" or "write PORT BYTE", numbers in hex.
++ * Legacy I/O is routed to the same LPC state the BMC KCS/snoop driver uses.
++ */
++static void espi_cycle(Object *obj, const char *text, Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(obj);
++    char op[16];
++    unsigned port, val = 0;
++    int n = sscanf(text, "%15s %x %x", op, &port, &val);
++    uint8_t byte;
++    bool ok = false;
++    g_free(s->result);
++    s->result = NULL;
++    if (!espi_ready(s, PERIF_READY)) {
++        s->result = g_strdup("not-ready");
++        return;
++    }
++    if (n < 2 || port > 0xffff || val > 0xff) {
++        error_setg(errp, "host-cycle: read PORT or write PORT BYTE (hex)");
++        return;
++    }
++    if (!strcmp(op, "read") && n == 2) {
++        if (port >= 0x3f8 && port <= 0x3ff && (s->vuart_ctrl[0] & BIT(0))) {
++            byte = uart_read(s, 1, port - 0x3f8); ok = true;
++        } else { ok = aspeed_lpc_host_read(s->lpc, port, &byte); }
++        if (ok) { s->result = g_strdup_printf("ok:%02x", byte); }
++    } else if (!strcmp(op, "write") && n == 3) {
++        if (port >= 0x3f8 && port <= 0x3ff && (s->vuart_ctrl[0] & BIT(0))) {
++            ok = uart_write(s, 1, port - 0x3f8, val);
++        } else { ok = aspeed_lpc_host_write(s->lpc, port, val); }
++        if (ok) { s->result = g_strdup("ok:"); }
++    }
++    if (!ok) {
++        s->result = g_strdup("unsupported");
++        return;
++    }
++    s->cycles++;
++}
++/* Host system events use a mask/value pair; BMC-owned boot wires are protected.
++ * SLP_S3/S4/S5, PLTRST and other system-event inputs can be exercised as raw bits.
++ */
++static void espi_post(Object *obj, Visitor *v, const char *name, void *opaque,
++                      Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(obj);
++    uint8_t code;
++    if (visit_type_uint8(v, name, &code, errp) && espi_ready(s, PERIF_READY)) {
++        aspeed_lpc_snoop_write(s->lpc, 0x80, code);
++        s->cycles++;
++    }
++}
++static bool espi_host_irq4(Object *obj, Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(obj);
++    return espi_ready(s, VW_READY) && uart_rx_irq(s, 1);
++}
++
++static void espi_vw(Object *obj, const char *text, Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(obj);
++    unsigned mask, value;
++    if (!espi_ready(s, VW_READY)) {
++        error_setg(errp, "Virtual Wire channel is not ready");
++        return;
++    }
++    if (sscanf(text, "%x %x", &mask, &value) != 2 || (mask & BOOT_WIRES)) {
++        error_setg(errp, "host-vw: MASK VALUE (hex), BMC boot wires are read-only");
++        return;
++    }
++    s->regs[R(SYSEVT)] = (s->regs[R(SYSEVT)] & ~mask) | (value & mask);
++    /* This board driver consumes readiness/boot wires, not VW input IRQs. */
++}
++static void espi_error(Object *obj, const char *text, Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(obj);
++    unsigned mask;
++    if (sscanf(text, "%x", &mask) != 1 || (mask & ~0x33c00U)) {
++        error_setg(errp, "inject-error: Peripheral error mask (bits 10..13,16..17)");
++        return;
++    }
++    s->regs[R(ISR)] |= mask;
++    espi_irq(s);
++}
++static void espi_reset(DeviceState *dev)
++{
++    ESPISimState *s = ESPI_SIM(dev);
++    memset(s->regs, 0, sizeof(s->regs));
++    memset(s->uart_regs, 0, sizeof(s->uart_regs));
++    memset(s->uart_divisor, 0, sizeof(s->uart_divisor));
++    memset(s->uart_head, 0, sizeof(s->uart_head));
++    memset(s->uart_count, 0, sizeof(s->uart_count));
++    memset(s->vuart_ctrl, 0, sizeof(s->vuart_ctrl));
++    s->cycles = 0;
++    espi_irq(s);
++    uart_irq(s);
++}
++static void espi_realize(DeviceState *dev, Error **errp)
++{
++    ESPISimState *s = ESPI_SIM(dev);
++    if (!s->lpc) { error_setg(errp, "espi-sim requires lpc link"); return; }
++    memory_region_init_io(&s->iomem, OBJECT(s), &espi_ops, s, TYPE_ESPI_SIM, 0x1000);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++    sysbus_init_irq(SYS_BUS_DEVICE(s), &s->irq);
++    memory_region_init_io(&s->vuart, OBJECT(s), &vuart_ops, s, "espi-vuart", 0x40);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->vuart);
++    sysbus_init_irq(SYS_BUS_DEVICE(s), &s->vuart_irq);
++}
++static void espi_init(Object *obj)
++{
++    ESPI_SIM(obj)->reset_asserted = true;
++    object_property_add_bool(obj, "host-reset", espi_get_reset, espi_set_reset);
++    object_property_add_bool(obj, "peripheral-ready", espi_get_perif, NULL);
++    object_property_add_bool(obj, "vw-ready", espi_get_vw, NULL);
++    object_property_add_bool(obj, "boot-ready", espi_get_boot, NULL);
++    object_property_add_str(obj, "host-cycle", NULL, espi_cycle);
++    object_property_add_str(obj, "host-result", espi_get_result, NULL);
++    object_property_add(obj, "post-code", "uint8", NULL, espi_post, NULL, NULL);
++    object_property_add_bool(obj, "host-irq4", espi_host_irq4, NULL);
++    object_property_add_str(obj, "host-vw", NULL, espi_vw);
++    object_property_add_str(obj, "inject-error", NULL, espi_error);
++}
++static const Property espi_props[] = {
++    DEFINE_PROP_LINK("lpc", ESPISimState, lpc, TYPE_ASPEED_LPC, AspeedLPCState *),
++};
++static void espi_finalize(Object *obj) { g_free(ESPI_SIM(obj)->result); }
++static void espi_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    dc->realize = espi_realize;
++    device_class_set_legacy_reset(dc, espi_reset);
++    device_class_set_props(dc, espi_props);
++    dc->desc = "AST2600 eSPI Peripheral/VW software-test model";
++    dc->user_creatable = false;
++}
++static const TypeInfo espi_type = {
++    .name = TYPE_ESPI_SIM, .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(ESPISimState), .instance_init = espi_init,
++    .instance_finalize = espi_finalize, .class_init = espi_class_init,
++};
++static void espi_register(void) { type_register_static(&espi_type); }
++type_init(espi_register)
+diff --git a/hw/misc/aspeed_lpc.c b/hw/misc/aspeed_lpc.c
+--- a/hw/misc/aspeed_lpc.c
++++ b/hw/misc/aspeed_lpc.c
+@@ -352,6 +352,36 @@
+     }
+ }
+ 
++bool aspeed_lpc_host_read(AspeedLPCState *s, uint16_t port, uint8_t *value)
++{
++    const struct aspeed_kcs_channel *ch = &aspeed_kcs_channel_map[kcs_channel_3];
++    if (!aspeed_kcs_channel_enabled(s, ch)) { return false; }
++    if (port == 0xca3) { *value = s->regs[STR3]; return true; }
++    if (port == 0xca2) {
++        *value = s->regs[ODR3];
++        s->regs[STR3] &= ~STR_OBF;
++        return true;
++    }
++    return false;
++}
++
++bool aspeed_lpc_host_write(AspeedLPCState *s, uint16_t port, uint8_t value)
++{
++    const struct aspeed_kcs_channel *ch = &aspeed_kcs_channel_map[kcs_channel_3];
++    if (port == 0x80) { aspeed_lpc_snoop_write(s, port, value); return true; }
++    if ((port != 0xca2 && port != 0xca3) ||
++        !aspeed_kcs_channel_enabled(s, ch) || (s->regs[STR3] & STR_IBF)) {
++        return false;
++    }
++    s->regs[IDR3] = value;
++    s->regs[STR3] = (s->regs[STR3] & ~STR_CMD_DATA) |
++                    STR_IBF | (port == 0xca3 ? STR_CMD_DATA : 0);
++    if (aspeed_kcs_channel_ibf_irq_enabled(s, ch)) {
++        qemu_irq_raise(s->subdevice_irqs[aspeed_lpc_kcs_3]);
++    }
++    return true;
++}
++
+ static void aspeed_lpc_set_irq(void *opaque, int irq, int level)
+ {
+     AspeedLPCState *s = (AspeedLPCState *)opaque;
+diff --git a/hw/misc/aspeed_vhub_sim.c b/hw/misc/aspeed_vhub_sim.c
+new file mode 100644
+--- /dev/null
++++ b/hw/misc/aspeed_vhub_sim.c
+@@ -0,0 +1,284 @@
++/* ASPEED AST2600 vHub: real guest UDC, synthetic host USB tokens over QMP.
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ * USB 2 control, interrupt and bulk endpoints, including IN descriptor DMA.
++ * Isochronous transfers and electrical bus timing are not implemented.
++ */
++#include "qemu/osdep.h"
++#include "qemu/bitops.h"
++#include "qemu/module.h"
++#include "qemu/bswap.h"
++#include "qapi/error.h"
++#include "hw/core/irq.h"
++#include "hw/core/qdev-properties.h"
++#include "hw/core/sysbus.h"
++#include "qom/object.h"
++#include "system/address-spaces.h"
++#include "qemu/timer.h"
++
++#define TYPE_VHUB_SIM "aspeed.vhub-sim"
++OBJECT_DECLARE_SIMPLE_TYPE(VHubSimState, VHUB_SIM)
++struct VHubSimState {
++    SysBusDevice parent_obj;
++    MemoryRegion iomem;
++    qemu_irq irq;
++    uint32_t regs[0x1000 / 4];
++    bool host_connected;
++    char *result;
++};
++#define R(a) ((a) / 4)
++#define PORTS 7
++#define EPS 21
++#define DEV(p) (0x100 + ((p) - 1) * 0x10)
++#define EP(n) (0x200 + (n) * 0x10)
++
++static void vhub_irq(VHubSimState *s)
++{
++    uint32_t irq = s->regs[R(0x0c)] & ~0x1fe00U;
++    unsigned p;
++    for (p = 1; p <= PORTS; p++) {
++        uint32_t d = s->regs[R(DEV(p) + 4)];
++        uint32_t en = s->regs[R(DEV(p))];
++        /* EP0 SETUP, OUT ACK and IN ACK have separate enables. */
++        if (((d & BIT(0)) && (en & BIT(2))) ||
++            ((d & BIT(1)) && (en & BIT(3))) ||
++            ((d & BIT(3)) && (en & BIT(5)))) {
++            irq |= BIT(8 + p);
++        }
++    }
++    if (s->regs[R(0x18)] & s->regs[R(0x10)]) { irq |= BIT(16); }
++    s->regs[R(0x0c)] = irq;
++    qemu_set_irq(s->irq, !!(irq & s->regs[R(0x08)]));
++}
++static uint64_t vhub_read(void *opaque, hwaddr addr, unsigned size)
++{
++    VHubSimState *s = opaque;
++    if (addr == 0x24) {
++        return ((s->regs[R(0)] & BIT(1)) ? 0 : BIT(27)) |
++               ((qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) & 0x7ff) << 16);
++    }
++    return s->regs[R(addr)];
++}
++static void vhub_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    VHubSimState *s = opaque;
++    uint32_t old = s->regs[R(addr)], val = value;
++    unsigned n;
++    if (addr == 0x0c || addr == 0x18 || addr == 0x1c ||
++        (addr >= 0x100 && addr < 0x170 && (addr & 0xf) == 4)) {
++        s->regs[R(addr)] &= ~val;
++    } else if (addr >= 0x200 && addr < 0x350 && (addr & 0xf) == 0xc) {
++        /* CPU updates WPTR; hardware owns RPTR. Single mode owns TX_SIZE too. */
++        if (s->regs[R(addr - 8)] & BIT(0)) {
++            s->regs[R(addr)] = (old & 0xff00) | (val & 0xff);
++        } else {
++            s->regs[R(addr)] = val;
++        }
++    } else {
++        s->regs[R(addr)] = val;
++    }
++    if (addr == 0x20 && val) {
++        if (val & BIT(0)) {
++            memset(&s->regs[R(0x30)], 0, 8);
++        }
++        for (n = 1; n <= PORTS; n++) {
++            if (val & BIT(n)) { memset(&s->regs[R(DEV(n))], 0, 16); }
++        }
++        if (val & BIT(9)) { memset(&s->regs[R(0x200)], 0, EPS * 16); }
++    }
++    if (addr >= 0x200 && addr < 0x350 && (addr & 0xf) == 4 &&
++        (val & BIT(2))) {
++        s->regs[R(addr + 8)] = 0;
++    }
++    /* Plugging the root hub into the host creates a real bus reset interrupt. */
++    if (addr == 0 && !(old & BIT(0)) && (val & BIT(0)) && s->host_connected) {
++        s->regs[R(0x0c)] |= BIT(6);
++    }
++    vhub_irq(s);
++}
++static const MemoryRegionOps vhub_ops = {
++    .read = vhub_read, .write = vhub_write, .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++static bool vhub_get_connected(Object *obj, Error **errp)
++{
++    return VHUB_SIM(obj)->host_connected;
++}
++static void vhub_set_connected(Object *obj, bool value, Error **errp)
++{
++    VHubSimState *s = VHUB_SIM(obj);
++    if (s->host_connected != value && (s->regs[R(0)] & BIT(0))) {
++        s->regs[R(0x0c)] |= value ? BIT(6) : BIT(7);
++    }
++    s->host_connected = value;
++    vhub_irq(s);
++}
++static char *vhub_get_result(Object *obj, Error **errp)
++{
++    return g_strdup(VHUB_SIM(obj)->result ?: "");
++}
++static void vhub_result(VHubSimState *s, const char *status,
++                        const uint8_t *data, size_t len)
++{
++    GString *out = g_string_new(status);
++    unsigned i;
++    for (i = 0; i < len; i++) { g_string_append_printf(out, "%02x", data[i]); }
++    g_free(s->result);
++    s->result = g_string_free(out, false);
++}
++static bool vhub_dma(hwaddr addr, uint8_t *data, size_t len, bool in)
++{
++    return (in ? address_space_read(&address_space_memory, addr,
++                                    MEMTXATTRS_UNSPECIFIED, data, len) :
++                 address_space_write(&address_space_memory, addr,
++                                     MEMTXATTRS_UNSPECIFIED, data, len)) == MEMTX_OK;
++}
++static void vhub_ep0_irq(VHubSimState *s, unsigned p, bool in, bool setup)
++{
++    if (p) {
++        s->regs[R(DEV(p) + 4)] |= setup ? BIT(0) : in ? BIT(3) : BIT(1);
++    } else {
++        s->regs[R(0x0c)] |= setup ? BIT(0) : in ? BIT(3) : BIT(1);
++    }
++    vhub_irq(s);
++}
++/* host-token: setup PORT 0 HEX8 / in PORT ENDPOINT MAXLEN /
++ * out PORT ENDPOINT HEX ("-" denotes a zero-length packet).
++ * Port 0 is the hub, ports 1..7 are the guest's gadget UDCs.
++ * A NAK is left pending in the guest; the host retries rather than faking ACK.
++ */
++static void vhub_token(Object *obj, const char *text, Error **errp)
++{
++    VHubSimState *s = VHUB_SIM(obj);
++    g_auto(GStrv) args = g_strsplit(text, " ", 4);
++    unsigned p, ep, len = 0, n, ctl, base, maxlen;
++    uint8_t data[4096];
++    bool in, setup;
++    if (g_strv_length(args) != 4) {
++        error_setg(errp, "host-token: setup/in/out PORT ENDPOINT DATA/MAXLEN"); return;
++    }
++    p = strtoul(args[1], NULL, 10); ep = strtoul(args[2], NULL, 10);
++    in = !strcmp(args[0], "in"); setup = !strcmp(args[0], "setup");
++    if (p > PORTS || ep > 15 || (!in && !setup && strcmp(args[0], "out"))) {
++        error_setg(errp, "invalid USB token/port/endpoint"); return;
++    }
++    if (!s->host_connected || !(s->regs[R(0)] & BIT(0)) ||
++        (p && !(s->regs[R(DEV(p))] & BIT(0)))) {
++        vhub_result(s, "disconnected", NULL, 0); return;
++    }
++    maxlen = in ? strtoul(args[3], NULL, 10) : sizeof(data);
++    if (in && (!maxlen || maxlen > sizeof(data))) {
++        error_setg(errp, "USB IN maximum must be 1..4096"); return;
++    }
++    if (!in && strcmp(args[3], "-")) {
++        size_t chars = strlen(args[3]);
++        if ((chars & 1) || chars > sizeof(data) * 2) {
++            error_setg(errp, "invalid USB packet size"); return;
++        }
++        for (n = 0; n < chars; n += 2) {
++            int hi = g_ascii_xdigit_value(args[3][n]);
++            int lo = g_ascii_xdigit_value(args[3][n + 1]);
++            if (hi < 0 || lo < 0) { error_setg(errp, "USB packet must be hex"); return; }
++            data[len++] = hi * 16 + lo;
++        }
++    }
++    if (setup) {
++        if (ep || len != 8) { error_setg(errp, "SETUP must be 8 bytes on EP0"); return; }
++        s->regs[R(0x80 + p * 8)] = ldl_le_p(data);
++        s->regs[R(0x84 + p * 8)] = ldl_le_p(data + 4);
++        s->regs[R(p ? DEV(p) + 8 : 0x30)] = 0;
++        vhub_ep0_irq(s, p, false, true);
++        vhub_result(s, "ok:", NULL, 0); return;
++    }
++    if (!ep) {
++        base = p ? DEV(p) + 8 : 0x30;
++        ctl = s->regs[R(base)];
++        if (ctl & BIT(0)) { vhub_result(s, "stall", NULL, 0); return; }
++        if (!(ctl & (in ? BIT(1) : BIT(2)))) { vhub_result(s, "nak", NULL, 0); return; }
++        if (in) { len = (ctl >> 8) & 0x7f; }
++        if (len > 64 || (in && len > maxlen) ||
++            !vhub_dma(s->regs[R(base + 4)], data, len, in)) {
++            vhub_result(s, "error", NULL, 0); return;
++        }
++        s->regs[R(base)] &= ~(in ? BIT(1) : (BIT(2) | (0x7f << 16)));
++        if (!in) { s->regs[R(base)] |= len << 16; }
++        vhub_ep0_irq(s, p, in, false);
++        vhub_result(s, "ok:", in ? data : NULL, in ? len : 0); return;
++    }
++    for (n = 0; n < EPS; n++) {
++        uint32_t cfg = s->regs[R(EP(n))];
++        if ((cfg & BIT(0)) && ((cfg >> 1) & 7) == p &&
++            ((cfg >> 8) & 15) == ep && !!(cfg & BIT(4)) == !in) { break; }
++    }
++    if (n == EPS) { vhub_result(s, "nak", NULL, 0); return; }
++    base = EP(n); ctl = s->regs[R(base + 4)];
++    if (s->regs[R(base)] & BIT(12)) { vhub_result(s, "stall", NULL, 0); return; }
++    if ((ctl & BIT(2)) || ((s->regs[R(base)] >> 5) & 3) == 3) {
++        vhub_result(s, "unsupported", NULL, 0); return;
++    }
++    if (ctl & BIT(0)) {
++        /* The Linux vHub driver only enables descriptor DMA for IN. */
++        uint32_t stat = s->regs[R(base + 12)], words[2];
++        unsigned rptr = (stat >> 8) & 0xff, wptr = stat & 0xff;
++        unsigned mask = (s->regs[R(0)] & BIT(18)) ? 255 : 31;
++        hwaddr desc = s->regs[R(base + 8)] + rptr * 8;
++        if (!in || rptr == wptr) { vhub_result(s, "nak", NULL, 0); return; }
++        if (!vhub_dma(desc, (uint8_t *)words, 8, true)) {
++            vhub_result(s, "error", NULL, 0); return;
++        }
++        len = le32_to_cpu(words[1]) & 0xfff;
++        if (len > maxlen || !vhub_dma(le32_to_cpu(words[0]), data, len, true)) {
++            vhub_result(s, "error", NULL, 0); return;
++        }
++        s->regs[R(base + 12)] = wptr | (((rptr + 1) & mask) << 8);
++        if (le32_to_cpu(words[1]) & BIT(31)) { s->regs[R(0x18)] |= BIT(n); }
++    } else {
++        uint32_t stat = s->regs[R(base + 12)];
++        unsigned packet = (s->regs[R(base)] >> 16) & 0x3ff;
++        if (!packet) { packet = 1024; }
++        if (!(stat & BIT(0))) { vhub_result(s, "nak", NULL, 0); return; }
++        if (in) { len = (stat >> 16) & 0x7ff; }
++        if (len > sizeof(data) || (in && len > maxlen) ||
++            (!in && len > packet) || !vhub_dma(s->regs[R(base + 8)], data, len, in)) {
++            vhub_result(s, "error", NULL, 0); return;
++        }
++        s->regs[R(base + 12)] = len << 16;
++        s->regs[R(0x18)] |= BIT(n);
++    }
++    vhub_irq(s);
++    vhub_result(s, "ok:", in ? data : NULL, in ? len : 0);
++}
++static void vhub_reset(DeviceState *dev)
++{
++    VHubSimState *s = VHUB_SIM(dev);
++    memset(s->regs, 0, sizeof(s->regs));
++    vhub_irq(s);
++}
++static void vhub_realize(DeviceState *dev, Error **errp)
++{
++    VHubSimState *s = VHUB_SIM(dev);
++    memory_region_init_io(&s->iomem, OBJECT(s), &vhub_ops, s, TYPE_VHUB_SIM, 0x1000);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++    sysbus_init_irq(SYS_BUS_DEVICE(s), &s->irq);
++}
++static void vhub_init(Object *obj)
++{
++    object_property_add_bool(obj, "host-connected", vhub_get_connected, vhub_set_connected);
++    object_property_add_str(obj, "host-token", NULL, vhub_token);
++    object_property_add_str(obj, "host-result", vhub_get_result, NULL);
++}
++static void vhub_finalize(Object *obj) { g_free(VHUB_SIM(obj)->result); }
++static void vhub_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    dc->realize = vhub_realize;
++    dc->desc = "AST2600 USB vHub control/interrupt/bulk software-test model";
++    dc->user_creatable = false;
++    device_class_set_legacy_reset(dc, vhub_reset);
++}
++static const TypeInfo vhub_type = {
++    .name = TYPE_VHUB_SIM, .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(VHubSimState), .instance_init = vhub_init,
++    .instance_finalize = vhub_finalize, .class_init = vhub_class_init,
++};
++static void vhub_register(void) { type_register_static(&vhub_type); }
++type_init(vhub_register)
+diff --git a/hw/misc/aspeed_video.c b/hw/misc/aspeed_video.c
+--- a/hw/misc/aspeed_video.c
++++ b/hw/misc/aspeed_video.c
+@@ -159,7 +159,7 @@
+     case VE_SEQ_CTRL:
+         s->regs[REG(addr)] = val;
+         if ((val & VE_SEQ_CTRL_TRIG_MODE_DET) &&
+-            !(old & VE_SEQ_CTRL_TRIG_MODE_DET) && video_has_signal(s)) {
++            !(old & VE_SEQ_CTRL_TRIG_MODE_DET)) {
+             video_raise(s, VE_INT_MODE_DETECT);
+         }
+         if ((val & (VE_SEQ_CTRL_TRIG_CAPTURE | VE_SEQ_CTRL_TRIG_COMP)) &&
+@@ -227,6 +227,10 @@
+         error_setg(errp, "aspeed.video: '%s' is not a JPEG file", value);
+         return;
+     }
++    if (len > 192 * 1024) {
++        error_setg(errp, "aspeed.video: JPEG exceeds the 192 KiB model limit");
++        return;
++    }
+     g_free(s->image);
+     g_free(s->jpeg);
+     s->image = g_strdup(value);
+@@ -255,6 +259,7 @@
+ 
+     memset(s->regs, 0, sizeof(s->regs));
+     timer_del(&s->frame_timer);
++    video_update_irq(s);
+ }
+ 
+ static void video_realize(DeviceState *dev, Error **errp)
+diff --git a/hw/misc/bmc_host_sim.c b/hw/misc/bmc_host_sim.c
+--- a/hw/misc/bmc_host_sim.c
++++ b/hw/misc/bmc_host_sim.c
+@@ -78,6 +78,8 @@
+     AspeedGPIOState *gpio;
+     AspeedPECIState *peci;
+     AspeedLPCState *lpc;
++    Object *espi;
++    bool espi_powered;
+     char *power_out_name;
+     char *reset_out_name;
+     char *pwrgd_name;
+@@ -154,6 +156,9 @@
+  * POST codes the BIOS writes to port 80h, spread over the POST time, the
+  * last one when POST completes.  A hanging BIOS stops at PCI enumeration.
+  */
++static bool host_espi_ready(BMCHostSimState *s);
++static void host_post_code(BMCHostSimState *s, uint8_t code);
++
+ static const uint8_t host_post_codes[] = {
+     0x01, 0x02, 0x03, 0x19, 0x31, 0x4f, 0x60, 0x61,
+     0x9a, 0x92, 0x94, 0xa0, 0xa2, 0xb4, 0xad,
+@@ -165,15 +170,14 @@
+     unsigned int n = ARRAY_SIZE(host_post_codes);
+     unsigned int due;
+ 
+-    if (!s->lpc || s->state != HOST_POST) {
++    if ((!s->lpc && !s->espi) || s->state != HOST_POST || !host_espi_ready(s)) {
+         return;
+     }
+     due = s->post_ms ? (now - s->post_start) * (n - 1) / s->post_ms + 1 : n;
+     due = MIN(due, s->hang ? HOST_POST_HANG_IDX + 1 : n - 1);
+     /* one code per tick, so the BMC driver sees each of them */
+     if (s->post_code_idx < due) {
+-        aspeed_lpc_snoop_write(s->lpc, 0x80,
+-                               host_post_codes[s->post_code_idx++]);
++        host_post_code(s, host_post_codes[s->post_code_idx++]);
+     }
+ }
+ 
+@@ -210,10 +214,30 @@
+     }
+ }
+ 
++static bool host_espi_ready(BMCHostSimState *s)
++{
++    return !s->espi ||
++           (object_property_get_bool(s->espi, "boot-ready", &error_abort) &&
++            object_property_get_bool(s->espi, "peripheral-ready", &error_abort));
++}
++static void host_post_code(BMCHostSimState *s, uint8_t code)
++{
++    if (s->espi) {
++        object_property_set_uint(s->espi, "post-code", code, &error_abort);
++    } else if (s->lpc) {
++        aspeed_lpc_snoop_write(s->lpc, 0x80, code);
++    }
++}
++
+ static void host_tick(void *opaque)
+ {
+     BMCHostSimState *s = opaque;
+     int64_t now = host_now();
++    if (s->espi && s->espi_powered != (s->state != HOST_OFF)) {
++        s->espi_powered = s->state != HOST_OFF;
++        object_property_set_bool(s->espi, "host-reset", !s->espi_powered,
++                                 &error_abort);
++    }
+     bool power_low = !host_bmc_output(s, &s->power_out);
+     bool reset_low = !host_bmc_output(s, &s->reset_out);
+ 
+@@ -268,6 +292,12 @@
+         s->uid_button_release = -1;
+     }
+ 
++    /* A real host waits for the slave boot wires before completing BIOS POST.
++     * Pause the POST clock and port-80 stream until both channels recover. */
++    if (s->state == HOST_POST && !host_espi_ready(s)) {
++        if (!s->hang) { s->deadline = now + s->post_ms; }
++    }
++
+     /* timed steps */
+     if (s->deadline >= 0 && now >= s->deadline) {
+         s->deadline = -1;
+@@ -278,9 +308,8 @@
+                                        : "PWRGD high");
+             break;
+         case HOST_POST:
+-            if (s->lpc) {
+-                aspeed_lpc_snoop_write(s->lpc, 0x80,
+-                                       host_post_codes[ARRAY_SIZE(host_post_codes) - 1]);
++            if (s->lpc || s->espi) {
++                host_post_code(s, host_post_codes[ARRAY_SIZE(host_post_codes) - 1]);
+             }
+             s->boot_ok = true;
+             host_go(s, HOST_ON, -1, "POST complete, BOOT_OK high");
+@@ -444,6 +473,7 @@
+ 
+ /* Defaults: the CEB-GNRD (AST2600 + Granite Rapids-D) wiring */
+ static const Property host_properties[] = {
++    DEFINE_PROP_LINK("espi", BMCHostSimState, espi, "aspeed.espi-sim", Object *),
+     DEFINE_PROP_LINK("gpio", BMCHostSimState, gpio, TYPE_ASPEED_GPIO,
+                      AspeedGPIOState *),
+     DEFINE_PROP_LINK("peci", BMCHostSimState, peci, TYPE_ASPEED_PECI,
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -145,7 +145,10 @@
+   'aspeed_peci.c',
+   'aspeed_sli.c',
+   'bmc_host_sim.c',
+-  'aspeed_video.c'))
++  'aspeed_video.c',
++  'aspeed_espi_sim.c',
++  'aspeed_vhub_sim.c',
++  'aspeed_chassis_sim.c'))
+ 
+ system_ss.add(when: 'CONFIG_MSF2', if_true: files('msf2-sysreg.c'))
+ system_ss.add(when: 'CONFIG_NRF51_SOC', if_true: files('nrf51_rng.c'))
+diff --git a/include/hw/misc/aspeed_lpc.h b/include/hw/misc/aspeed_lpc.h
+--- a/include/hw/misc/aspeed_lpc.h
++++ b/include/hw/misc/aspeed_lpc.h
+@@ -46,4 +46,7 @@
+ /* A host write to an I/O port, as the snoop channels see it (port 80h) */
+ void aspeed_lpc_snoop_write(AspeedLPCState *s, uint16_t port, uint8_t data);
+ 
++bool aspeed_lpc_host_read(AspeedLPCState *s, uint16_t port, uint8_t *value);
++bool aspeed_lpc_host_write(AspeedLPCState *s, uint16_t port, uint8_t value);
++
+ #endif /* ASPEED_LPC_H */
+-- 
+2.47.0

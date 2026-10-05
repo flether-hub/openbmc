@@ -91,20 +91,53 @@ input.termin { width: 100%; font-family: var(--mono); padding: 6px 8px; margin-t
                border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 .hidden { display: none !important; }
 #err { color: var(--bad); font-size: 13px; }
+body { background: radial-gradient(ellipse at top left, #dceaff55, transparent 55%), var(--bg); }
+header { padding: 18px 28px; box-shadow: 0 3px 20px #1428440b; flex-wrap: wrap; }
+header h1 { font-size: 22px; letter-spacing: -.5px; }
+main { max-width: 1560px; margin: auto; gap: 20px; padding: 24px; }
+.card { border-radius: 18px; padding: 20px; box-shadow: 0 8px 28px #14284408; }
+.card h2 { font-size: 16px; flex-wrap: wrap; color: var(--accent); }
+.tile { border-radius: 12px; background: var(--bg); padding: 14px; }
+button { padding: 8px 14px; border-radius: 9px; transition: background .15s, border-color .15s; }
+button:focus-visible, input:focus-visible { outline: 3px solid #60a5fa80; outline-offset: 2px; }
+.summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.summary span { padding: 8px 14px; background: var(--bg); border-radius: 10px; font-family: var(--mono); }
+.preview { width: 100%; max-width: 600px; aspect-ratio: 4 / 3; object-fit: contain; background: #101f33; border-radius: 12px; border: 1px solid var(--line); }
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.fields { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.fields label { display: grid; gap: 5px; color: var(--muted); }
+.fields input { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.caption { color: var(--muted); font-size: 12px; margin: 8px 0; }
+#diagram { min-width: 820px; }
+.diagram-scroll { overflow-x: auto; }
+th { text-align: left; color: var(--muted); font-weight: 500; }
+td, th { padding: 9px 6px; border-bottom: 1px solid var(--line); }
+@media (max-width: 760px) { .split { grid-template-columns: 1fr; } main { padding: 12px; } }
+body { height: 100dvh; display: flex; flex-direction: column; }
+header { position: static; flex: none; padding: 12px 24px; }
+.navigation { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 24px; flex: none; background: var(--card); }
+.navigation button.selected { color: #fff; background: var(--accent); border-color: var(--accent); }
+main { flex: 1; width: 100%; min-height: 0; align-content: start; overflow: auto; padding-top: 12px; }
+.tab-hidden { display: none !important; }
+#diagram { height: min(68dvh, 700px); }
+.preview { max-height: 42dvh; width: auto; max-width: 100%; }
+.card:has(#adc) { max-width: 1100px; width: 100%; justify-self: center; }
 </style>
 </head>
 <body>
 <header>
-  <h1>CEB-GNRD 模拟控制面板</h1>
+  <h1>CEB-GNRD <span class="sub">/ 硬件模拟控制台</span></h1>
   <span>主机：<span id="hoststate" class="badge">--</span></span>
   <span class="sub" id="mode"></span>
   <span id="err"></span>
 </header>
+<nav class="navigation" id="navigation" aria-label="面板功能"></nav>
 <main>
 
 <section class="card wide">
   <h2>BMC 与主机之间的信号 <small>线亮 = 高电平；橙色 = 有效（低有效信号拉低）；点击主机侧按钮操作</small></h2>
-  <svg id="diagram" viewBox="0 0 1000 560" width="100%" role="img" aria-label="BMC 与主机信号图"></svg>
+  <div class="summary"><span id="sum-post">POST --</span><span id="sum-espi">eSPI --</span><span id="sum-usb">USB --</span><span id="sum-chassis">CHASI# --</span></div>
+  <div class="diagram-scroll"><svg id="diagram" viewBox="0 0 1000 560" width="100%" role="img" aria-label="BMC 与主机信号图"></svg></div>
 </section>
 
 <section class="card">
@@ -157,8 +190,9 @@ input.termin { width: 100%; font-family: var(--mono); padding: 6px 8px; margin-t
 </section>
 
 <section class="card" id="adccard">
-  <h2>ADC 电压 <small>引脚电压 × 分压比 = 电源轨电压</small></h2>
-  <table><thead><tr><th>#</th><th>名称</th><th>电源轨</th><th>引脚 mV</th><th></th></tr></thead>
+  <h2>电源轨电压 <small>全部输入 V；自动处理分压</small></h2>
+  <p class="caption">填写实际测量值，例如 12.1。÷N 表示自动分压；引脚超过 2.5 V 时保留 ADC 饱和行为。</p>
+  <table><thead><tr><th>#</th><th>名称 / 分压</th><th>ADC 对应读数</th><th>测量值 V</th><th></th></tr></thead>
   <tbody id="adc"></tbody></table>
 </section>
 
@@ -172,6 +206,36 @@ input.termin { width: 100%; font-family: var(--mono); padding: 6px 8px; margin-t
   <p class="muted">电池没电时驱动拒绝读出 RTC 时间；BMC 重启后 RTC 时间保持。</p>
 </section>
 
+<section class="card wide">
+  <h2>eSPI / 机箱入侵</h2>
+  <div class="summary" id="interfaces"></div>
+  <div class="row"><button onclick="cmd('chassis open')">开盖 · CHASI# 拉低</button><button onclick="cmd('chassis closed')">合盖</button><span class="caption">合盖后锁存由 BMC 服务清除</span></div>
+  <div class="row"><button onclick="cmd('espi reset assert')">断言 eSPI RESET#</button><button onclick="cmd('espi reset release')">释放 RESET#</button><button onclick="cmd('espi error 400')">注入 Peripheral 错误</button></div>
+  <div class="row">KCS IPMI <input id="ipmi" value="18 01" class="mono" aria-label="IPMI 十六进制请求"><button onclick="cmd('ipmi ' + val('ipmi'))">发送 · 查看事件日志</button></div>
+</section>
+<section class="card wide">
+  <h2>VGA / USB <small>主机侧输入与接收</small></h2>
+  <div class="split"><div>
+    <img id="vga-preview" class="preview" alt="主机 VGA 输入图预览">
+    <p class="caption" id="vga-status">等待 VGA 状态</p>
+    <div class="row"><label>选择 VGA 图片 <input id="vga-file" type="file" accept="image/jpeg"></label><button onclick="upload('vga')">应用 JPEG</button></div>
+    <div class="row"><button onclick="cmd('vga auto')">自动 POST / OS</button><button onclick="cmd('vga off')">无信号</button><button onclick="cmd('vga on')">有信号</button></div>
+    <p class="caption">800×600 baseline JPEG，最大 192 KiB。此处是输入图预览；实际采集结果请在 BMC Web KVM 页面查看。</p>
+  </div><div>
+    <p id="usb-status">等待 USB 枚举</p><pre class="term" id="usb-reports"></pre>
+    <div class="row"><button onclick="cmd('usb reconnect')">重新枚举</button><label>USB 端口 <input id="usb-port" type="number" min="1" max="7" value="1"></label><button onclick="cmd('usb media ' + val('usb-port'))">读取媒体</button></div>
+    <p class="caption">在 BMC KVM 输入键盘/鼠标；这里显示真实 gadget 输出的 HID 报告，boot 键盘报告同时解码为文字。</p>
+  </div></div>
+</section>
+<section class="card wide">
+  <h2>虚拟媒体检查 <small>主机 USB 侧，只读</small></h2>
+  <p>请在 <strong>BMC Web 虚拟媒体页面</strong>挂载或弹出镜像。这里检查该镜像是否通过真实 BMC gadget 向主机提供。</p>
+  <div class="row"><label>USB 存储端口 <select id="media-port"></select></label>
+    <button id="media-read" onclick="cmd('usb media ' + val('media-port'))">读取容量和首扇区</button></div>
+  <p id="media-status" class="muted">等待 USB 存储设备枚举</p>
+  <pre id="media-result" class="term">尚未执行读取检查</pre>
+  <p class="caption">检查包含 SCSI INQUIRY、READ CAPACITY 和 READ(10)。显示块数、块大小和首扇区 SHA-256；不会向镜像写入数据。</p>
+</section>
 <section class="card wide">
   <h2>主机串口（SOL） <small>面板扮演主机 COM1：BMC 的 SOL 输入显示在这里，在下框输入的内容由主机发给 BMC</small></h2>
   <pre class="term" id="term"></pre>
@@ -201,6 +265,18 @@ async function cmd(c) {
   poll();
 }
 
+async function upload(kind) {
+  const file = document.getElementById(kind + '-file').files[0];
+  if (!file) { setText('err', '请先选择文件'); return; }
+  setText('err', '正在上传并应用文件…');
+  try {
+    const r = await fetch('/api/upload/' + kind, {method: 'POST', body: file});
+    const result = await r.json();
+    setText('err', result.error || '');
+  } catch (e) { setText('err', '文件上传失败'); }
+  poll();
+}
+
 /* ---------- signal diagram ---------- */
 const SIGS = [
   // [name, gpio, pin key, direction (b2h / h2b), active low, note]
@@ -226,14 +302,14 @@ const BUSES = [
 function buildDiagram() {
   const svg = document.getElementById('diagram');
   const BX = 30, BW = 230, HX = 740, HW = 230;
-  const top = 50, step = 34;
+  const top = 70, step = 42;
   const nSig = SIGS.length, nBus = BUSES.length;
   const bottom = top + (nSig + nBus) * step + 20;
   let h = '';
   h += `<rect class="box" x="${BX}" y="10" width="${BW}" height="${bottom}" rx="10"/>`;
-  h += `<text class="title" x="${BX + 14}" y="34">AST2600 BMC</text>`;
+  h += `<text class="title" x="${BX + 14}" y="34">AST2600 BMC</text><text class="pin" x="${BX + 14}" y="54">GPIO / 外设控制器</text>`;
   h += `<rect class="box" x="${HX}" y="10" width="${HW}" height="${bottom}" rx="10"/>`;
-  h += `<text class="title" x="${HX + 14}" y="34">主机主板 (GNR-D / CPLD)</text>`;
+  h += `<text class="title" x="${HX + 14}" y="34">GNR-D / CPLD</text><text class="pin" x="${HX + 14}" y="54">主机输入与输出</text>`;
   SIGS.forEach((s, i) => {
     const y = top + i * step + 14;
     const [name, gpio, key, dir, low, note] = s;
@@ -243,6 +319,7 @@ function buildDiagram() {
     const ax = dir === 'b2h' ? HX - 4 : BX + BW + 4;
     const ad = dir === 'b2h' ? -10 : 10;
     h += `<path class="wire" id="arrow_${key}" d="M${ax + ad} ${y - 5} L${ax} ${y} L${ax + ad} ${y + 5}"/>`;
+    h += `<rect x="${(BX + BW + HX) / 2 - 169}" y="${y - 18}" width="338" height="35" rx="7" fill="var(--card)"/>`;
     h += `<text class="lbl" x="${(BX + BW + HX) / 2}" y="${y - 5}" text-anchor="middle">${name}</text>`;
     h += `<text class="pin" x="${(BX + BW + HX) / 2}" y="${y + 13}" text-anchor="middle">${note}</text>`;
     h += `<circle id="ledh_${key}" cx="${HX + 16}" cy="${y}" r="7" fill="var(--off)"/>`;
@@ -289,6 +366,8 @@ function drawDiagram() {
     const active = low && v === false;   /* a low-active signal asserted */
     const w = document.getElementById('wire_' + key);
     if (w) w.setAttribute('class', 'wire' + (active ? ' act' : (v ? ' hi' : '')));
+    const arrow = document.getElementById('arrow_' + key);
+    if (arrow) arrow.setAttribute('class', 'wire' + (active ? ' act' : (v ? ' hi' : '')));
     let c = v ? 'var(--on)' : 'var(--off)';
     if (key === 'gpioI5' && v) c = 'var(--bad)';
     if (key === 'gpioV1' && v) c = 'var(--blue)';
@@ -395,8 +474,8 @@ function drawAdc() {
   adcDrawn = key;
   document.getElementById('adc').innerHTML = adc.map((a, i) => {
     const rail = a.mv < 0 ? '跳变' : (Math.min(a.mv, 2500) * a.scale / 1000).toFixed(2) + ' V';
-    return `<tr><td>${i}</td><td class="mono">${a.name}</td><td class="mono">${rail}${a.mv > 2500 ? ' ⚠ 超出 2.5V 参考' : ''}</td>
-      <td><input type="number" id="adc${i}" value="${a.mv}"></td>
+    return `<tr><td>${i}</td><td class="mono">${a.name}<br><small class="muted">${a.scale === 1 ? '直连' : '自动 ÷' + a.scale}</small></td><td class="mono">${rail}${a.mv > 2500 ? ' ⚠ 饱和' : ''}<br><small class="muted">引脚 ${(a.mv / 1000).toFixed(3)} V</small></td>
+      <td><input type="number" id="adc${i}" min="0" max="100" step="0.001" value="${(a.mv * a.scale / 1000).toFixed(3)}"></td>
       <td><button onclick="cmd('adc ${i} ' + val('adc${i}'))">设置</button></td></tr>`;
   }).join('');
 }
@@ -429,13 +508,46 @@ function drawMisc() {
 async function poll() {
   try {
     S = await (await fetch('/api/state')).json();
-    drawDiagram(); drawFans(); drawPsus(); drawTemps(); drawAdc(); drawMisc();
+    drawDiagram(); drawFans(); drawPsus(); drawTemps(); drawAdc(); drawMisc(); drawHardware();
     if (document.getElementById('err').textContent === '面板连接断开')
       document.getElementById('err').textContent = '';
   } catch (e) {
     document.getElementById('err').textContent = '面板连接断开';
     const b = document.getElementById('hoststate'); b.className = 'badge lost'; b.textContent = 'QEMU 已停止?';
   }
+}
+
+function drawHardware() {
+  const e = S.espi || {}, c = S.chassis || {}, u = S.usb || {}, v = S.video || {};
+  const flag = x => x == null ? '未实现' : (x ? '是' : '否');
+  setText('sum-post', 'POST ' + (S.post == null ? '--' : '0x' + hex(S.post)));
+  setText('sum-espi', 'Peripheral ' + (e['peripheral-ready'] ? 'READY' : '未就绪'));
+  setText('sum-usb', 'USB ' + (u.devices || []).length + ' 个设备');
+  setText('sum-chassis', 'CHASI# ' + (c.open == null ? '未实现' : c.open ? '开盖' : '合盖'));
+  document.getElementById('interfaces').innerHTML = [
+    'Peripheral 就绪：' + flag(e['peripheral-ready']), 'VW 就绪：' + flag(e['vw-ready']),
+    'Boot 就绪：' + flag(e['boot-ready']), 'RESET# 断言：' + flag(e['host-reset']),
+    '开盖：' + flag(c.open), '入侵锁存：' + flag(c.latched)
+  ].map(x => '<span>' + esc(x) + '</span>').join('');
+  setText('vga-status', v.available ? (v.signal ? 'VGA 有信号 · ' + v.image : 'VGA 无信号') : 'QEMU 没有视频模型');
+  const preview = document.getElementById('vga-preview');
+  preview.style.visibility = v.signal ? 'visible' : 'hidden';
+  if (v.signal && changed('vga', [v.path, v.generation])) preview.src = '/api/vga?t=' + Date.now();
+  const devices = u.devices || [];
+  setText('usb-status', (u.available ? (u.connected ? 'USB 已连接' : '等待主机上电 / gadget 就绪') : 'QEMU 没有 vHub 模型') +
+    '\n' + devices.map(d => `端口${d.port} ${d.vid}:${d.pid} · ${d.reports} 个报告`).join(' / ') + (u.error ? '\n' + u.error : ''));
+  setText('usb-reports', (u.keyboard_text || '') + '\n\nHID 报告：\n' +
+    (u.reports || []).slice(-20).map(r => `port${r.port} ep${r.endpoint}  ${r.hex}`).join('\n'));
+  const ports = devices.filter(d => d.interfaces.some(i => i.class === 8)).map(d => String(d.port));
+  const selector = document.getElementById('media-port');
+  if (changed('media-ports', ports)) {
+    const previous = selector.value;
+    selector.replaceChildren(...ports.map(port => { const option = document.createElement('option'); option.value = port; option.textContent = '端口 ' + port; return option; }));
+    if (ports.includes(previous)) selector.value = previous;
+  }
+  document.getElementById('media-read').disabled = !ports.length;
+  setText('media-status', ports.length ? 'USB 存储端口：' + ports.join(', ') + '；是否可读请执行检查' : '尚无 USB 存储设备，请在 BMC Web 挂载镜像后等待枚举');
+  setText('media-result', u.media_result ? JSON.stringify(u.media_result, null, 2) : '尚未执行读取检查');
 }
 
 async function pollConsole() {
@@ -459,6 +571,25 @@ document.getElementById('termin').addEventListener('keydown', async e => {
                                body: JSON.stringify({text})});
 });
 
+function buildNavigation() {
+  const cards = [...document.querySelectorAll('main > section.card')];
+  const pages = [['硬件连接', [0]], ['主机 / POST', [1, 2]], ['风扇', [3]], ['PSU', [4]],
+    ['温度', [5]], ['电压', [6]], ['RTC', [7]], ['eSPI / CHASI#', [8]],
+    ['VGA / USB', [9]], ['虚拟媒体', [10]], ['SOL', [11]], ['日志', [12]]];
+  const nav = document.getElementById('navigation');
+  const buttons = pages.map(([title, indices], selected) => {
+    const button = document.createElement('button'); button.textContent = title;
+    button.onclick = () => {
+      cards.forEach((card, index) => card.classList.toggle('tab-hidden', !indices.includes(index)));
+      buttons.forEach((b, index) => { b.classList.toggle('selected', index === selected); b.setAttribute('aria-pressed', index === selected); });
+      document.querySelector('main').scrollTop = 0;
+    };
+    nav.appendChild(button); return button;
+  });
+  buttons[0].click();
+}
+
+buildNavigation();
 buildDiagram();
 poll();
 setInterval(poll, 500);

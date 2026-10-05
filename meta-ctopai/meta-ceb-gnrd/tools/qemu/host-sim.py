@@ -41,7 +41,7 @@ Commands (type them while it runs; "help" lists them):
   psu <0-2> load <W>     output power
   psu <0-2> temp <C>     PSU hotspot temperature
   cpu <C> | dimm <C>     CPU package / DIMM temperature over PECI
-  adc <0-15> <mV>        ADC pad voltage (before the divider)
+  adc <0-15> <V>         measured rail voltage; divider applied automatically
   rtc battery ok|low     RTC battery (low: the RTC time is refused)
   post <s> | shutdown <s>
   quit
@@ -55,11 +55,18 @@ import argparse
 import collections
 import http.server
 import json
+import math
 import os
+import shlex
 import socket
+import struct
 import sys
 import threading
 import time
+import uuid
+from pathlib import Path
+from host_io import HostIO, USBHost, ESPI, VHUB
+from panel_services import PanelServices, VIDEO, JPEG_LIMIT, validate_jpeg
 
 GPIO = "/machine/soc/gpio"
 # BMC outputs
@@ -81,6 +88,10 @@ PECI = "/machine/soc/peci"
 ADC = "/machine/soc/adc"
 PSU = "/machine/peripheral/psu%d"
 RTC = "/machine/peripheral/rtc"
+CHASSIS = "/machine/soc/chassis"
+HOST_IO = None
+USB = None
+SERVICES = None
 
 TEMPS = {
     "inlet": ("/machine/peripheral/temp-inlet", 25.0),
@@ -416,12 +427,17 @@ HELP = ("commands: status | power | power-hold | uid | hang on|off | "
         "powerfail | temp <inlet|outlet|pcie|m2|all> <C> | "
         "fan <0-5|all> <rpm|auto> | fan max <rpm> | "
         "psu <0-2> in|out|ac on|off|load <W>|temp <C> | cpu <C> | "
-        "dimm <C> | adc <0-15> <mV> | rtc battery ok|low | postcode <hex> | "
+        "dimm <C> | adc <0-15> <V> | rtc battery ok|low | postcode <hex> | "
+        "chassis open|closed | espi reset assert|release | espi vw <mask> <value> | "
+        "espi error <mask> | ipmi <hex bytes> | usb reconnect | usb media <port> | "
+        "vga <JPEG path>|auto | "
         "post <s> | shutdown <s> | quit")
 
 
 def run_command(host, qmp, words):
     """One command, typed or sent by the panel.  Raises on bad input."""
+    if not words:
+        raise ValueError("请输入命令")
     cmd, rest = words[0], words[1:]
     if cmd == "status":
         host.status()
@@ -471,15 +487,65 @@ def run_command(host, qmp, words):
                     value=int(float(rest[0]) * 1000))
         log("%s temperature = %s C" % (cmd.upper(), rest[0]))
     elif cmd == "adc" and len(rest) == 2:
-        qmp.execute("qom-set", path=ADC, property="ch%d-mv" % int(rest[0]),
-                    value=int(rest[1]))
-        log("ADC%s = %s mV" % (rest[0], rest[1]))
+        channel = int(rest[0])
+        rail = float(rest[1].rstrip("Vv"))
+        if not 0 <= channel < 16 or not math.isfinite(rail) or not 0 <= rail <= 100:
+            raise ValueError("ADC 通道 0..15，电源轨电压 0..100 V")
+        pad_mv = round(rail * 1000 / ADC_SCALE[channel])
+        qmp.execute("qom-set", path=ADC, property="ch%d-mv" % channel, value=pad_mv)
+        log("%s = %.3f V；分压 ÷%s，ADC 引脚 %.3f V%s" % (
+            ADC_NAMES[channel], rail, ADC_SCALE[channel], pad_mv / 1000,
+            "（超过 2.5 V，ADC 读数将饱和）" if pad_mv > 2500 else ""))
     elif cmd == "rtc" and len(rest) == 2 and rest[0] == "battery":
         qmp.execute("qom-set", path=RTC, property="battery-ok", value=rest[1] == "ok")
         log("RTC battery %s" % rest[1])
     elif cmd == "postcode" and len(rest) == 1:
-        qmp.execute("qom-set", path=LPC, property="post-code", value=int(rest[0], 16))
+        code = int(rest[0], 16)
+        if not 0 <= code <= 255:
+            raise ValueError("POST 码范围 00..FF")
+        if HOST_IO:
+            HOST_IO.write(0x80, code)
+        else:
+            qmp.execute("qom-set", path=LPC, property="post-code", value=code)
         log("POST code 0x%02x written to port 80h" % int(rest[0], 16))
+    elif cmd == "chassis" and rest in (["open"], ["closed"]):
+        qmp.execute("qom-set", path=CHASSIS, property="open", value=rest[0] == "open")
+        log("CHASI#：" + ("开盖" if rest[0] == "open" else "合盖；告警锁存由 BMC 清除"))
+    elif cmd == "espi" and HOST_IO:
+        if len(rest) == 3 and rest[:2] == ["reset", "assert"]:
+            raise ValueError("espi reset assert|release")
+        if len(rest) == 2 and rest[0] == "reset" and rest[1] in ("assert", "release"):
+            HOST_IO.set(ESPI, "host-reset", rest[1] == "assert")
+        elif len(rest) == 3 and rest[0] == "vw":
+            HOST_IO.set(ESPI, "host-vw", " ".join(rest[1:]))
+        elif len(rest) == 2 and rest[0] == "error":
+            HOST_IO.set(ESPI, "inject-error", rest[1])
+        else:
+            raise ValueError("espi reset assert|release / vw MASK VALUE / error MASK")
+        log("eSPI: " + " ".join(rest))
+    elif cmd == "ipmi" and rest and HOST_IO:
+        request = bytes.fromhex(" ".join(rest))
+        response = HOST_IO.ipmi(request)
+        log("KCS IPMI 响应：" + response.hex(" "))
+    elif cmd == "usb" and USB:
+        if rest == ["reconnect"]:
+            USB.set_connected(False)
+            # The worker reconnects only while the host is powered.
+            log("USB 已断开，等待主机侧重新枚举")
+        elif len(rest) == 2 and rest[0] == "media":
+            result = USB.media_probe(int(rest[1]))
+            log("USB 媒体读取：" + json.dumps(result, ensure_ascii=False))
+        else:
+            raise ValueError("usb reconnect / usb media PORT")
+    elif cmd == "vga" and SERVICES:
+        if rest == ["auto"]:
+            SERVICES.auto_vga()
+        elif rest in (["on"], ["off"]):
+            SERVICES.set_signal(rest[0] == "on")
+        elif len(rest) == 1:
+            SERVICES.set_vga(rest[0])
+        else:
+            raise ValueError("vga <JPEG path>|auto|on|off")
     elif cmd == "post" and rest:
         host.post_s = float(rest[0])
         host.set_times()
@@ -501,13 +567,14 @@ def set_screen(qmp, state):
     """The host's VGA output the BMC KVM shows: no signal while the host is
     off, a BIOS screen during POST, the OS console when it runs."""
     name = SCREENS.get(state)
-    try:
-        if name:
+    with SERVICES.lock:
+        if SERVICES.vga_override:
+            qmp.execute("qom-set", path=VIDEO, property="image", value=SERVICES.vga_override)
+        elif name:
             qmp.execute("qom-set", path=VIDEO, property="image",
                         value=os.path.join(KVM_DIR, name))
-        qmp.execute("qom-set", path=VIDEO, property="signal", value=bool(name))
-    except RuntimeError:
-        pass        # a QEMU without the video engine model
+        signal = bool(name) if SERVICES.vga_signal is None else SERVICES.vga_signal
+        qmp.execute("qom-set", path=VIDEO, property="signal", value=signal)
 
 
 # BMC outputs as the board sees them: the level the BMC drives, or the board's
@@ -616,6 +683,50 @@ class HostConsole:
             return self.offset + len(self.text), self.text[start:]
 
 
+class ESPIConsole(HostConsole):
+    """Host COM1 bytes routed through Peripheral I/O, with ready checks."""
+    def __init__(self, io):
+        self.io = io
+        self.pending = bytearray()
+        self.tx_lock = threading.Lock()
+        super().__init__(None)
+
+    def send(self, text):
+        text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+        self._add(text)
+        if host_state() != "off":
+            with self.tx_lock:
+                if len(self.pending) + len(text.encode()) > 65536:
+                    raise ValueError("主机串口待发送缓冲已满；检查 eSPI 就绪状态")
+                self.pending.extend(text.encode())
+
+    def _reader(self):
+        while True:
+            try:
+                if host_state() == "off":
+                    with self.tx_lock:
+                        self.pending.clear()
+                elif self.io.get(ESPI, "peripheral-ready"):
+                    received = bytearray()
+                    for _ in range(32):
+                        lsr = self.io.read(0x3fd)
+                        if lsr & 1:
+                            received.append(self.io.read(0x3f8))
+                        with self.tx_lock:
+                            if self.pending and lsr & 0x20:
+                                self.io.write(0x3f8, self.pending[0])
+                                del self.pending[0]
+                        if not lsr & 1 and not self.pending:
+                            break
+                    if received:
+                        text = received.decode("utf-8", "replace")
+                        self._add(text)
+                        self._shell(text)
+            except RuntimeError:
+                pass  # firmware has not enabled VUART, or channel reset
+            time.sleep(0.02)
+
+
 HOST = None             # the Host in use, for host_state()
 
 
@@ -691,6 +802,14 @@ class Panel:
         st["adc"] = [{"name": ADC_NAMES[i], "scale": ADC_SCALE[i],
                       "mv": qom(q, ADC, "ch%d-mv" % i)} for i in range(16)]
         st["rtc_battery"] = qom(q, RTC, "battery-ok")
+        st["chassis"] = {"open": qom(q, CHASSIS, "open"), "latched": qom(q, CHASSIS, "latched")}
+        st["espi"] = {k: qom(q, ESPI, k) for k in
+                      ("host-reset", "peripheral-ready", "vw-ready", "boot-ready", "host-irq4")}
+        st["usb"] = USB.state if USB else {"available": False}
+        st["video"] = SERVICES.state()
+        st["video"]["available"] = qom(q, VIDEO, "signal") is not None
+        st["video"]["signal"] = qom(q, VIDEO, "signal")
+        st["video"]["path"] = qom(q, VIDEO, "image")
         code = qom(q, LPC, "post-code")
         if code is not None and code != self.last_post:
             self.last_post = code
@@ -723,6 +842,12 @@ def serve_panel(panel, port, host, qmp):
                 self.reply(200, html, "text/html; charset=utf-8")
             elif self.path == "/api/state":
                 self.reply(200, panel.state)
+            elif self.path.startswith("/api/vga"):
+                path = qom(qmp, VIDEO, "image")
+                try:
+                    self.reply(200, validate_jpeg(path), "image/jpeg")
+                except (OSError, ValueError, TypeError):
+                    self.reply(404, {"error": "暂无 VGA 图片"})
             elif self.path.startswith("/api/console"):
                 pos = int(self.path.partition("pos=")[2] or 0)
                 if panel.console:
@@ -734,16 +859,39 @@ def serve_panel(panel, port, host, qmp):
                 self.reply(404, {"error": "not found"})
 
         def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
             try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if self.path == "/api/upload/vga":
+                    limit = JPEG_LIMIT
+                    if not 0 < size <= limit:
+                        raise ValueError("文件大小超出限制或为空")
+                    target = SERVICES.directory / (uuid.uuid4().hex + ".jpg")
+                    try:
+                        with target.open("wb") as out:
+                            remaining = size
+                            while remaining:
+                                block = self.rfile.read(min(1024 * 1024, remaining))
+                                if not block:
+                                    raise ValueError("上传中断")
+                                out.write(block)
+                                remaining -= len(block)
+                        SERVICES.set_vga(str(target))
+                    except Exception:
+                        target.unlink(missing_ok=True)
+                        raise
+                    self.reply(200, {"ok": True})
+                    return
+                if not 0 < size <= 65536:
+                    raise ValueError("无效的请求大小")
+                body = json.loads(self.rfile.read(size))
                 if self.path == "/api/cmd":
-                    run_command(host, qmp, body["cmd"].split())
+                    run_command(host, qmp, shlex.split(body["cmd"]))
                 elif self.path == "/api/console" and panel.console:
                     panel.console.send(body["text"])
                 else:
                     raise ValueError("unknown request")
                 self.reply(200, {"ok": True})
-            except (RuntimeError, KeyError, ValueError) as exc:
+            except (RuntimeError, KeyError, ValueError, OSError, StopIteration, struct.error) as exc:
                 log("error: %s" % exc)
                 self.reply(400, {"error": str(exc)})
 
@@ -764,6 +912,8 @@ def main():
     parser.add_argument("--web", action="store_true",
                         help="with --gui: always the web panel (http://localhost:PORT)")
     parser.add_argument("--port", type=int, default=8800, help="control panel port")
+    parser.add_argument("--state-dir", default=os.path.expanduser("~/qemu-ceb-gnrd"))
+    parser.add_argument("--headless", action="store_true", help="host I/O worker without a panel or stdin")
     parser.add_argument("--uart", default=os.path.expanduser("~/qemu-ceb-gnrd/host-uart.sock"),
                         help="host serial port socket (the panel plays the host console)")
     args = parser.parse_args()
@@ -798,8 +948,14 @@ def main():
             qmp.set_temp(path, celsius)
         except RuntimeError as exc:
             log("temperature sensor %s not available: %s" % (name, exc))
-    global HOST
+    global HOST, HOST_IO, USB, SERVICES
     HOST = host
+    SERVICES = PanelServices(qmp, args.state_dir, log)
+    if qom(qmp, ESPI, "peripheral-ready") is not None:
+        HOST_IO = HostIO(qmp)
+        log("主机 COM1 / POST / KCS 使用 eSPI Peripheral 路由")
+    if qom(qmp, VHUB, "host-connected") is not None:
+        USB = USBHost(HOST_IO or HostIO(qmp), log)
     if args.gui:
         log("simulated host ready (%s)" % host.state)
     else:
@@ -807,27 +963,59 @@ def main():
 
     def loop():
         screen = None
+        video_available = qom(qmp, VIDEO, "signal") is not None
+        last_error = 0
         while True:
             try:
                 host.step()
-                if host.state != screen:
-                    screen = host.state
-                    set_screen(qmp, screen)
+                key = (host.state, qmp.resets, SERVICES.video_generation)
+                if video_available and key != screen:
+                    set_screen(qmp, host.state)
+                    screen = key  # failed updates are retried
             except RuntimeError as exc:
-                log("QMP error: %s" % exc)
+                if time.monotonic() - last_error > 5:
+                    log("QMP error: %s" % exc)
+                    last_error = time.monotonic()
             time.sleep(POLL_S)
 
     threading.Thread(target=loop, daemon=True).start()
+    console = ESPIConsole(HOST_IO) if HOST_IO else HostConsole(args.uart)
+    panel = Panel(host, qmp, console)
+
+    def usb_loop():
+        seen_reset = qmp.resets
+        last_error = 0
+        while True:
+            try:
+                if seen_reset != qmp.resets:
+                    seen_reset = qmp.resets
+                    USB.set_connected(False)
+                powered = host.state != "off"
+                if USB.connected != powered:
+                    USB.set_connected(powered)
+                if powered:
+                    USB.poll()
+            except (RuntimeError, OSError, ValueError, KeyError, struct.error) as exc:
+                USB.state = dict(USB.state, error=str(exc))
+                if time.monotonic() - last_error > 10:
+                    log("USB: %s" % exc)
+                    last_error = time.monotonic()
+                time.sleep(1)
+            time.sleep(0.1)
+
+    if USB:
+        threading.Thread(target=usb_loop, daemon=True).start()
+    if args.headless:
+        threading.Event().wait()
+        return
 
     if args.gui:
-        console = HostConsole(args.uart)
-        panel = Panel(host, qmp, console)
         if not args.web and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
             try:
                 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
                 import panel_tk
                 window = panel_tk.PanelWindow(
-                    panel, lambda text: run_command(host, qmp, text.split()))
+                    panel, lambda text: run_command(host, qmp, shlex.split(text)), SERVICES)
             except Exception as exc:      # no Tk (python3-tk) or no display
                 log("no panel window (%s), serving the web panel instead" % exc)
             else:
@@ -838,12 +1026,12 @@ def main():
         return
 
     for line in sys.stdin:
-        words = line.split()
-        if not words:
-            continue
-        if words[0] in ("quit", "exit"):
-            break
         try:
+            words = shlex.split(line)
+            if not words:
+                continue
+            if words[0] in ("quit", "exit"):
+                break
             run_command(host, qmp, words)
         except (RuntimeError, KeyError, ValueError) as exc:
             log("error: %s" % exc)

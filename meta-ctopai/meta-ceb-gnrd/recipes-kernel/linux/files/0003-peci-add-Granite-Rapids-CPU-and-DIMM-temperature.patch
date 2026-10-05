@@ -1,141 +1,224 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CEB-GNRD board layer <bmc@localhost>
 Date: Mon, 5 Oct 2026 00:00:00 +0000
-Subject: [PATCH] peci: add Granite Rapids to the CPU, CPU temperature and DIMM
- temperature drivers
+Subject: [PATCH] peci: add GNR and GNR-D package and DIMM temperature profiles
 
-The peci-cpu driver only knows CPUs up to Emerald Rapids, so on a Xeon 6
-(Granite Rapids, CPUID model 0xAD / 0xAE for the D parts) no peci_cputemp or
-peci_dimmtemp hwmon device is created.
+Replace the previous unverified copy of Emerald Rapids register tables.
+Keep GNR-D separate from GNR-X: Intel GNR-D EDS-A 737226 rev 2.1.2,
+sections 10.1 and 10.4 / Table 73 (pages 205, 229-231, 236), specifies
+PECI revision 4.2 and eight PCS 14 channels. Each channel returns its
+maximum DIMM temperature twice; expose one accurately labelled sensor.
+The GNR-X twelve-channel profile follows the September 28, 2026 v2
+PECI/hwmon proposal, not the GNR-D profile.
 
-Add INTEL_GRANITERAPIDS_X and INTEL_GRANITERAPIDS_D with the Emerald Rapids
-tables: same RESOLVED_CORES register, same DIMM threshold register layout, 8
-channel ranks with 2 DIMMs each, DTS in 10.6 format, PECI revision 0x40.  The
-tables are copied, not taken from the Granite Rapids PECI specification: the
-readings must be checked on the board.
+Use GetTemp and PCS 16 for package temperature, skip die-scoped core
+mask scanning, and reject an unready zero reference temperature.
+Do not expose GNR DIMM thresholds using older CPU MMIO registers.
+Reject a zero GNR-D channel reading after discovery as unavailable.
 
-Upstream-Status: Inappropriate [copied tables, not verified on Granite Rapids]
+This covers CLTT/TSOD PCS 14 readings. CLTT with PECI wire / PECI_UPDATE
+returns zero for PCS 14; its DIMMTEMPSTAT MMIO path requires the GNR-D
+register specification and is not implemented here. No new PECI domain
+API, per-core temperature support or host thermal configuration writes.
+
+Reference patches:
+https://lore.kernel.org/all/20260928075956.62298-5-changhuang.liang@starfivetech.com/
+https://lore.kernel.org/all/20260928075956.62298-6-changhuang.liang@starfivetech.com/
+https://lore.kernel.org/all/20260928075956.62298-7-changhuang.liang@starfivetech.com/
+
+Upstream-Status: Pending [GNR-D EDS-based adaptation; hardware validation pending]
 ---
 diff --git a/drivers/hwmon/peci/cputemp.c b/drivers/hwmon/peci/cputemp.c
-index f4277a1..ef2e73e 100644
 --- a/drivers/hwmon/peci/cputemp.c
 +++ b/drivers/hwmon/peci/cputemp.c
-@@ -365,6 +365,8 @@ static int init_core_mask(struct peci_cputemp *priv)
- 	case INTEL_ICELAKE_D:
- 	case INTEL_SAPPHIRERAPIDS_X:
- 	case INTEL_EMERALDRAPIDS_X:
-+	case INTEL_GRANITERAPIDS_X:
-+	case INTEL_GRANITERAPIDS_D:
- 		ret = peci_ep_pci_local_read(peci_dev, 0, reg->bus, reg->dev,
- 					     reg->func, reg->offset + 4, &data);
- 		if (ret)
-@@ -547,6 +549,14 @@ static struct resolved_cores_reg resolved_cores_reg_emr = {
- 	.offset = 0x80,
- };
- 
-+/* Granite Rapids: same registers as Sapphire / Emerald Rapids (not verified) */
-+static struct resolved_cores_reg resolved_cores_reg_gnr = {
-+	.bus = 31,
-+	.dev = 30,
-+	.func = 6,
-+	.offset = 0x80,
-+};
+@@ -96,6 +96,10 @@
+ 	ret = peci_pcs_read(priv->peci_dev, PECI_PCS_TEMP_TARGET, 0, &pcs);
+ 	if (ret)
+ 		return ret;
 +
- static const struct cpu_info cpu_hsx = {
- 	.reg		= &resolved_cores_reg_hsx,
- 	.min_peci_revision = 0x33,
-@@ -577,6 +587,12 @@ static const struct cpu_info cpu_emr = {
++	/* GNR targets may still be zero before the BIOS-PCU handshake. */
++	if (!priv->gen_info->reg && !FIELD_GET(TEMP_TARGET_REF_TEMP_MASK, pcs))
++		return -EAGAIN;
+ 
+ 	priv->temp.target.tjmax =
+ 		FIELD_GET(TEMP_TARGET_REF_TEMP_MASK, pcs) * MILLIDEGREE_PER_DEGREE;
+@@ -358,6 +362,10 @@
+ 	u64 core_mask;
+ 	u32 data;
+ 	int ret;
++
++	/* GNR core masks are die-scoped; package temperatures need no mask. */
++	if (!reg)
++		return -EOPNOTSUPP;
+ 
+ 	/* Get the RESOLVED_CORES register value */
+ 	switch (peci_dev->info.x86_vfm) {
+@@ -577,6 +585,12 @@
  	.thermal_margin_to_millidegree = &dts_ten_dot_six_to_millidegree,
  };
  
++/* GNR/GNR-D: package readings only, no inherited SPR/EMR core registers. */
 +static const struct cpu_info cpu_gnr = {
-+	.reg    = &resolved_cores_reg_gnr,
-+	.min_peci_revision = 0x40,
++	.min_peci_revision = 0x42,
 +	.thermal_margin_to_millidegree = &dts_ten_dot_six_to_millidegree,
 +};
 +
  static const struct auxiliary_device_id peci_cputemp_ids[] = {
  	{
  		.name = "peci_cpu.cputemp.hsx",
-@@ -610,6 +626,10 @@ static const struct auxiliary_device_id peci_cputemp_ids[] = {
+@@ -609,6 +623,14 @@
+ 	{
  		.name = "peci_cpu.cputemp.emr",
  		.driver_data = (kernel_ulong_t)&cpu_emr,
- 	},
++	},
 +	{
 +		.name = "peci_cpu.cputemp.gnr",
 +		.driver_data = (kernel_ulong_t)&cpu_gnr,
 +	},
++	{
++		.name = "peci_cpu.cputemp.gnrd",
++		.driver_data = (kernel_ulong_t)&cpu_gnr,
+ 	},
  	{ }
  };
- MODULE_DEVICE_TABLE(auxiliary, peci_cputemp_ids);
 diff --git a/drivers/hwmon/peci/dimmtemp.c b/drivers/hwmon/peci/dimmtemp.c
-index a281476..f0c502c 100644
 --- a/drivers/hwmon/peci/dimmtemp.c
 +++ b/drivers/hwmon/peci/dimmtemp.c
-@@ -34,6 +34,8 @@
- #define DIMM_IDX_MAX_ON_SPR	2
+@@ -35,7 +35,13 @@
  #define CHAN_RANK_MAX_ON_EMR	8
  #define DIMM_IDX_MAX_ON_EMR	2
-+#define CHAN_RANK_MAX_ON_GNR	8
-+#define DIMM_IDX_MAX_ON_GNR	2
  
- #define CHAN_RANK_MAX		CHAN_RANK_MAX_ON_HSX
+-#define CHAN_RANK_MAX		CHAN_RANK_MAX_ON_HSX
++#define CHAN_RANK_MAX_ON_GNR	12
++#define DIMM_IDX_MAX_ON_GNR	2
++/* GNR-D EDS-A Table 73: one maximum temperature per channel. */
++#define CHAN_RANK_MAX_ON_GNRD	8
++#define DIMM_IDX_MAX_ON_GNRD	1
++
++#define CHAN_RANK_MAX		CHAN_RANK_MAX_ON_GNR
  #define DIMM_IDX_MAX		DIMM_IDX_MAX_ON_HSX
-@@ -579,6 +581,13 @@ static int read_thresholds_emr(struct peci_dimmtemp *priv, int dimm_order,
- 	return read_thresholds_spr(priv, dimm_order, chan_rank, data);
+ #define DIMM_NUMS_MAX		(CHAN_RANK_MAX * DIMM_IDX_MAX)
+ 
+@@ -57,6 +63,7 @@
+ 	int chan_rank_max;
+ 	int dimm_idx_max;
+ 	u8 min_peci_revision;
++	bool channel_max;
+ 	int (*read_thresholds)(struct peci_dimmtemp *priv, int dimm_order,
+ 			       int chan_rank, u32 *data);
+ };
+@@ -107,6 +114,12 @@
+ 	if (ret)
+ 		goto unlock;
+ 
++	/* Zero means absent/unready, or PECI_UPDATE mode, on GNR-D. */
++	if (priv->gen_info->channel_max && !__dimm_temp(data, dimm_order)) {
++		ret = -ENODATA;
++		goto unlock;
++	}
++
+ 	priv->dimm[dimm_no].temp.value = __dimm_temp(data, dimm_order) * MILLIDEGREE_PER_DEGREE;
+ 
+ 	peci_sensor_mark_updated(&priv->dimm[dimm_no].temp.state);
+@@ -127,6 +140,9 @@
+ 
+ 	if (!peci_sensor_need_update(&priv->dimm[dimm_no].thresholds.state))
+ 		return 0;
++
++	if (!priv->gen_info->read_thresholds)
++		return -EOPNOTSUPP;
+ 
+ 	ret = priv->gen_info->read_thresholds(priv, dimm_order, chan_rank, &data);
+ 	if (ret)
+@@ -205,10 +221,14 @@
+ {
+ 	const struct peci_dimmtemp *priv = data;
+ 
+-	if (test_bit(channel, priv->dimm_mask))
+-		return 0444;
+-
+-	return 0;
++	if (!test_bit(channel, priv->dimm_mask))
++		return 0;
++
++	if ((attr == hwmon_temp_max || attr == hwmon_temp_crit) &&
++	    !priv->gen_info->read_thresholds)
++		return 0;
++
++	return 0444;
  }
  
-+/* Granite Rapids: same registers as Sapphire / Emerald Rapids (not verified) */
-+static int read_thresholds_gnr(struct peci_dimmtemp *priv, int dimm_order,
-+			       int chan_rank, u32 *data)
-+{
-+	return read_thresholds_spr(priv, dimm_order, chan_rank, data);
-+}
-+
- static const struct dimm_info dimm_hsx = {
- 	.chan_rank_max	= CHAN_RANK_MAX_ON_HSX,
- 	.dimm_idx_max	= DIMM_IDX_MAX_ON_HSX,
-@@ -635,6 +644,13 @@ static const struct dimm_info dimm_emr = {
+ static const struct hwmon_ops peci_dimmtemp_ops = {
+@@ -297,9 +317,12 @@
+ 	int rank = chan / priv->gen_info->dimm_idx_max;
+ 	int idx = chan % priv->gen_info->dimm_idx_max;
+ 
+-	priv->dimmtemp_label[chan] = devm_kasprintf(priv->dev, GFP_KERNEL,
+-						    "DIMM %c%d", 'A' + rank,
+-						    idx + 1);
++	if (priv->gen_info->channel_max)
++		priv->dimmtemp_label[chan] = devm_kasprintf(priv->dev, GFP_KERNEL,
++							 "Channel %d max", rank);
++	else
++		priv->dimmtemp_label[chan] = devm_kasprintf(priv->dev, GFP_KERNEL,
++							 "DIMM %c%d", 'A' + rank, idx + 1);
+ 	if (!priv->dimmtemp_label[chan])
+ 		return -ENOMEM;
+ 
+@@ -635,6 +658,21 @@
  	.read_thresholds = &read_thresholds_emr,
  };
  
++/* No unverified SPR/EMR threshold or domain register accesses on GNR. */
 +static const struct dimm_info dimm_gnr = {
-+	.chan_rank_max  = CHAN_RANK_MAX_ON_GNR,
-+	.dimm_idx_max  = DIMM_IDX_MAX_ON_GNR,
-+	.min_peci_revision = 0x40,
-+	.read_thresholds = &read_thresholds_gnr,
++	.chan_rank_max = CHAN_RANK_MAX_ON_GNR,
++	.dimm_idx_max = DIMM_IDX_MAX_ON_GNR,
++	.min_peci_revision = 0x42,
++};
++
++/* PCS 14 duplicates each channel maximum in bytes 0 and 1 on GNR-D. */
++static const struct dimm_info dimm_gnrd = {
++	.chan_rank_max = CHAN_RANK_MAX_ON_GNRD,
++	.dimm_idx_max = DIMM_IDX_MAX_ON_GNRD,
++	.min_peci_revision = 0x42,
++	.channel_max = true,
 +};
 +
  static const struct auxiliary_device_id peci_dimmtemp_ids[] = {
  	{
  		.name = "peci_cpu.dimmtemp.hsx",
-@@ -668,6 +684,10 @@ static const struct auxiliary_device_id peci_dimmtemp_ids[] = {
+@@ -667,6 +705,14 @@
+ 	{
  		.name = "peci_cpu.dimmtemp.emr",
  		.driver_data = (kernel_ulong_t)&dimm_emr,
- 	},
++	},
 +	{
 +		.name = "peci_cpu.dimmtemp.gnr",
 +		.driver_data = (kernel_ulong_t)&dimm_gnr,
 +	},
++	{
++		.name = "peci_cpu.dimmtemp.gnrd",
++		.driver_data = (kernel_ulong_t)&dimm_gnrd,
+ 	},
  	{ }
  };
- MODULE_DEVICE_TABLE(auxiliary, peci_dimmtemp_ids);
 diff --git a/drivers/peci/cpu.c b/drivers/peci/cpu.c
-index fbccc1d..2d0d98e 100644
 --- a/drivers/peci/cpu.c
 +++ b/drivers/peci/cpu.c
-@@ -325,6 +325,14 @@ static const struct peci_device_id peci_cpu_device_ids[] = {
+@@ -325,6 +325,14 @@
  		.x86_vfm  = INTEL_EMERALDRAPIDS_X,
  		.data  = "emr",
  	},
 +	{ /* Granite Rapids Xeon */
 +		.x86_vfm = INTEL_GRANITERAPIDS_X,
-+		.data	= "gnr",
++		.data = "gnr",
 +	},
-+	{ /* Granite Rapids Xeon D */
++	{ /* Granite Rapids D: distinct DIMM temperature semantics */
 +		.x86_vfm = INTEL_GRANITERAPIDS_D,
-+		.data	= "gnr",
++		.data = "gnrd",
 +	},
  	{ }
  };
  MODULE_DEVICE_TABLE(peci, peci_cpu_device_ids);
+-- 
+2.47.0
