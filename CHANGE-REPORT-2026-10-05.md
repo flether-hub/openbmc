@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 13:55 UTC（北京时间 21:55）
+最后更新：2026-10-05 14:10 UTC（北京时间 22:10）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -123,7 +123,8 @@
 | `6e5868b21b` | `ceb-gnrd-alert-led.py`：`mapper_sensors()` 把结果变成元组又要求列表，找不到 sensor，电压告警从不点亮告警灯 | D3V0_BAT0 告警 → 告警灯红 |
 | `44c7124c6a` | UID 按键重启后不亮：`phosphor-button-handler` 只在启动时查一次 UID 按键对象，而 `buttons` 守护进程先占总线名、后导出对象，两者同时启动就竞争，handler 忽略 UID 键（手工重启两个服务后又能亮，和现象一致）。给 handler 加 systemd drop-in，先等 `Buttons/ID` 对象出现（`ceb-gnrd-wait-buttons.sh`，最多 60 s，不阻塞）。**未编译验证** | 重启 BMC 后 `journalctl -u phosphor-button-handler` 应有 "Registering ID button handler"；按 UID 键灯切换 |
 | `680aa17b1f` | **UID 按键不亮的真正原因**：`x86-power-control` 和 `phosphor-buttons` 都请求总线名 `xyz.openbmc_project.Chassis.Buttons`，谁先起谁拥有；`x86-power-control` 抢到时 `phosphor-buttons` 的对象（含 `Buttons/ID`）根本不可达，handler 看不到 UID 键（`busctl tree …Chassis.Buttons` 里只有 state/control 对象；`gpioinfo` 里 `BMC_UID_BUTTON_N` 被 "sysfs" 占着；前一个 `44c7124c6a` 的等待脚本因此白等 60 s）。新增 x86-power-control 补丁 `0002-ceb-gnrd-own-bus-name-for-the-exported-buttons.patch`，把它导出的按键换成自己的总线名 `com.ctopai.CebGnrd.PowerControl.Buttons`。**未编译验证**（补丁已对固定版本源码做过 `patch --dry-run`） | 重编重启后 `busctl tree xyz.openbmc_project.Chassis.Buttons` 里有 `Chassis/Buttons/ID`；handler 日志有 "Registering ID button handler"；按 UID 键灯切换 |
-| _(本提交)_ | 面板事件日志加详细：每次轮询对比状态，记录 GPIO 信号跃变（含方向和低有效含义）、温度、风扇故障/固定/转速、PSU 插拔/AC/功率/温度、PECI、ADC（引脚 mV 和电源轨 V）、RTC 电池、机箱、eSPI、USB HID 报告、VGA 信号/图片、POST 码。VGA 预览改用 Pillow 解码成 PPM 交给 Tk（原来要 `python3-pil.imagetk`，缺包时预览显示不出来，现在只需 `python3-pil`，缺包或出错会在预览处写原因）。Tk 面板窗口生效，网页面板的日志也显示这些行。**未在真实 QEMU 上验证** | 面板「事件日志」里操作后出现对应行；VGA 页选图后显示 400×300 预览 |
+| `dc7bf2af9b` | 面板事件日志加详细：每次轮询对比状态，记录 GPIO 信号跃变（含方向和低有效含义）、温度、风扇故障/固定/转速、PSU 插拔/AC/功率/温度、PECI、ADC（引脚 mV 和电源轨 V）、RTC 电池、机箱、eSPI、USB HID 报告、VGA 信号/图片、POST 码。VGA 预览改用 Pillow 解码成 PPM 交给 Tk（原来要 `python3-pil.imagetk`，缺包时预览显示不出来，现在只需 `python3-pil`，缺包或出错会在预览处写原因）。Tk 面板窗口生效，网页面板的日志也显示这些行。**未在真实 QEMU 上验证** | 面板「事件日志」里操作后出现对应行；VGA 页选图后显示 400×300 预览 |
+| _(本提交)_ | 补丁 0020：ADC 通道值保持 10 位。测试斜坡给高半字加 7 时没有屏蔽，可能把第 26 位置 1；之后该通道设了电压，这个多余的位还留着，读回 2047（11 位），驱动换算成约 2 倍参考电压（D3V0_BAT0 显示 4.997 V，`in_voltage7_raw` 实测 2047）。斜坡加屏蔽，设电压前清掉多余位。**未编译验证** | 重编后 `cat /sys/bus/iio/devices/iio:device1/in_voltage7_raw` ≤ 1023；D3V0_BAT0 读 ≤ 2.5 V |
 | `bb902c5133` | Entity-Manager ADC 的 `ScaleFactor` 写反了：dbus-sensors 是 `(raw/1000)/ScaleFactor`，即 ScaleFactor 是除数，分压比 10K/1K 应写 1/11（0.090909）、2:1 写 0.5；原来写 11 和 2，读数变成引脚电压再除以 11（12 V 轨显示 0.099 V，3.3 V 轨显示 0.824 V），所有分压通道都报 Critical。已把 11→0.090909、2→0.5。模拟器的 ÷N 分压没有问题。**真板同样受影响；未编译验证** | 设 12.1 V 后网页读 12.1 V；只剩 D3V0_BAT0 告警 |
 | _(本提交)_ | 面板「硬件连接」页下方大片空白：窗口高度改为 760，示意图只占自身高度（行距上限 34）。`ceb-gnrd-fan-owner.sh` 失败时打印缺哪一项（风扇 zone 是否出现、最后缺的是哪个 hwmon/pwm/tach），便于定位 override 线不拉高的原因。注意：脚本装在 `/usr/sbin/ceb-gnrd-fan-owner`，不是 `/usr/libexec/`。**未验证** | 面板下方不再空白；fan-owner 失败日志有 "fan-control zone found: …" 一行 |
 
