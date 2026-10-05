@@ -1,7 +1,8 @@
 #!/bin/sh
 # Run the ceb-gnrd BMC image in QEMU (ast2600-evb) with the parts of the board
 # that QEMU can emulate attached at their real addresses, and open the control
-# panel (host-sim.py --gui, http://localhost:8800):
+# panel (host-sim.py --gui: a window when there is a display, otherwise the web
+# panel on http://localhost:8800):
 #
 #   flash   BMC flash (the built image) on FMC, a 64 MiB BIOS flash on SPI1
 #   network MAC2 = eth0, the RJ45 port (192.168.185.200, port forwards below)
@@ -32,7 +33,8 @@
 # and the sockets, default ~/qemu-ceb-gnrd), BIOS_FLASH (default ~/qemu-bios.bin),
 # QEMU (default: the QEMU OpenBMC built for this image, found through its
 # qemuboot.conf; else $STATE/qemu/bin/qemu-system-arm from build-qemu.sh; else
-# qemu-system-arm from PATH), PANEL_PORT (default 8800), NO_PANEL=1 (no panel).
+# qemu-system-arm from PATH), PANEL_PORT (default 8800), NO_PANEL=1 (no panel),
+# PANEL_WEB=1 (the web panel even when there is a display).
 
 SELF=$(readlink -f "$0")
 TOOLS=$(dirname "$SELF")
@@ -137,9 +139,13 @@ echo "Host serial port (SOL): $UART_SOCK"
 
 # Control panel: waits for QEMU's QMP socket, stops when QEMU stops
 if [ -z "$NO_PANEL" ]; then
-    python3 "$TOOLS/host-sim.py" --gui --port "$PANEL_PORT" --qmp "$QMP" \
-        --uart "$UART_SOCK" > "$STATE/panel.log" 2>&1 &
-    echo "Control panel: http://localhost:$PANEL_PORT (log $STATE/panel.log)"
+    python3 "$TOOLS/host-sim.py" --gui ${PANEL_WEB:+--web} --port "$PANEL_PORT" \
+        --qmp "$QMP" --uart "$UART_SOCK" > "$STATE/panel.log" 2>&1 &
+    if [ -n "$DISPLAY$WAYLAND_DISPLAY" ] && [ -z "$PANEL_WEB" ]; then
+        echo "Control panel: a window (log $STATE/panel.log)"
+    else
+        echo "Control panel: http://localhost:$PANEL_PORT (log $STATE/panel.log)"
+    fi
 fi
 
 # Serial ports: the first is UART5 (BMC debug console, this terminal), then

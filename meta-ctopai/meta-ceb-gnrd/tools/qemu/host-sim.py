@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Simulated host for the ceb-gnrd BMC running in QEMU (run-qemu.sh).
 
---gui serves a control panel (panel.html, http://localhost:8800, run-qemu.sh
-starts it): a drawing of the signals between the BMC and the host with their
+--gui opens the control panel (run-qemu.sh starts it): a Tk window
+(panel_tk.py) when there is a display, else a web page (panel.html,
+http://localhost:8800; --web forces it).  It shows a drawing of the signals between the BMC and the host with their
 LEDs and buttons, the fans, PSUs, temperatures, ADC inputs, POST codes and the
 host serial console.  Without --gui it reads the commands below from stdin.
 
@@ -59,7 +60,6 @@ import socket
 import sys
 import threading
 import time
-import webbrowser
 
 GPIO = "/machine/soc/gpio"
 # BMC outputs
@@ -700,8 +700,6 @@ def serve_panel(panel, port, host, qmp):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = "http://localhost:%d" % port
     log("control panel on %s" % url)
-    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
-        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
     server.serve_forever()
 
 
@@ -710,7 +708,10 @@ def main():
     parser.add_argument("--qmp", default=os.path.expanduser("~/qemu-ceb-gnrd/qmp.sock"))
     parser.add_argument("--post", type=float, default=20, help="POST time in s")
     parser.add_argument("--shutdown", type=float, default=10, help="OS shutdown time in s")
-    parser.add_argument("--gui", action="store_true", help="serve the control panel")
+    parser.add_argument("--gui", action="store_true",
+                        help="control panel: a window when there is a display, else the web panel")
+    parser.add_argument("--web", action="store_true",
+                        help="with --gui: always the web panel (http://localhost:PORT)")
     parser.add_argument("--port", type=int, default=8800, help="control panel port")
     parser.add_argument("--uart", default=os.path.expanduser("~/qemu-ceb-gnrd/host-uart.sock"),
                         help="host serial port socket (the panel plays the host console)")
@@ -757,7 +758,20 @@ def main():
 
     if args.gui:
         console = HostConsole(args.uart)
-        serve_panel(Panel(host, qmp, console), args.port, host, qmp)
+        panel = Panel(host, qmp, console)
+        if not args.web and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                import panel_tk
+                window = panel_tk.PanelWindow(
+                    panel, lambda text: run_command(host, qmp, text.split()))
+            except Exception as exc:      # no Tk (python3-tk) or no display
+                log("no panel window (%s), serving the web panel instead" % exc)
+            else:
+                log("control panel window open")
+                window.mainloop()
+                return
+        serve_panel(panel, args.port, host, qmp)
         return
 
     for line in sys.stdin:

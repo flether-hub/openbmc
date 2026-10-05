@@ -45,12 +45,14 @@ from a host OS, KVM video, USB virtual media.
 
 ## Control panel
 
-`run-qemu.sh` starts `host-sim.py --gui` (log in `~/qemu-ceb-gnrd/panel.log`),
-which serves the panel on <http://localhost:8800> (`PANEL_PORT=`) and opens a
-browser when there is a display.  It listens on localhost only; from another
-machine use an SSH tunnel: `ssh -L 8800:localhost:8800 <build server>`.  It
-stops with QEMU.  `NO_PANEL=1 ./run-qemu.sh` leaves it out, for instance to use
-`host-sim.py` as a command line console instead.
+`run-qemu.sh` starts `host-sim.py --gui` (log in `~/qemu-ceb-gnrd/panel.log`).
+With a display (a desktop session on the build server, or `ssh -X`) it opens a
+Tk window (`panel_tk.py`; Ubuntu needs `sudo apt install python3-tk`).  Without
+one, or with `PANEL_WEB=1`, it serves the same panel as a web page on
+<http://localhost:8800> (`PANEL_PORT=`, localhost only; from another machine
+`ssh -L 8800:localhost:8800 <build server>`).  It stops with QEMU, and closing
+the window leaves QEMU running.  `NO_PANEL=1 ./run-qemu.sh` leaves it out, for
+instance to use `host-sim.py` as a command line console instead.
 
 The panel shows:
 
