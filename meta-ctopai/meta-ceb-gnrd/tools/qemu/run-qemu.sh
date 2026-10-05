@@ -12,22 +12,33 @@
 #   I2C11   (Linux i2c-10) 0x50-0x53  FRU EEPROM, 1 KiB like the FM24C08; all four
 #                                     256-byte blocks are kept in files
 #   I2C1-6  (Linux i2c-0..5) 0x50     one 256-byte EEPROM per PCIe slot bus
+#   PWM/TACH fan speeds follow the PWM duty (needs the QEMU from build-qemu.sh)
 #   QMP     control socket used by host-sim.py (host power, buttons, temperatures)
 #
 #   UART3   (BMC ttyS2) on ~/qemu-ceb-gnrd/host-uart.sock: the host serial port
 #           for SOL tests (QEMU has no VUART; see tools/qemu/README.md)
 #
 # Not emulated (test on the board): eSPI/VUART/KCS/POST codes, PECI, KVM video,
-# USB virtual media, fan PWM/TACH, the NCT3015Y RTC.
+# USB virtual media, the NCT3015Y RTC; fan PWM/TACH with a stock QEMU.
 #
 # Usage:  run-qemu.sh                      (then, in a second terminal: host-sim.py)
 # Environment: DEPLOY (image directory), STATE (directory for the FRU EEPROM files
-# and the QMP socket, default ~/qemu-ceb-gnrd), BIOS_FLASH (default ~/qemu-bios.bin).
+# and the QMP socket, default ~/qemu-ceb-gnrd), BIOS_FLASH (default ~/qemu-bios.bin),
+# QEMU (default: $STATE/qemu/bin/qemu-system-arm from build-qemu.sh when it exists,
+# otherwise qemu-system-arm from PATH).
 
 DEPLOY=${DEPLOY:-$HOME/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd}
 STATE=${STATE:-$HOME/qemu-ceb-gnrd}
 BIOS_FLASH=${BIOS_FLASH:-$HOME/qemu-bios.bin}
 IMAGE=$DEPLOY/obmc-phosphor-image-ceb-gnrd.static.mtd
+if [ -z "$QEMU" ]; then
+    if [ -x "$STATE/qemu/bin/qemu-system-arm" ]; then
+        QEMU=$STATE/qemu/bin/qemu-system-arm
+    else
+        QEMU=qemu-system-arm
+        echo "note: stock QEMU, fans read 0 RPM (build-qemu.sh builds the patched one)" >&2
+    fi
+fi
 QMP=$STATE/qmp.sock
 
 if [ ! -f "$IMAGE" ]; then
@@ -62,7 +73,7 @@ done
 # PSU slots: the generic pmbus driver (what ceb-gnrd-psu-detect binds) only works
 # with the PMBus linear format.  QEMU's adm1266 reports it (VOUT_MODE 0); the
 # isl69260 and adm1272 report the direct format, which the generic driver rejects.
-if qemu-system-arm -device help 2>/dev/null | grep -q adm1266; then
+if "$QEMU" -device help 2>/dev/null | grep -q adm1266; then
     PSU_MODEL=adm1266
 else
     PSU_MODEL=isl69260
@@ -75,7 +86,7 @@ echo "Host serial console (UART3, for SOL tests): $STATE/host-uart.sock"
 # UART1, UART2, UART3 ...  UART3 (BMC ttyS2) goes to a socket that plays the host's
 # serial port for SOL tests (QEMU has no VUART); see tools/qemu/README.md.
 # shellcheck disable=SC2086
-exec qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
+exec "$QEMU" -M ast2600-evb -m 1G -nographic -monitor none \
   -qmp "unix:$QMP,server=on,wait=off" \
   -serial stdio -serial null -serial null \
   -serial "unix:$STATE/host-uart.sock,server=on,wait=off" \

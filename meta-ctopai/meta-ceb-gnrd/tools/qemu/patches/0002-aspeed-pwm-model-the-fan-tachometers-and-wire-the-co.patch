@@ -1,0 +1,310 @@
+From f3d71f9e7edd5d6ce5694ae1fdf7bdd5303caccf Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:15:10 +0800
+Subject: [PATCH 2/2] aspeed/pwm: model the fan tachometers and wire the
+ controller on AST2600
+
+The AST2600 PWM/TACH controller at 0x1e610000 was not instantiated, so
+the aspeed-g6-pwm-tach driver bound to RAZ/WI memory and every fan read
+0 RPM.
+
+Instantiate aspeed.pwm on the AST2600 and model the tachometers: the
+status register of tach channel N reports a full measurement for the fan
+driven by PWM channel N.  The fan speed is fan-max-rpm (12000 on the
+AST2600) times the PWM duty cycle, or a fixed fanN-rpm when one is set;
+both can be changed at run time with qom-set.  The count uses HCLK from
+the SCU, the tach clock divider and two pulses per revolution, matching
+the Linux driver.  With fan-max-rpm 0 and no fixed speeds (the default,
+used by the AST1700) the device behaves as before.
+---
+ hw/arm/aspeed_ast2600.c      |  19 +++++
+ hw/misc/aspeed_pwm.c         | 160 ++++++++++++++++++++++++++++++++++-
+ include/hw/misc/aspeed_pwm.h |  11 +++
+ 3 files changed, 189 insertions(+), 1 deletion(-)
+
+diff --git a/hw/arm/aspeed_ast2600.c b/hw/arm/aspeed_ast2600.c
+index d1f18e4..a5fa80a 100644
+--- a/hw/arm/aspeed_ast2600.c
++++ b/hw/arm/aspeed_ast2600.c
+@@ -271,6 +271,14 @@ static void aspeed_soc_ast2600_init(Object *obj)
+ 
+     object_initialize_child(obj, "sbc", &s->sbc, TYPE_ASPEED_AST2600_SBC);
+ 
++    /*
++     * PWM/TACH: fans follow the PWM duty cycle, up to fan-max-rpm at 100%
++     * (both can be changed at run time with qom-set, see aspeed_pwm.c).
++     */
++    object_initialize_child(obj, "pwm", &s->pwm, TYPE_ASPEED_PWM);
++    object_property_set_uint(OBJECT(&s->pwm), "fan-max-rpm", 12000,
++                             &error_abort);
++
+     object_initialize_child(obj, "iomem", &s->iomem, TYPE_UNIMPLEMENTED_DEVICE);
+     object_initialize_child(obj, "video", &s->video, TYPE_UNIMPLEMENTED_DEVICE);
+     object_initialize_child(obj, "dpmcu", &s->dpmcu, TYPE_UNIMPLEMENTED_DEVICE);
+@@ -730,6 +738,17 @@ static void aspeed_soc_ast2600_realize(DeviceState *dev, Error **errp)
+     aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(&s->sbc), 0,
+                     sc->memmap[ASPEED_DEV_SBC]);
+ 
++    /* PWM/TACH */
++    object_property_set_link(OBJECT(&s->pwm), "scu", OBJECT(&s->scu),
++                             &error_abort);
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->pwm), errp)) {
++        return;
++    }
++    aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(&s->pwm), 0,
++                    sc->memmap[ASPEED_DEV_PWM]);
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->pwm), 0,
++                       aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_PWM));
++
+     /* FSI */
+     for (i = 0; i < ASPEED_FSI_NUM; i++) {
+         if (!sysbus_realize(SYS_BUS_DEVICE(&s->fsi[i]), errp)) {
+diff --git a/hw/misc/aspeed_pwm.c b/hw/misc/aspeed_pwm.c
+index dfb93ae..23bd0d3 100644
+--- a/hw/misc/aspeed_pwm.c
++++ b/hw/misc/aspeed_pwm.c
+@@ -7,14 +7,115 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "qemu/bitops.h"
+ #include "qemu/log.h"
+ #include "qemu/error-report.h"
+ #include "hw/misc/aspeed_pwm.h"
++#include "hw/core/qdev-properties.h"
+ #include "qapi/error.h"
++#include "qapi/visitor.h"
+ #include "migration/vmstate.h"
+ 
+ #include "trace.h"
+ 
++/*
++ * AST2600/AST2700 (G6) layout: 16 channels of 0x10 bytes each, holding the
++ * PWM control and duty cycle registers and the tachometer control and status
++ * registers of the same channel.
++ */
++#define PWM_CTRL(ch)                ((ch) * 4 + 0)
++#define   PWM_CTRL_CLK_ENABLE       BIT(16)
++#define   PWM_CTRL_INVERSE          BIT(14)
++#define   PWM_CTRL_PIN_ENABLE       BIT(12)
++#define PWM_DUTY(ch)                ((ch) * 4 + 1)
++#define   PWM_DUTY_PERIOD(v)        extract32(v, 24, 8)
++#define   PWM_DUTY_FALLING(v)       extract32(v, 8, 8)
++#define   PWM_DUTY_RISING(v)        extract32(v, 0, 8)
++#define TACH_CTRL(ch)               ((ch) * 4 + 2)
++#define   TACH_CTRL_ENABLE          BIT(28)
++#define   TACH_CTRL_CLK_DIV(v)      extract32(v, 20, 4)
++#define TACH_STS(ch)                ((ch) * 4 + 3)
++#define   TACH_STS_VALUE_UPDATE     BIT(21)
++#define   TACH_STS_FULL_MEASUREMENT BIT(20)
++#define   TACH_STS_VALUE_MASK       0xfffff
++
++/* The Linux driver counts two tach pulses per revolution */
++#define FAN_PULSES_PER_REV          2
++/* HCLK of an AST2600 with the default HPLL and straps */
++#define DEFAULT_HCLK_HZ             200000000
++
++/* PWM output duty cycle in 1/1000, as the fan sees it */
++static uint32_t aspeed_pwm_duty_permille(AspeedPWMState *s, int ch)
++{
++    uint32_t ctrl = s->regs[PWM_CTRL(ch)];
++    uint32_t duty = s->regs[PWM_DUTY(ch)];
++    uint32_t period = PWM_DUTY_PERIOD(duty) + 1;
++    uint32_t rise = MIN(PWM_DUTY_RISING(duty), period);
++    uint32_t fall = MIN(PWM_DUTY_FALLING(duty), period);
++    uint32_t high;
++
++    if (!(ctrl & PWM_CTRL_PIN_ENABLE)) {
++        return 0;
++    }
++    if (!(ctrl & PWM_CTRL_CLK_ENABLE)) {
++        /* duty counter held in reset: inactive level */
++        high = 0;
++    } else if (rise == fall) {
++        high = 1000;
++    } else if (fall > rise) {
++        high = (fall - rise) * 1000 / period;
++    } else {
++        high = (period - rise + fall) * 1000 / period;
++    }
++
++    return (ctrl & PWM_CTRL_INVERSE) ? 1000 - high : high;
++}
++
++static uint32_t aspeed_pwm_hclk(AspeedPWMState *s)
++{
++    uint32_t hz = s->scu ? aspeed_scu_get_hclk_freq(s->scu) : 0;
++
++    return hz ? hz : DEFAULT_HCLK_HZ;
++}
++
++/*
++ * Tachometer channel N reads the fan driven by PWM channel N.  The status
++ * register holds the number of divided HCLK cycles between two falling edges
++ * of the tach input, which is one half revolution.
++ */
++static uint32_t aspeed_pwm_tach_status(AspeedPWMState *s, int ch)
++{
++    uint32_t ctrl = s->regs[TACH_CTRL(ch)];
++    uint64_t rpm, val;
++
++    if (!(ctrl & TACH_CTRL_ENABLE)) {
++        return 0;
++    }
++    if (s->fan_rpm[ch] >= 0) {
++        rpm = s->fan_rpm[ch];
++    } else {
++        rpm = (uint64_t)s->fan_max_rpm * aspeed_pwm_duty_permille(s, ch) / 1000;
++    }
++    if (!rpm) {
++        /* no edges: the measurement never completes */
++        return 0;
++    }
++
++    val = (uint64_t)aspeed_pwm_hclk(s) * 60 /
++          (rpm * FAN_PULSES_PER_REV << (2 * TACH_CTRL_CLK_DIV(ctrl)));
++    if (val > TACH_STS_VALUE_MASK) {
++        /* too slow for this divider: the counter overflows */
++        return 0;
++    }
++
++    return TACH_STS_FULL_MEASUREMENT | TACH_STS_VALUE_UPDATE | MAX(val, 1);
++}
++
++static bool aspeed_pwm_tach_modelled(AspeedPWMState *s, int ch)
++{
++    return s->fan_max_rpm || s->fan_rpm[ch] >= 0;
++}
++
+ static uint64_t aspeed_pwm_read(void *opaque, hwaddr addr,
+                                      unsigned int size)
+ {
+@@ -27,6 +128,9 @@ static uint64_t aspeed_pwm_read(void *opaque, hwaddr addr,
+         qemu_log_mask(LOG_GUEST_ERROR,
+                       "%s: Out-of-bounds read at offset 0x%" HWADDR_PRIx "\n",
+                       __func__, addr << 2);
++    } else if (addr < ASPEED_PWM_NR_CHANNELS * 4 && (addr & 3) == 3 &&
++               aspeed_pwm_tach_modelled(s, addr >> 2)) {
++        val = aspeed_pwm_tach_status(s, addr >> 2);
+     } else {
+         val = s->regs[addr];
+     }
+@@ -85,12 +189,64 @@ static void aspeed_pwm_realize(DeviceState *dev, Error **errp)
+     sysbus_init_mmio(sbd, &s->iomem);
+ }
+ 
++static void aspeed_pwm_get_fan_rpm(Object *obj, Visitor *v, const char *name,
++                                   void *opaque, Error **errp)
++{
++    visit_type_int32(v, name, opaque, errp);
++}
++
++static void aspeed_pwm_set_fan_rpm(Object *obj, Visitor *v, const char *name,
++                                   void *opaque, Error **errp)
++{
++    int32_t rpm;
++
++    if (!visit_type_int32(v, name, &rpm, errp)) {
++        return;
++    }
++    if (rpm < -1) {
++        error_setg(errp, "%s: %d is not a fan speed (-1 follows the PWM duty)",
++                   name, rpm);
++        return;
++    }
++    *(int32_t *)opaque = rpm;
++}
++
++/*
++ * Fan speeds can be changed at run time over QMP, for example
++ *   qom-set /machine/soc/pwm fan-max-rpm 15000
++ *   qom-set /machine/soc/pwm fan3-rpm 0          (stalled fan)
++ *   qom-set /machine/soc/pwm fan3-rpm -1         (back to the PWM duty)
++ */
++static void aspeed_pwm_init(Object *obj)
++{
++    AspeedPWMState *s = ASPEED_PWM(obj);
++    int i;
++
++    object_property_add_uint32_ptr(obj, "fan-max-rpm", &s->fan_max_rpm,
++                                   OBJ_PROP_FLAG_READWRITE);
++    for (i = 0; i < ASPEED_PWM_NR_CHANNELS; i++) {
++        g_autofree char *name = g_strdup_printf("fan%d-rpm", i);
++
++        s->fan_rpm[i] = -1;
++        object_property_add(obj, name, "int32", aspeed_pwm_get_fan_rpm,
++                            aspeed_pwm_set_fan_rpm, NULL, &s->fan_rpm[i]);
++    }
++}
++
++static const Property aspeed_pwm_properties[] = {
++    DEFINE_PROP_LINK("scu", AspeedPWMState, scu, TYPE_ASPEED_SCU,
++                     AspeedSCUState *),
++};
++
+ static const VMStateDescription vmstate_aspeed_pwm = {
+     .name = TYPE_ASPEED_PWM,
+-    .version_id = 1,
++    .version_id = 2,
+     .minimum_version_id = 1,
+     .fields = (VMStateField[]) {
+         VMSTATE_UINT32_ARRAY(regs, AspeedPWMState, ASPEED_PWM_NR_REGS),
++        VMSTATE_UINT32_V(fan_max_rpm, AspeedPWMState, 2),
++        VMSTATE_INT32_ARRAY_V(fan_rpm, AspeedPWMState, ASPEED_PWM_NR_CHANNELS,
++                              2),
+         VMSTATE_END_OF_LIST(),
+     }
+ };
+@@ -104,6 +260,7 @@ static void aspeed_pwm_class_init(ObjectClass *klass, const void *data)
+     rc->phases.hold = aspeed_pwm_reset_hold;
+     dc->desc = "Aspeed PWM Controller";
+     dc->vmsd = &vmstate_aspeed_pwm;
++    device_class_set_props(dc, aspeed_pwm_properties);
+ }
+ 
+ static const TypeInfo aspeed_pwm_types[] = {
+@@ -111,6 +268,7 @@ static const TypeInfo aspeed_pwm_types[] = {
+         .name = TYPE_ASPEED_PWM,
+         .parent = TYPE_SYS_BUS_DEVICE,
+         .instance_size = sizeof(AspeedPWMState),
++        .instance_init = aspeed_pwm_init,
+         .class_init = aspeed_pwm_class_init,
+     }
+ };
+diff --git a/include/hw/misc/aspeed_pwm.h b/include/hw/misc/aspeed_pwm.h
+index f4104ad..a48d33b 100644
+--- a/include/hw/misc/aspeed_pwm.h
++++ b/include/hw/misc/aspeed_pwm.h
+@@ -10,11 +10,13 @@
+ #define ASPEED_PWM_H
+ 
+ #include "hw/core/sysbus.h"
++#include "hw/misc/aspeed_scu.h"
+ 
+ #define TYPE_ASPEED_PWM "aspeed.pwm"
+ #define ASPEED_PWM(obj) OBJECT_CHECK(AspeedPWMState, (obj), TYPE_ASPEED_PWM)
+ 
+ #define ASPEED_PWM_NR_REGS (0x10C >> 2)
++#define ASPEED_PWM_NR_CHANNELS 16
+ 
+ typedef struct AspeedPWMState {
+     /* <private> */
+@@ -24,6 +26,15 @@ typedef struct AspeedPWMState {
+     MemoryRegion iomem;
+     qemu_irq irq;
+ 
++    /*
++     * Fan tachometer model (G6 register layout): optional SCU link for the
++     * AHB clock, the fan speed at 100% duty (0 disables the model) and a
++     * per-channel fixed speed overriding the duty cycle (-1: follow duty).
++     */
++    AspeedSCUState *scu;
++    uint32_t fan_max_rpm;
++    int32_t fan_rpm[ASPEED_PWM_NR_CHANNELS];
++
+     uint32_t regs[ASPEED_PWM_NR_REGS];
+ } AspeedPWMState;
+ 
+-- 
+2.53.0.windows.1
+

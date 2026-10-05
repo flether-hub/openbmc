@@ -24,6 +24,8 @@ Commands (type them while it runs; "help" lists them):
   hang on|off            BIOS never signals POST complete (alert LED boot timeout)
   powerfail              power good drops suddenly
   temp <name|all> <C>    names: inlet outlet pcie m2
+  fan <0-5|all> <rpm|auto>  fixed fan speed, or back to following the PWM duty
+  fan max <rpm>          fan speed at 100% PWM (needs the QEMU from build-qemu.sh)
   post <s> | shutdown <s>
   quit
 
@@ -52,6 +54,9 @@ PWRGD = "gpioV4"          # BMC_CPU_PWRGD
 BOOT_OK = "gpioM7"        # BMC_BIOS_BOOT_OK
 PWR_BTN_IN = "gpioM2"     # BMC_POWER_BUTTON_INPUT, active low (front panel)
 UID_BTN = "gpioV0"        # BMC_UID_BUTTON_N, active low
+
+PWM = "/machine/soc/pwm"
+FANS = 6                  # SYS_FAN0..5 on PWM/TACH channels 0..5
 
 TEMPS = {
     "inlet": ("/machine/peripheral/temp-inlet", 25.0),
@@ -316,6 +321,17 @@ def main():
                 for name in names:
                     qmp.set_temp(TEMPS[name][0], float(rest[1]))
                 log("temperature %s = %s C" % (rest[0], rest[1]))
+            elif cmd == "fan" and len(rest) == 2:
+                if rest[0] == "max":
+                    qmp.execute("qom-set", path=PWM, property="fan-max-rpm",
+                                value=int(rest[1]))
+                else:
+                    rpm = -1 if rest[1] == "auto" else int(rest[1])
+                    fans = range(FANS) if rest[0] == "all" else [int(rest[0])]
+                    for fan in fans:
+                        qmp.execute("qom-set", path=PWM, property="fan%d-rpm" % fan,
+                                    value=rpm)
+                log("fan %s = %s" % (rest[0], rest[1]))
             elif cmd == "post" and rest:
                 host.post_s = float(rest[0])
             elif cmd == "shutdown" and rest:
@@ -323,6 +339,7 @@ def main():
             else:
                 print("commands: status | power | power-hold | uid | hang on|off | "
                       "powerfail | temp <inlet|outlet|pcie|m2|all> <C> | "
+                      "fan <0-5|all> <rpm|auto> | fan max <rpm> | "
                       "post <s> | shutdown <s> | quit")
         except (RuntimeError, KeyError, ValueError) as exc:
             log("error: %s" % exc)
