@@ -1,0 +1,140 @@
+From ba3675b847d5e5c73ddc22133931cbae61f3856e Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:45:15 +0800
+Subject: [PATCH 12/12] aspeed: read-only fan speed, PWM duty and POST code
+ properties
+
+For a control panel: fanN-speed (the RPM the fan runs at) and pwmN-duty
+(percent) on /machine/soc/pwm, and post-code on /machine/soc/lpc now
+reads back the last code snoop channel 0 latched.
+---
+ hw/misc/aspeed_lpc.c         | 12 +++++++++-
+ hw/misc/aspeed_pwm.c         | 45 ++++++++++++++++++++++++++++++++----
+ include/hw/misc/aspeed_pwm.h |  1 +
+ 3 files changed, 52 insertions(+), 6 deletions(-)
+
+diff --git a/hw/misc/aspeed_lpc.c b/hw/misc/aspeed_lpc.c
+index 997e049..516d527 100644
+--- a/hw/misc/aspeed_lpc.c
++++ b/hw/misc/aspeed_lpc.c
+@@ -331,6 +331,16 @@ void aspeed_lpc_snoop_write(AspeedLPCState *s, uint16_t port, uint8_t data)
+     aspeed_lpc_snoop_update_irq(s);
+ }
+ 
++/* Reads back the last code snoop channel 0 latched */
++static void aspeed_lpc_get_post_code(Object *obj, Visitor *v,
++                                     const char *name, void *opaque,
++                                     Error **errp)
++{
++    uint8_t code = ASPEED_LPC(obj)->regs[SNPWDR] & 0xff;
++
++    visit_type_uint8(v, name, &code, errp);
++}
++
+ static void aspeed_lpc_set_post_code(Object *obj, Visitor *v,
+                                      const char *name, void *opaque,
+                                      Error **errp)
+@@ -474,7 +484,7 @@ static void aspeed_lpc_realize(DeviceState *dev, Error **errp)
+ static void aspeed_lpc_init(Object *obj)
+ {
+     /* qom-set /machine/soc/lpc post-code <byte>: the host writes port 80h */
+-    object_property_add(obj, "post-code", "uint8", NULL,
++    object_property_add(obj, "post-code", "uint8", aspeed_lpc_get_post_code,
+                         aspeed_lpc_set_post_code, NULL, NULL);
+ 
+     object_property_add(obj, "idr1", "uint32", aspeed_kcs_get_register_property,
+diff --git a/hw/misc/aspeed_pwm.c b/hw/misc/aspeed_pwm.c
+index 23bd0d3..81fdbd0 100644
+--- a/hw/misc/aspeed_pwm.c
++++ b/hw/misc/aspeed_pwm.c
+@@ -83,6 +83,15 @@ static uint32_t aspeed_pwm_hclk(AspeedPWMState *s)
+  * register holds the number of divided HCLK cycles between two falling edges
+  * of the tach input, which is one half revolution.
+  */
++/* Speed of the fan on channel ch */
++static uint64_t aspeed_pwm_fan_speed(AspeedPWMState *s, int ch)
++{
++    if (s->fan_rpm[ch] >= 0) {
++        return s->fan_rpm[ch];
++    }
++    return (uint64_t)s->fan_max_rpm * aspeed_pwm_duty_permille(s, ch) / 1000;
++}
++
+ static uint32_t aspeed_pwm_tach_status(AspeedPWMState *s, int ch)
+ {
+     uint32_t ctrl = s->regs[TACH_CTRL(ch)];
+@@ -91,11 +100,7 @@ static uint32_t aspeed_pwm_tach_status(AspeedPWMState *s, int ch)
+     if (!(ctrl & TACH_CTRL_ENABLE)) {
+         return 0;
+     }
+-    if (s->fan_rpm[ch] >= 0) {
+-        rpm = s->fan_rpm[ch];
+-    } else {
+-        rpm = (uint64_t)s->fan_max_rpm * aspeed_pwm_duty_permille(s, ch) / 1000;
+-    }
++    rpm = aspeed_pwm_fan_speed(s, ch);
+     if (!rpm) {
+         /* no edges: the measurement never completes */
+         return 0;
+@@ -195,6 +200,28 @@ static void aspeed_pwm_get_fan_rpm(Object *obj, Visitor *v, const char *name,
+     visit_type_int32(v, name, opaque, errp);
+ }
+ 
++/* fanN-speed (read only): the speed the fan runs at now, in RPM */
++static void aspeed_pwm_get_fan_speed(Object *obj, Visitor *v,
++                                     const char *name, void *opaque,
++                                     Error **errp)
++{
++    AspeedPWMState *s = ASPEED_PWM(obj);
++    uint32_t rpm = aspeed_pwm_fan_speed(s, *(int *)opaque);
++
++    visit_type_uint32(v, name, &rpm, errp);
++}
++
++/* pwmN-duty (read only): PWM output duty cycle in percent */
++static void aspeed_pwm_get_duty(Object *obj, Visitor *v, const char *name,
++                                void *opaque, Error **errp)
++{
++    AspeedPWMState *s = ASPEED_PWM(obj);
++    uint32_t pct = aspeed_pwm_duty_permille(s, *(int *)opaque)
++                   / 10;
++
++    visit_type_uint32(v, name, &pct, errp);
++}
++
+ static void aspeed_pwm_set_fan_rpm(Object *obj, Visitor *v, const char *name,
+                                    void *opaque, Error **errp)
+ {
+@@ -227,9 +254,17 @@ static void aspeed_pwm_init(Object *obj)
+     for (i = 0; i < ASPEED_PWM_NR_CHANNELS; i++) {
+         g_autofree char *name = g_strdup_printf("fan%d-rpm", i);
+ 
++        g_autofree char *speed = g_strdup_printf("fan%d-speed", i);
++        g_autofree char *duty = g_strdup_printf("pwm%d-duty", i);
++
+         s->fan_rpm[i] = -1;
++        s->fan_index[i] = i;
+         object_property_add(obj, name, "int32", aspeed_pwm_get_fan_rpm,
+                             aspeed_pwm_set_fan_rpm, NULL, &s->fan_rpm[i]);
++        object_property_add(obj, speed, "uint32", aspeed_pwm_get_fan_speed,
++                            NULL, NULL, &s->fan_index[i]);
++        object_property_add(obj, duty, "uint32", aspeed_pwm_get_duty,
++                            NULL, NULL, &s->fan_index[i]);
+     }
+ }
+ 
+diff --git a/include/hw/misc/aspeed_pwm.h b/include/hw/misc/aspeed_pwm.h
+index a48d33b..dfd36a0 100644
+--- a/include/hw/misc/aspeed_pwm.h
++++ b/include/hw/misc/aspeed_pwm.h
+@@ -34,6 +34,7 @@ typedef struct AspeedPWMState {
+     AspeedSCUState *scu;
+     uint32_t fan_max_rpm;
+     int32_t fan_rpm[ASPEED_PWM_NR_CHANNELS];
++    int fan_index[ASPEED_PWM_NR_CHANNELS];     /* property opaques */
+ 
+     uint32_t regs[ASPEED_PWM_NR_REGS];
+ } AspeedPWMState;
+-- 
+2.53.0.windows.1
+

@@ -3,31 +3,24 @@
 # patches in tools/qemu/patches applied, arm-softmmu only, installed under
 # ~/qemu-ceb-gnrd/qemu.  Run it on the x86 Linux build server.
 #
-#   patches/0001  SCU: AST2600 AHB clock (HCLK), as the Linux clock driver computes it
-#   patches/0002  AST2600 PWM/TACH controller: the aspeed-g6-pwm-tach driver reads
-#                 fan speeds that follow the PWM duty (QMP: /machine/soc/pwm
-#                 fan-max-rpm, fan0-rpm .. fan15-rpm)
-#   patches/0003  bmc-host-sim: the host power sequence on the BMC GPIOs inside QEMU
-#                 (run-qemu.sh adds it; host-sim.py becomes an optional console)
-#   patches/0004  ADC: settable, steady input voltages
-#   patches/0005  GPIO: pin levels and reset tolerant outputs survive a BMC reset
-#   patches/0006  crps-psu: CRPS PMBus power supply (hot plug, AC loss)
-#   patches/0007  PECI: a CPU at 0x30 with package, core and DIMM temperatures
-#   patches/0008  bmc-host-sim: CPU on PECI only while the host is on
-#   patches/0009  nct3018y: the NCT3015Y RTC
+#   patches/*.patch  the ceb-gnrd board models (README.md has the list).  They are
+#   the same patches the OpenBMC build applies to its qemu-system-native, made
+#   for QEMU 11.0.2 (the version of the pinned OE-core), so the QEMU that
+#   bitbake builds and this one are the same.  Use this script only when there
+#   is no Yocto build at hand.
 #
 # Re-running it resets the source tree to the tag, re-applies the patches and
 # rebuilds.  Build dependencies (Ubuntu 22.04 or newer):
 #   sudo apt install git build-essential ninja-build pkg-config python3-venv \
 #        libglib2.0-dev libpixman-1-dev libslirp-dev flex bison
 #
-# Environment: QEMU_TAG (default v11.1.2), QEMU_SRC (source tree, default
+# Environment: QEMU_TAG (default v11.0.2), QEMU_SRC (source tree, default
 # ~/qemu-ceb-gnrd/src), PREFIX (install directory, default ~/qemu-ceb-gnrd/qemu),
 # QEMU_GIT (default https://gitlab.com/qemu-project/qemu.git), JOBS.
 
 set -e
 
-QEMU_TAG=${QEMU_TAG:-v11.1.2}
+QEMU_TAG=${QEMU_TAG:-v11.0.2}
 QEMU_GIT=${QEMU_GIT:-https://gitlab.com/qemu-project/qemu.git}
 QEMU_SRC=${QEMU_SRC:-$HOME/qemu-ceb-gnrd/src}
 PREFIX=${PREFIX:-$HOME/qemu-ceb-gnrd/qemu}

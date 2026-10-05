@@ -1,7 +1,7 @@
-From f3a12ab655031cb50c616978ed3827d5378592c4 Mon Sep 17 00:00:00 2001
+From 966ccb272da5739920ea17ab12b3bc34261ab08b Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:25:41 +0800
-Subject: [PATCH 4/9] aspeed/adc: settable input voltages
+Subject: [PATCH 04/12] aspeed/adc: settable input voltages
 
 The ADC data registers count up on every read, so every voltage sensor of
 a BMC ramps through its thresholds and raises alarms.  Add chN-mv
@@ -16,7 +16,7 @@ driver computes a zero offset.  Channels left at -1 keep the old ramp.
  2 files changed, 87 insertions(+), 2 deletions(-)
 
 diff --git a/hw/adc/aspeed_adc.c b/hw/adc/aspeed_adc.c
-index 7065580..093b1bb 100644
+index 3cc75bb..33841c5 100644
 --- a/hw/adc/aspeed_adc.c
 +++ b/hw/adc/aspeed_adc.c
 @@ -10,6 +10,7 @@
@@ -95,9 +95,9 @@ index 7065580..093b1bb 100644
  
      if (breaks_threshold(s, reg)) {
          s->regs[INTERRUPT_CONTROL] |= BIT(reg - DATA_CHANNEL_1_AND_0);
-@@ -304,18 +349,54 @@ static void aspeed_adc_engine_class_init(ObjectClass *klass, const void *data)
-     dc->vmsd = &vmstate_aspeed_adc_engine;
- }
+@@ -310,18 +355,54 @@ static const TypeInfo aspeed_adc_engine_info = {
+     .class_init = aspeed_adc_engine_class_init,
+ };
  
 +static void aspeed_adc_get_mv(Object *obj, Visitor *v, const char *name,
 +                              void *opaque, Error **errp)

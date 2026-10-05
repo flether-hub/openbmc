@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CEB-GNRD 模拟控制面板</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --ink: #1d2330; --muted: #6b7280;
+  --line: #d6d9e0; --wire: #9aa3b2; --on: #22c55e; --off: #cbd2dc;
+  --warn: #f59e0b; --bad: #ef4444; --blue: #3b82f6; --accent: #2563eb;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #11151c; --card: #1a202a; --ink: #e6e9ef; --muted: #9aa3b2;
+          --line: #2c3442; --wire: #5b6576; --off: #3a4352; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+       font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+         background: var(--card); border-bottom: 1px solid var(--line);
+         position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 17px; margin: 0; }
+.badge { padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 13px;
+         background: var(--off); color: var(--ink); }
+.badge.on { background: var(--on); color: #fff; }
+.badge.post, .badge.starting, .badge.shutting-down { background: var(--warn); color: #fff; }
+.badge.lost { background: var(--bad); color: #fff; }
+header .sub { color: var(--muted); font-size: 13px; }
+main { padding: 16px 20px 40px; display: grid; gap: 16px;
+       grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+        padding: 14px 16px; min-width: 0; }
+.card.wide { grid-column: 1 / -1; }
+.card h2 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.card h2 small { color: var(--muted); font-weight: 400; font-size: 12px; }
+button { font: inherit; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+         border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { border-color: var(--bad); color: var(--bad); }
+button.active { background: var(--bad); border-color: var(--bad); color: #fff; }
+button:disabled { opacity: .4; cursor: default; }
+input[type=number] { width: 80px; font: inherit; padding: 3px 6px; border-radius: 6px;
+                     border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+input[type=range] { width: 100%; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); }
+.grid { display: grid; gap: 10px; }
+.tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.tile.fail { border-color: var(--bad); }
+.tile.absent { opacity: .55; }
+.tile .big { font-size: 20px; font-weight: 650; font-family: var(--mono); }
+.bar { height: 6px; background: var(--off); border-radius: 3px; overflow: hidden; margin: 6px 0; }
+.bar > div { height: 100%; background: var(--blue); }
+.led { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+       background: var(--off); vertical-align: middle; }
+.led.g { background: var(--on); box-shadow: 0 0 8px var(--on); }
+.led.r { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+.led.b { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+.led.y { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+svg text { fill: var(--ink); font-family: system-ui, sans-serif; }
+svg .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+svg .wire { stroke: var(--wire); stroke-width: 2; fill: none; }
+svg .wire.hi { stroke: var(--on); }
+svg .wire.act { stroke: var(--warn); stroke-width: 3; }
+svg .lbl { font-size: 12px; }
+svg .pin { font-size: 11px; fill: var(--muted); font-family: var(--mono); }
+svg .title { font-size: 15px; font-weight: 700; }
+svg .click { cursor: pointer; }
+svg .btn { fill: var(--card); stroke: var(--accent); stroke-width: 1.5; }
+svg .click:hover .btn { fill: var(--accent); }
+svg .click:hover .btntxt { fill: #fff; }
+.seg { font-family: var(--mono); font-size: 44px; font-weight: 700; letter-spacing: 4px;
+       background: #0b0f14; color: #ff4d4d; padding: 4px 16px; border-radius: 6px;
+       text-shadow: 0 0 10px #ff4d4d; display: inline-block; min-width: 110px; text-align: center; }
+.hist { font-family: var(--mono); font-size: 12px; color: var(--muted); max-height: 92px;
+        overflow: auto; margin-top: 8px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { padding: 3px 6px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; }
+th { color: var(--muted); font-weight: 500; }
+pre.term { background: #0b0f14; color: #d1e7d1; font-family: var(--mono); font-size: 12.5px;
+           height: 260px; overflow: auto; margin: 0; padding: 8px 10px; border-radius: 6px;
+           white-space: pre-wrap; word-break: break-all; }
+pre.log { font-family: var(--mono); font-size: 12px; height: 200px; overflow: auto;
+          margin: 0; background: var(--bg); padding: 8px; border-radius: 6px; }
+input.termin { width: 100%; font-family: var(--mono); padding: 6px 8px; margin-top: 6px;
+               border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.hidden { display: none !important; }
+#err { color: var(--bad); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CEB-GNRD 模拟控制面板</h1>
+  <span>主机：<span id="hoststate" class="badge">--</span></span>
+  <span class="sub" id="mode"></span>
+  <span id="err"></span>
+</header>
+<main>
+
+<section class="card wide">
+  <h2>BMC 与主机之间的信号 <small>线亮 = 高电平；橙色 = 有效（低有效信号拉低）；点击主机侧按钮操作</small></h2>
+  <svg id="diagram" viewBox="0 0 1000 560" width="100%" role="img" aria-label="BMC 与主机信号图"></svg>
+</section>
+
+<section class="card">
+  <h2>主机控制</h2>
+  <div class="row">
+    <button class="primary" onclick="cmd('power')">前面板电源键（短按）</button>
+    <button onclick="cmd('power-hold')">长按 5 s（强制关机）</button>
+  </div>
+  <div class="row">
+    <button onclick="cmd('uid')">UID 按键</button>
+    <button class="danger" onclick="cmd('powerfail')">主机掉电（PWRGD 突然掉）</button>
+  </div>
+  <div class="row">
+    <button id="hangbtn" onclick="cmd(S.hang ? 'hang off' : 'hang on')">BIOS 卡死</button>
+    <span class="muted">下一次 POST 起生效：BOOT_OK 不拉高，POST 码停在 0x92</span>
+  </div>
+  <div class="row">
+    POST 时间 <input type="number" id="post_s" value="20" min="1"> s
+    关机时间 <input type="number" id="shut_s" value="10" min="1"> s
+    <button onclick="cmd('post ' + val('post_s')); cmd('shutdown ' + val('shut_s'))">设置</button>
+  </div>
+</section>
+
+<section class="card" id="postcard">
+  <h2>80 端口 POST 码 <small>LPC snoop</small></h2>
+  <div class="row"><span class="seg" id="postcode">--</span></div>
+  <div class="row">
+    手动写入 0x<input type="text" id="pc_in" size="4" value="A0" class="mono" style="width:60px">
+    <button onclick="cmd('postcode ' + document.getElementById('pc_in').value)">写 80h</button>
+  </div>
+  <div class="hist" id="posthist"></div>
+</section>
+
+<section class="card" id="fancard">
+  <h2>风扇 <small>转速跟随 PWM 占空比；可模拟故障</small></h2>
+  <div class="tiles" id="fans"></div>
+  <div class="row">100% PWM 时转速 <input type="number" id="fanmax" value="12000" step="500">
+    <button onclick="cmd('fan max ' + val('fanmax'))">设置</button>
+    <button onclick="cmd('fan all auto')">全部恢复正常</button></div>
+</section>
+
+<section class="card" id="psucard">
+  <h2>电源 PSU <small>I2C8 0x58-0x5a，可热插拔、AC 掉电</small></h2>
+  <div class="tiles" id="psus"></div>
+</section>
+
+<section class="card">
+  <h2>温度</h2>
+  <div class="grid" id="temps"></div>
+</section>
+
+<section class="card" id="adccard">
+  <h2>ADC 电压 <small>引脚电压 × 分压比 = 电源轨电压</small></h2>
+  <table><thead><tr><th>#</th><th>名称</th><th>电源轨</th><th>引脚 mV</th><th></th></tr></thead>
+  <tbody id="adc"></tbody></table>
+</section>
+
+<section class="card" id="rtccard">
+  <h2>RTC NCT3015Y <small>I2C10 0x6f</small></h2>
+  <div class="row">电池：<span id="rtcbat" class="led"></span> <span id="rtcbattxt"></span></div>
+  <div class="row">
+    <button onclick="cmd('rtc battery ok')">电池正常</button>
+    <button class="danger" onclick="cmd('rtc battery low')">电池没电</button>
+  </div>
+  <p class="muted">电池没电时驱动拒绝读出 RTC 时间；BMC 重启后 RTC 时间保持。</p>
+</section>
+
+<section class="card wide">
+  <h2>主机串口（SOL） <small>面板扮演主机 COM1：BMC 的 SOL 输入显示在这里，在下框输入的内容由主机发给 BMC</small></h2>
+  <pre class="term" id="term"></pre>
+  <input class="termin" id="termin" placeholder="主机输出：输入文字后回车发送给 BMC（SOL 上可见）">
+</section>
+
+<section class="card wide">
+  <h2>事件日志</h2>
+  <pre class="log" id="log"></pre>
+</section>
+
+</main>
+<script>
+let S = {};
+let termPos = 0;
+
+function val(id) { return document.getElementById(id).value; }
+function esc(t) { return String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function cmd(c) {
+  try {
+    const r = await fetch('/api/cmd', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                       body: JSON.stringify({cmd: c})});
+    const j = await r.json();
+    document.getElementById('err').textContent = j.error ? j.error : '';
+  } catch (e) { document.getElementById('err').textContent = '面板连接断开'; }
+  poll();
+}
+
+/* ---------- signal diagram ---------- */
+const SIGS = [
+  // [name, gpio, pin key, direction (b2h / h2b), active low, note]
+  ['BMC_CPU_POWER_BUTTON', 'GPIOV2', 'gpioV2', 'b2h', true, '电源键输出（低有效）'],
+  ['BMC_CPU_RESET', 'GPIOV3', 'gpioV3', 'b2h', true, '主机复位（低有效）'],
+  ['BMC_BIOS_FLASH_SELECT', 'GPIOM1', 'gpioM1', 'b2h', false, '高 = BMC 占用 BIOS Flash'],
+  ['BMC_FAN_BMC_OVERRIDE_N', 'GPIOI6', 'gpioI6', 'b2h', false, '高 = BMC 接管风扇'],
+  ['BMC_SYS_ALERT_LED', 'GPIOI5', 'gpioI5', 'b2h', false, '告警灯'],
+  ['BMC_UID_LED', 'GPIOV1', 'gpioV1', 'b2h', false, 'UID 灯'],
+  ['BMC_CPU_PWRGD', 'GPIOV4', 'gpioV4', 'h2b', false, '主机电源正常'],
+  ['BMC_BIOS_BOOT_OK', 'GPIOM7', 'gpioM7', 'h2b', false, 'BIOS POST 完成'],
+  ['BMC_POWER_BUTTON_INPUT', 'GPIOM2', 'gpioM2', 'h2b', true, '前面板电源键（低有效）'],
+  ['BMC_UID_BUTTON_N', 'GPIOV0', 'gpioV0', 'h2b', true, 'UID 按键（低有效）'],
+];
+const BUSES = [
+  ['PECI', 'CPU / DIMM 温度', 'peci'],
+  ['eSPI / LPC 80h', 'POST 码', 'post'],
+  ['VUART (COM1)', 'SOL 串口', 'uart'],
+  ['PWM / TACH', '6 个风扇', 'fan'],
+  ['I2C', '温度、PSU、FRU、RTC', 'i2c'],
+];
+
+function buildDiagram() {
+  const svg = document.getElementById('diagram');
+  const BX = 30, BW = 230, HX = 740, HW = 230;
+  const top = 50, step = 34;
+  const nSig = SIGS.length, nBus = BUSES.length;
+  const bottom = top + (nSig + nBus) * step + 20;
+  let h = '';
+  h += `<rect class="box" x="${BX}" y="10" width="${BW}" height="${bottom}" rx="10"/>`;
+  h += `<text class="title" x="${BX + 14}" y="34">AST2600 BMC</text>`;
+  h += `<rect class="box" x="${HX}" y="10" width="${HW}" height="${bottom}" rx="10"/>`;
+  h += `<text class="title" x="${HX + 14}" y="34">主机主板 (GNR-D / CPLD)</text>`;
+  SIGS.forEach((s, i) => {
+    const y = top + i * step + 14;
+    const [name, gpio, key, dir, low, note] = s;
+    h += `<text class="pin" x="${BX + 14}" y="${y + 4}">${gpio}</text>`;
+    h += `<circle id="ledb_${key}" cx="${BX + BW - 16}" cy="${y}" r="7" fill="var(--off)"/>`;
+    h += `<line id="wire_${key}" class="wire" x1="${BX + BW}" y1="${y}" x2="${HX}" y2="${y}"/>`;
+    const ax = dir === 'b2h' ? HX - 4 : BX + BW + 4;
+    const ad = dir === 'b2h' ? -10 : 10;
+    h += `<path class="wire" id="arrow_${key}" d="M${ax + ad} ${y - 5} L${ax} ${y} L${ax + ad} ${y + 5}"/>`;
+    h += `<text class="lbl" x="${(BX + BW + HX) / 2}" y="${y - 5}" text-anchor="middle">${name}</text>`;
+    h += `<text class="pin" x="${(BX + BW + HX) / 2}" y="${y + 13}" text-anchor="middle">${note}</text>`;
+    h += `<circle id="ledh_${key}" cx="${HX + 16}" cy="${y}" r="7" fill="var(--off)"/>`;
+  });
+  // host-side controls next to their wires
+  const btn = (key, label, c) => {
+    const i = SIGS.findIndex(s => s[2] === key), y = top + i * step + 14;
+    return `<g class="click" onclick="cmd('${c}')"><rect class="btn" x="${HX + 32}" y="${y - 11}" width="${HW - 46}" height="22" rx="5"/>` +
+           `<text class="btntxt lbl" x="${HX + 32 + (HW - 46) / 2}" y="${y + 4}" text-anchor="middle">${label}</text></g>`;
+  };
+  h += btn('gpioM2', '按前面板电源键', 'power');
+  h += btn('gpioV0', '按 UID 键', 'uid');
+  const lbl = (key, txt) => {
+    const i = SIGS.findIndex(s => s[2] === key), y = top + i * step + 14;
+    return `<text class="lbl" id="hlbl_${key}" x="${HX + 32}" y="${y + 4}">${txt}</text>`;
+  };
+  h += lbl('gpioV2', '电源键');
+  h += lbl('gpioV3', '复位');
+  h += lbl('gpioM1', 'BIOS Flash');
+  h += lbl('gpioI6', '风扇控制');
+  h += lbl('gpioI5', '告警灯');
+  h += lbl('gpioV1', 'UID 灯');
+  h += lbl('gpioV4', '电源 PWRGD');
+  h += lbl('gpioM7', 'BIOS BOOT_OK');
+  BUSES.forEach((b, j) => {
+    const y = top + (nSig + j) * step + 24;
+    h += `<line class="wire" id="bus_${b[2]}" x1="${BX + BW}" y1="${y}" x2="${HX}" y2="${y}" stroke-dasharray="6 4"/>`;
+    h += `<text class="lbl" x="${(BX + BW + HX) / 2}" y="${y - 5}" text-anchor="middle">${b[0]}</text>`;
+    h += `<text class="pin" id="bustxt_${b[2]}" x="${(BX + BW + HX) / 2}" y="${y + 13}" text-anchor="middle">${b[1]}</text>`;
+    h += `<text class="pin" x="${HX + 14}" y="${y + 4}" id="busval_${b[2]}"></text>`;
+  });
+  svg.setAttribute('viewBox', `0 0 1000 ${bottom + 20}`);
+  svg.innerHTML = h;
+}
+
+function setFill(id, color) { const e = document.getElementById(id); if (e) e.setAttribute('fill', color); }
+function setText(id, t) { const e = document.getElementById(id); if (e) e.textContent = t; }
+
+function drawDiagram() {
+  const pins = S.pins || {};
+  SIGS.forEach(s => {
+    const [name, gpio, key, dir, low] = s;
+    const v = pins[key];
+    const active = low && v === false;   /* a low-active signal asserted */
+    const w = document.getElementById('wire_' + key);
+    if (w) w.setAttribute('class', 'wire' + (active ? ' act' : (v ? ' hi' : '')));
+    let c = v ? 'var(--on)' : 'var(--off)';
+    if (key === 'gpioI5' && v) c = 'var(--bad)';
+    if (key === 'gpioV1' && v) c = 'var(--blue)';
+    if (active && low) c = 'var(--warn)';
+    setFill('ledb_' + key, c);
+    setFill('ledh_' + key, c);
+  });
+  const peci = S.peci || {};
+  setText('busval_peci', peci['cpu-online'] == null ? '' :
+          (peci['cpu-online'] ? `CPU ${(peci['cpu-temp-mc'] / 1000).toFixed(0)}°C` : 'CPU 无响应'));
+  setText('busval_post', S.post == null ? '' : 'POST 0x' + hex(S.post));
+  const fans = (S.fans || []).filter(f => f.rpm != null);
+  setText('busval_fan', fans.length ? fans.map(f => Math.round(f.rpm / 100) / 10 + 'k').join(' ') : '');
+  setText('busval_uart', '');
+}
+
+/* ---------- cards ---------- */
+function hex(n) { return (n >>> 0).toString(16).toUpperCase().padStart(2, '0'); }
+
+/* tiles are only redrawn when their data changes, so a click is never lost */
+const drawn = {};
+function changed(name, data) {
+  const key = JSON.stringify(data);
+  if (drawn[name] === key) return false;
+  drawn[name] = key;
+  return true;
+}
+
+function drawFans() {
+  const fans = S.fans || [];
+  const ok = fans.some(f => f.rpm != null);
+  document.getElementById('fancard').classList.toggle('hidden', !ok);
+  if (!ok || !changed('fans', [fans, S.fan_max])) return;
+  if (S.fan_max != null && document.activeElement.id !== 'fanmax') document.getElementById('fanmax').value = S.fan_max;
+  document.getElementById('fans').innerHTML = fans.map((f, i) => {
+    const failed = f.fixed === 0;
+    const fixed = f.fixed != null && f.fixed >= 0;
+    return `<div class="tile ${failed ? 'fail' : ''}">
+      <div>SYS_FAN${i} ${failed ? '<span class="led r"></span> 故障' : ''}</div>
+      <div class="big">${f.rpm} <small class="muted">RPM</small></div>
+      <div class="bar"><div style="width:${f.duty || 0}%"></div></div>
+      <div class="muted">PWM ${f.duty}%${fixed && !failed ? '，固定 ' + f.fixed : ''}</div>
+      <div class="row">
+        ${failed ? `<button onclick="cmd('fan ${i} auto')">修好</button>`
+                 : `<button class="danger" onclick="cmd('fan ${i} 0')">坏掉</button>`}
+        <button onclick="cmd('fan ${i} 2000')">低速 2000</button>
+      </div></div>`;
+  }).join('');
+}
+
+function drawPsus() {
+  const psus = S.psus || [];
+  if (document.activeElement.type === 'range' || !changed('psus', psus)) return;
+  document.getElementById('psus').innerHTML = psus.map((p, i) => {
+    const addr = '0x' + (0x58 + i).toString(16);
+    if (!p.model) return `<div class="tile absent"><div>PSU${i} (${addr})</div><div class="muted">未配置</div></div>`;
+    if (p.model === 'basic') return `<div class="tile"><div>PSU${i} (${addr})</div><div class="muted">原版 QEMU：只有电压读数</div></div>`;
+    const ac = !p['ac-lost'];
+    const pin = p['pout-mw'] * 100 / Math.max(p.efficiency, 1);
+    return `<div class="tile ${p.present ? (ac ? '' : 'fail') : 'absent'}">
+      <div>PSU${i} (${addr}) <span class="led ${p.present ? (ac ? 'g' : 'r') : ''}"></span>
+        ${p.present ? (ac ? '正常' : 'AC 掉电') : '未插'}</div>
+      ${p.present ? `<div class="big">${ac ? (p['pout-mw'] / 1000).toFixed(0) : 0} <small class="muted">W 输出</small></div>
+      <div class="muted">输入 ${ac ? (p['vin-mv'] / 1000).toFixed(0) : 0} V / ${ac ? (pin / 1000).toFixed(0) : 0} W，输出 ${ac ? (p['vout-mv'] / 1000).toFixed(2) : 0} V，${(p['temp2-mc'] / 1000).toFixed(0)}°C</div>
+      <div class="row">负载 <input type="range" min="0" max="1600" step="10" value="${p['pout-mw'] / 1000}"
+           onchange="cmd('psu ${i} load ' + this.value)"></div>` : ''}
+      <div class="row">
+        ${p.present ? `<button onclick="cmd('psu ${i} out')">拔出</button>` : `<button class="primary" onclick="cmd('psu ${i} in')">插入</button>`}
+        ${p.present ? (ac ? `<button class="danger" onclick="cmd('psu ${i} ac off')">拔 AC</button>`
+                          : `<button onclick="cmd('psu ${i} ac on')">接 AC</button>`) : ''}
+        ${p.present ? `<button onclick="cmd('psu ${i} temp 85')">过热 85°C</button>` : ''}
+      </div></div>`;
+  }).join('');
+}
+
+const TEMP_NAMES = {inlet: '进风 (0x48)', outlet: '出风 (0x49)', pcie: 'PCIe (0x4a)', m2: 'M.2 (0x4b)'};
+function tempRow(label, value, c) {
+  return `<div><div class="row" style="justify-content:space-between"><span>${label}</span>
+    <span class="mono">${value.toFixed(1)} °C</span></div>
+    <input type="range" min="0" max="110" step="1" value="${value}" onchange="cmd('${c} ' + this.value)"></div>`;
+}
+let tempsDrawn = '';
+function drawTemps() {
+  const t = S.temps || {}, peci = S.peci || {};
+  const key = JSON.stringify([t, peci['cpu-temp-mc'], peci['dimm-temp-mc']]);
+  if (key === tempsDrawn || document.activeElement.type === 'range') return;
+  tempsDrawn = key;
+  let h = Object.keys(TEMP_NAMES).map(k => tempRow(TEMP_NAMES[k], t[k] || 0, 'temp ' + k)).join('');
+  if (peci['cpu-temp-mc'] != null) {
+    h += tempRow('CPU 封装（PECI）', peci['cpu-temp-mc'] / 1000, 'cpu');
+    h += tempRow('DIMM（PECI）', peci['dimm-temp-mc'] / 1000, 'dimm');
+  }
+  document.getElementById('temps').innerHTML = h;
+}
+
+let adcDrawn = '';
+function drawAdc() {
+  const adc = S.adc || [];
+  const ok = adc.some(a => a.mv != null);
+  document.getElementById('adccard').classList.toggle('hidden', !ok);
+  if (!ok) return;
+  const key = JSON.stringify(adc);
+  if (key === adcDrawn || (document.activeElement.id || '').startsWith('adc')) return;
+  adcDrawn = key;
+  document.getElementById('adc').innerHTML = adc.map((a, i) => {
+    const rail = a.mv < 0 ? '跳变' : (Math.min(a.mv, 2500) * a.scale / 1000).toFixed(2) + ' V';
+    return `<tr><td>${i}</td><td class="mono">${a.name}</td><td class="mono">${rail}${a.mv > 2500 ? ' ⚠ 超出 2.5V 参考' : ''}</td>
+      <td><input type="number" id="adc${i}" value="${a.mv}"></td>
+      <td><button onclick="cmd('adc ${i} ' + val('adc${i}'))">设置</button></td></tr>`;
+  }).join('');
+}
+
+function drawMisc() {
+  const st = S.host || '--';
+  const b = document.getElementById('hoststate');
+  const names = {off: '关机', starting: '上电中', post: 'POST 中', on: '运行', 'shutting-down': '关机中'};
+  b.textContent = names[st] || st;
+  b.className = 'badge ' + st;
+  document.getElementById('mode').textContent = S.builtin ? '主机时序在 QEMU 内运行（bmc-host-sim）' :
+      '原版 QEMU：主机时序由本程序扮演';
+  const hb = document.getElementById('hangbtn');
+  hb.classList.toggle('active', !!S.hang);
+  hb.textContent = S.hang ? 'BIOS 卡死：开（点击关闭）' : 'BIOS 卡死：关';
+  document.getElementById('postcard').classList.toggle('hidden', S.post == null);
+  setText('postcode', S.post == null ? '--' : hex(S.post));
+  document.getElementById('posthist').innerHTML =
+      (S.posts || []).slice().reverse().map(p => `${p[0]}  0x${hex(p[1])}`).join('<br>');
+  const rb = S.rtc_battery;
+  document.getElementById('rtccard').classList.toggle('hidden', rb == null);
+  document.getElementById('rtcbat').className = 'led ' + (rb ? 'g' : 'r');
+  setText('rtcbattxt', rb ? '正常' : '没电');
+  const log = document.getElementById('log');
+  const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.textContent = (S.log || []).join('\n');
+  if (atEnd) log.scrollTop = log.scrollHeight;
+}
+
+async function poll() {
+  try {
+    S = await (await fetch('/api/state')).json();
+    drawDiagram(); drawFans(); drawPsus(); drawTemps(); drawAdc(); drawMisc();
+    if (document.getElementById('err').textContent === '面板连接断开')
+      document.getElementById('err').textContent = '';
+  } catch (e) {
+    document.getElementById('err').textContent = '面板连接断开';
+    const b = document.getElementById('hoststate'); b.className = 'badge lost'; b.textContent = 'QEMU 已停止?';
+  }
+}
+
+async function pollConsole() {
+  try {
+    const j = await (await fetch('/api/console?pos=' + termPos)).json();
+    if (j.text) {
+      const t = document.getElementById('term');
+      const atEnd = t.scrollTop + t.clientHeight >= t.scrollHeight - 4;
+      t.textContent = (t.textContent + j.text.replace(/\r/g, '')).slice(-60000);
+      if (atEnd) t.scrollTop = t.scrollHeight;
+    }
+    termPos = j.pos;
+  } catch (e) {}
+}
+
+document.getElementById('termin').addEventListener('keydown', async e => {
+  if (e.key !== 'Enter') return;
+  const text = e.target.value + '\n';
+  e.target.value = '';
+  await fetch('/api/console', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                               body: JSON.stringify({text})});
+});
+
+buildDiagram();
+poll();
+setInterval(poll, 500);
+setInterval(pollConsole, 300);
+</script>
+</body>
+</html>

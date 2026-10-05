@@ -1,7 +1,7 @@
-From f3d71f9e7edd5d6ce5694ae1fdf7bdd5303caccf Mon Sep 17 00:00:00 2001
+From fed0a3b1fedfbb79132c6474c70eeba659f10c91 Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:15:10 +0800
-Subject: [PATCH 2/9] aspeed/pwm: model the fan tachometers and wire the
+Subject: [PATCH 02/12] aspeed/pwm: model the fan tachometers and wire the
  controller on AST2600
 
 The AST2600 PWM/TACH controller at 0x1e610000 was not instantiated, so
@@ -17,13 +17,13 @@ the SCU, the tach clock divider and two pulses per revolution, matching
 the Linux driver.  With fan-max-rpm 0 and no fixed speeds (the default,
 used by the AST1700) the device behaves as before.
 ---
- hw/arm/aspeed_ast2600.c      |  19 +++++
- hw/misc/aspeed_pwm.c         | 160 ++++++++++++++++++++++++++++++++++-
+ hw/arm/aspeed_ast2600.c      |  19 ++++
+ hw/misc/aspeed_pwm.c         | 186 ++++++++++++++++++++++++++++++++---
  include/hw/misc/aspeed_pwm.h |  11 +++
- 3 files changed, 189 insertions(+), 1 deletion(-)
+ 3 files changed, 201 insertions(+), 15 deletions(-)
 
 diff --git a/hw/arm/aspeed_ast2600.c b/hw/arm/aspeed_ast2600.c
-index d1f18e4..a5fa80a 100644
+index efb1d8c..0486316 100644
 --- a/hw/arm/aspeed_ast2600.c
 +++ b/hw/arm/aspeed_ast2600.c
 @@ -271,6 +271,14 @@ static void aspeed_soc_ast2600_init(Object *obj)
@@ -60,7 +60,7 @@ index d1f18e4..a5fa80a 100644
      for (i = 0; i < ASPEED_FSI_NUM; i++) {
          if (!sysbus_realize(SYS_BUS_DEVICE(&s->fsi[i]), errp)) {
 diff --git a/hw/misc/aspeed_pwm.c b/hw/misc/aspeed_pwm.c
-index dfb93ae..23bd0d3 100644
+index ee3d588..23bd0d3 100644
 --- a/hw/misc/aspeed_pwm.c
 +++ b/hw/misc/aspeed_pwm.c
 @@ -7,14 +7,115 @@
@@ -189,6 +189,18 @@ index dfb93ae..23bd0d3 100644
      } else {
          val = s->regs[addr];
      }
+@@ -65,9 +169,9 @@ static const MemoryRegionOps aspeed_pwm_ops = {
+     },
+ };
+ 
+-static void aspeed_pwm_reset(DeviceState *dev)
++static void aspeed_pwm_reset_hold(Object *obj, ResetType type)
+ {
+-    struct AspeedPWMState *s = ASPEED_PWM(dev);
++    AspeedPWMState *s = ASPEED_PWM(obj);
+ 
+     memset(s->regs, 0, sizeof(s->regs));
+ }
 @@ -85,12 +189,64 @@ static void aspeed_pwm_realize(DeviceState *dev, Error **errp)
      sysbus_init_mmio(sbd, &s->iomem);
  }
@@ -255,22 +267,42 @@ index dfb93ae..23bd0d3 100644
          VMSTATE_END_OF_LIST(),
      }
  };
-@@ -104,6 +260,7 @@ static void aspeed_pwm_class_init(ObjectClass *klass, const void *data)
-     rc->phases.hold = aspeed_pwm_reset_hold;
+@@ -98,23 +254,23 @@ static const VMStateDescription vmstate_aspeed_pwm = {
+ static void aspeed_pwm_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
+ 
+     dc->realize = aspeed_pwm_realize;
+-    device_class_set_legacy_reset(dc, aspeed_pwm_reset);
++    rc->phases.hold = aspeed_pwm_reset_hold;
      dc->desc = "Aspeed PWM Controller";
      dc->vmsd = &vmstate_aspeed_pwm;
 +    device_class_set_props(dc, aspeed_pwm_properties);
  }
  
- static const TypeInfo aspeed_pwm_types[] = {
-@@ -111,6 +268,7 @@ static const TypeInfo aspeed_pwm_types[] = {
-         .name = TYPE_ASPEED_PWM,
-         .parent = TYPE_SYS_BUS_DEVICE,
-         .instance_size = sizeof(AspeedPWMState),
+-static const TypeInfo aspeed_pwm_info = {
+-    .name = TYPE_ASPEED_PWM,
+-    .parent = TYPE_SYS_BUS_DEVICE,
+-    .instance_size = sizeof(AspeedPWMState),
+-    .class_init = aspeed_pwm_class_init,
++static const TypeInfo aspeed_pwm_types[] = {
++    {
++        .name = TYPE_ASPEED_PWM,
++        .parent = TYPE_SYS_BUS_DEVICE,
++        .instance_size = sizeof(AspeedPWMState),
 +        .instance_init = aspeed_pwm_init,
-         .class_init = aspeed_pwm_class_init,
-     }
++        .class_init = aspeed_pwm_class_init,
++    }
  };
+ 
+-static void aspeed_pwm_register_types(void)
+-{
+-    type_register_static(&aspeed_pwm_info);
+-}
+-
+-type_init(aspeed_pwm_register_types);
++DEFINE_TYPES(aspeed_pwm_types)
 diff --git a/include/hw/misc/aspeed_pwm.h b/include/hw/misc/aspeed_pwm.h
 index f4104ad..a48d33b 100644
 --- a/include/hw/misc/aspeed_pwm.h

@@ -1,0 +1,221 @@
+From d5cb6f03cf8c1ca958e1d8b77f167133245ea536 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:43:42 +0800
+Subject: [PATCH 10/12] aspeed: AST2600 VUART and LPC snoop (port 80h POST
+ codes)
+
+VUART: a 16550 at 0x1e787000 (GIC 147) for the aspeed-vuart driver.  Its
+other side, the host's COM port, is the chardev with id "vuart", so SOL
+works on ttyVUART0 against whatever plays the host on that chardev.  The
+VUART control registers above the 16550 read as zero.
+
+LPC snoop: HICR5/HICR6/SNPWADR/SNPWDR as the aspeed-lpc-snoop driver
+uses them, on their own GIC line (144).  aspeed_lpc_snoop_write() is a
+host write to an I/O port, and the write-only post-code property writes
+port 80h, so POST codes can come from a host model or from QMP.
+---
+ hw/arm/aspeed_ast2600.c      | 26 +++++++++++++++-
+ hw/misc/aspeed_lpc.c         | 60 ++++++++++++++++++++++++++++++++++++
+ include/hw/arm/aspeed_soc.h  |  1 +
+ include/hw/misc/aspeed_lpc.h |  4 +++
+ 4 files changed, 90 insertions(+), 1 deletion(-)
+
+diff --git a/hw/arm/aspeed_ast2600.c b/hw/arm/aspeed_ast2600.c
+index 0486316..bd23dc6 100644
+--- a/hw/arm/aspeed_ast2600.c
++++ b/hw/arm/aspeed_ast2600.c
+@@ -14,6 +14,7 @@
+ #include "qemu/module.h"
+ #include "qemu/error-report.h"
+ #include "hw/i2c/aspeed_i2c.h"
++#include "chardev/char.h"
+ #include "net/net.h"
+ #include "system/system.h"
+ #include "target/arm/cpu-qom.h"
+@@ -104,7 +105,7 @@ static const int aspeed_soc_ast2600_irqmap[] = {
+     [ASPEED_DEV_UART11]    = 62,
+     [ASPEED_DEV_UART12]    = 63,
+     [ASPEED_DEV_UART13]    = 64,
+-    [ASPEED_DEV_VUART]     = 8,
++    [ASPEED_DEV_VUART]     = 147,
+     [ASPEED_DEV_FMC]       = 39,
+     [ASPEED_DEV_SDMC]      = 0,
+     [ASPEED_DEV_SCU]       = 12,
+@@ -264,6 +265,9 @@ static void aspeed_soc_ast2600_init(Object *obj)
+ 
+     object_initialize_child(obj, "lpc", &s->lpc, TYPE_ASPEED_LPC);
+ 
++    /* Virtual UART: the host's COM port, on the chardev with id "vuart" */
++    object_initialize_child(obj, "vuart", &s->vuart, TYPE_SERIAL_MM);
++
+     snprintf(typename, sizeof(typename), "aspeed.hace-%s", socname);
+     object_initialize_child(obj, "hace", &s->hace, typename);
+ 
+@@ -679,6 +683,26 @@ static void aspeed_soc_ast2600_realize(DeviceState *dev, Error **errp)
+     aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(&s->lpc), 0,
+                     sc->memmap[ASPEED_DEV_LPC]);
+ 
++    /* LPC snoop (port 80 POST codes) has its own GIC line on the AST2600 */
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->lpc), 1 + ASPEED_LPC_NR_SUBDEVS,
++                       qdev_get_gpio_in(DEVICE(&a->a7mpcore), 144));
++
++    /*
++     * VUART: a 16550 for the BMC whose other side is the host's serial port
++     * (SOL).  The control registers above the 16550 ones (0x20-0x3f) read
++     * as zero.  Its line is the chardev with id "vuart", if there is one.
++     */
++    if (qemu_chr_find("vuart")) {
++        qdev_prop_set_chr(DEVICE(&s->vuart), "chardev",
++                          qemu_chr_find("vuart"));
++    }
++    if (!aspeed_soc_uart_realize(s->memory, &s->vuart,
++                                 sc->memmap[ASPEED_DEV_VUART], errp)) {
++        return;
++    }
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->vuart), 0,
++                       aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_VUART));
++
+     /* Connect the LPC IRQ to the GIC. It is otherwise unused. */
+     sysbus_connect_irq(SYS_BUS_DEVICE(&s->lpc), 0,
+                        aspeed_soc_ast2600_get_irq(s, ASPEED_DEV_LPC));
+diff --git a/hw/misc/aspeed_lpc.c b/hw/misc/aspeed_lpc.c
+index 68f0f63..997e049 100644
+--- a/hw/misc/aspeed_lpc.c
++++ b/hw/misc/aspeed_lpc.c
+@@ -44,9 +44,17 @@
+ #define STR2                 TO_REG(0x40)
+ #define STR3                 TO_REG(0x44)
+ #define HICR5                TO_REG(0x80)
++#define   HICR5_EN_SNP0W     BIT(0)
++#define   HICR5_ENINT_SNP0W  BIT(1)
++#define   HICR5_EN_SNP1W     BIT(2)
++#define   HICR5_ENINT_SNP1W  BIT(3)
+ #define HICR6                TO_REG(0x84)
++#define   HICR6_STR_SNP0W    BIT(0)
++#define   HICR6_STR_SNP1W    BIT(1)
+ #define HICR7                TO_REG(0x88)
+ #define HICR8                TO_REG(0x8C)
++#define SNPWADR              TO_REG(0x90)
++#define SNPWDR               TO_REG(0x94)
+ #define HICRB                TO_REG(0x100)
+ #define   HICRB_IBFIE4       BIT(1)
+ #define   HICRB_LPC4E        BIT(0)
+@@ -295,6 +303,45 @@ static void aspeed_kcs_set_register_property(Object *obj,
+     }
+ }
+ 
++static void aspeed_lpc_snoop_update_irq(AspeedLPCState *s)
++{
++    uint32_t sts = s->regs[HICR6], ctl = s->regs[HICR5];
++
++    qemu_set_irq(s->snoop_irq,
++                 ((sts & HICR6_STR_SNP0W) && (ctl & HICR5_ENINT_SNP0W)) ||
++                 ((sts & HICR6_STR_SNP1W) && (ctl & HICR5_ENINT_SNP1W)));
++}
++
++/*
++ * Snoop channels 0 and 1 latch a host write to the I/O port in their half
++ * of SNPWADR into SNPWDR and set their status bit in HICR6.
++ */
++void aspeed_lpc_snoop_write(AspeedLPCState *s, uint16_t port, uint8_t data)
++{
++    if ((s->regs[HICR5] & HICR5_EN_SNP0W) &&
++        extract32(s->regs[SNPWADR], 0, 16) == port) {
++        s->regs[SNPWDR] = deposit32(s->regs[SNPWDR], 0, 8, data);
++        s->regs[HICR6] |= HICR6_STR_SNP0W;
++    }
++    if ((s->regs[HICR5] & HICR5_EN_SNP1W) &&
++        extract32(s->regs[SNPWADR], 16, 16) == port) {
++        s->regs[SNPWDR] = deposit32(s->regs[SNPWDR], 8, 8, data);
++        s->regs[HICR6] |= HICR6_STR_SNP1W;
++    }
++    aspeed_lpc_snoop_update_irq(s);
++}
++
++static void aspeed_lpc_set_post_code(Object *obj, Visitor *v,
++                                     const char *name, void *opaque,
++                                     Error **errp)
++{
++    uint8_t code;
++
++    if (visit_type_uint8(v, name, &code, errp)) {
++        aspeed_lpc_snoop_write(ASPEED_LPC(obj), 0x80, code);
++    }
++}
++
+ static void aspeed_lpc_set_irq(void *opaque, int irq, int level)
+ {
+     AspeedLPCState *s = (AspeedLPCState *)opaque;
+@@ -367,11 +414,19 @@ static void aspeed_lpc_write(void *opaque, hwaddr offset, uint64_t data,
+     case ODR4:
+         s->regs[aspeed_kcs_get_channel_by_register(reg)->str] |= STR_OBF;
+         break;
++    case HICR6:
++        /* snoop status: write 1 to clear */
++        s->regs[reg] &= ~data;
++        aspeed_lpc_snoop_update_irq(s);
++        return;
+     default:
+         break;
+     }
+ 
+     s->regs[reg] = data;
++    if (reg == HICR5) {
++        aspeed_lpc_snoop_update_irq(s);
++    }
+ }
+ 
+ static const MemoryRegionOps aspeed_lpc_ops = {
+@@ -406,6 +461,7 @@ static void aspeed_lpc_realize(DeviceState *dev, Error **errp)
+     sysbus_init_irq(sbd, &s->subdevice_irqs[aspeed_lpc_kcs_3]);
+     sysbus_init_irq(sbd, &s->subdevice_irqs[aspeed_lpc_kcs_4]);
+     sysbus_init_irq(sbd, &s->subdevice_irqs[aspeed_lpc_ibt]);
++    sysbus_init_irq(sbd, &s->snoop_irq);
+ 
+     memory_region_init_io(&s->iomem, OBJECT(s), &aspeed_lpc_ops, s,
+             TYPE_ASPEED_LPC, 0x1000);
+@@ -417,6 +473,10 @@ static void aspeed_lpc_realize(DeviceState *dev, Error **errp)
+ 
+ static void aspeed_lpc_init(Object *obj)
+ {
++    /* qom-set /machine/soc/lpc post-code <byte>: the host writes port 80h */
++    object_property_add(obj, "post-code", "uint8", NULL,
++                        aspeed_lpc_set_post_code, NULL, NULL);
++
+     object_property_add(obj, "idr1", "uint32", aspeed_kcs_get_register_property,
+                         aspeed_kcs_set_register_property, NULL, NULL);
+     object_property_add(obj, "odr1", "uint32", aspeed_kcs_get_register_property,
+diff --git a/include/hw/arm/aspeed_soc.h b/include/hw/arm/aspeed_soc.h
+index d7b3647..ce3e9ed 100644
+--- a/include/hw/arm/aspeed_soc.h
++++ b/include/hw/arm/aspeed_soc.h
+@@ -105,6 +105,7 @@ struct AspeedSoCState {
+     AspeedPCIEPhyState pcie_phy[ASPEED_PCIE_NUM];
+     AspeedPECIState peci;
+     SerialMM uart[ASPEED_UARTS_NUM];
++    SerialMM vuart;
+     Clock *sysclk;
+     UnimplementedDeviceState iomem;
+     UnimplementedDeviceState iomem0;
+diff --git a/include/hw/misc/aspeed_lpc.h b/include/hw/misc/aspeed_lpc.h
+index 64c1039..1a55692 100644
+--- a/include/hw/misc/aspeed_lpc.h
++++ b/include/hw/misc/aspeed_lpc.h
+@@ -36,10 +36,14 @@ typedef struct AspeedLPCState {
+     qemu_irq irq;
+ 
+     qemu_irq subdevice_irqs[ASPEED_LPC_NR_SUBDEVS];
++    qemu_irq snoop_irq;
+     uint32_t subdevice_irqs_pending;
+ 
+     uint32_t regs[ASPEED_LPC_NR_REGS];
+     uint32_t hicr7;
+ } AspeedLPCState;
+ 
++/* A host write to an I/O port, as the snoop channels see it (port 80h) */
++void aspeed_lpc_snoop_write(AspeedLPCState *s, uint16_t port, uint8_t data);
++
+ #endif /* ASPEED_LPC_H */
+-- 
+2.53.0.windows.1
+

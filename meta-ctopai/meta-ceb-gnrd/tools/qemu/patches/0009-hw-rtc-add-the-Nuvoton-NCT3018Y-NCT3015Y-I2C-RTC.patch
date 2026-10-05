@@ -1,7 +1,7 @@
-From 68d92bb3a2345d577132d55527d57404a9ec5b64 Mon Sep 17 00:00:00 2001
+From 734f4ae8124de672c61874dcd4d40845e52641ac Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:35:12 +0800
-Subject: [PATCH 9/9] hw/rtc: add the Nuvoton NCT3018Y/NCT3015Y I2C RTC
+Subject: [PATCH 09/12] hw/rtc: add the Nuvoton NCT3018Y/NCT3015Y I2C RTC
 
 BCD time and date, alarm, control, status and clock output registers as
 the Linux rtc-nct3018y driver uses them.  The clock runs from the host
@@ -18,10 +18,10 @@ battery in the status register, which makes the driver reject the time.
  create mode 100644 hw/rtc/nct3018y.c
 
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 6f5b2ad..11713a4 100644
+index 4e50fb1..8ad4380 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
-@@ -535,6 +535,7 @@ config ASPEED_SOC
+@@ -532,6 +532,7 @@ config ASPEED_SOC
      depends on TCG && ARM
      imply PCI_DEVICES
      select DS1338

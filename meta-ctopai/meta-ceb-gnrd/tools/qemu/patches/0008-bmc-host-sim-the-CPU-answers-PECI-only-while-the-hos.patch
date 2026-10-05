@@ -1,8 +1,8 @@
-From 10cc78afd38199a74906a2bd0d6db8948761687c Mon Sep 17 00:00:00 2001
+From 42f5203a5eb0e64d8abb162cac0a3b57f10abf21 Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:33:36 +0800
-Subject: [PATCH 8/9] bmc-host-sim: the CPU answers PECI only while the host is
- on
+Subject: [PATCH 08/12] bmc-host-sim: the CPU answers PECI only while the host
+ is on
 
 With the new peci link set, the simulated host takes the CPU off the
 PECI bus while it is off or starting, and puts it back once its power is

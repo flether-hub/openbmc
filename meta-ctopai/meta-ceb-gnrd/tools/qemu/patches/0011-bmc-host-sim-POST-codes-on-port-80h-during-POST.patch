@@ -1,0 +1,127 @@
+From 1bc0a5c29b77586e353c723785b3ec418f1bbdea Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:44:18 +0800
+Subject: [PATCH 11/12] bmc-host-sim: POST codes on port 80h during POST
+
+With the new lpc link set, the simulated BIOS writes a series of POST
+codes to port 80h over the POST time, through the LPC snoop, ending with
+0xAD when POST completes; a hanging BIOS stops at 0x92.
+---
+ hw/misc/bmc_host_sim.c | 48 ++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/hw/misc/bmc_host_sim.c b/hw/misc/bmc_host_sim.c
+index 1b43bac..764cc6a 100644
+--- a/hw/misc/bmc_host_sim.c
++++ b/hw/misc/bmc_host_sim.c
+@@ -22,10 +22,12 @@
+  *   post-ms, shutdown-ms     timings
+  * and qom-get "state": off, starting, post, on or shutting-down.
+  *
+- * With peci= set, the CPU answers PECI only while its power is good.
++ * With peci= set, the CPU answers PECI only while its power is good; with
++ * lpc= set, the BIOS writes POST codes to port 80h during POST.
+  *
+  * Example (the defaults are the CEB-GNRD wiring):
+- *   -device bmc-host-sim,id=host,gpio=/machine/soc/gpio,peci=/machine/soc/peci
++ *   -device bmc-host-sim,id=host,gpio=/machine/soc/gpio,peci=/machine/soc/peci,
++ *           lpc=/machine/soc/lpc
+  *
+  * SPDX-License-Identifier: GPL-2.0-or-later
+  */
+@@ -39,6 +41,7 @@
+ #include "hw/core/qdev-properties.h"
+ #include "hw/gpio/aspeed_gpio.h"
+ #include "hw/misc/aspeed_peci.h"
++#include "hw/misc/aspeed_lpc.h"
+ #include "trace.h"
+ 
+ #define TYPE_BMC_HOST_SIM "bmc-host-sim"
+@@ -74,6 +77,7 @@ struct BMCHostSimState {
+     /* properties */
+     AspeedGPIOState *gpio;
+     AspeedPECIState *peci;
++    AspeedLPCState *lpc;
+     char *power_out_name;
+     char *reset_out_name;
+     char *pwrgd_name;
+@@ -101,6 +105,10 @@ struct BMCHostSimState {
+     int64_t power_button_release;   /* -1: not pressed */
+     uint32_t power_button_ms;
+     int64_t uid_button_release;
++
++    /* POST codes written to port 80h */
++    int64_t post_start;
++    unsigned int post_code_idx;
+ };
+ 
+ static int64_t host_now(void)
+@@ -142,8 +150,37 @@ static void host_shutdown(BMCHostSimState *s, const char *why)
+     }
+ }
+ 
++/*
++ * POST codes the BIOS writes to port 80h, spread over the POST time, the
++ * last one when POST completes.  A hanging BIOS stops at PCI enumeration.
++ */
++static const uint8_t host_post_codes[] = {
++    0x01, 0x02, 0x03, 0x19, 0x31, 0x4f, 0x60, 0x61,
++    0x9a, 0x92, 0x94, 0xa0, 0xa2, 0xb4, 0xad,
++};
++#define HOST_POST_HANG_IDX  9       /* 0x92: PCI bus enumeration */
++
++static void host_post_codes_tick(BMCHostSimState *s, int64_t now)
++{
++    unsigned int n = ARRAY_SIZE(host_post_codes);
++    unsigned int due;
++
++    if (!s->lpc || s->state != HOST_POST) {
++        return;
++    }
++    due = s->post_ms ? (now - s->post_start) * (n - 1) / s->post_ms + 1 : n;
++    due = MIN(due, s->hang ? HOST_POST_HANG_IDX + 1 : n - 1);
++    /* one code per tick, so the BMC driver sees each of them */
++    if (s->post_code_idx < due) {
++        aspeed_lpc_snoop_write(s->lpc, 0x80,
++                               host_post_codes[s->post_code_idx++]);
++    }
++}
++
+ static void host_start_post(BMCHostSimState *s, const char *why)
+ {
++    s->post_start = host_now();
++    s->post_code_idx = 0;
+     s->boot_ok = false;
+     host_go(s, HOST_POST, s->hang ? -1 : s->post_ms, why);
+ }
+@@ -241,6 +278,10 @@ static void host_tick(void *opaque)
+                                        : "PWRGD high");
+             break;
+         case HOST_POST:
++            if (s->lpc) {
++                aspeed_lpc_snoop_write(s->lpc, 0x80,
++                                       host_post_codes[ARRAY_SIZE(host_post_codes) - 1]);
++            }
+             s->boot_ok = true;
+             host_go(s, HOST_ON, -1, "POST complete, BOOT_OK high");
+             break;
+@@ -252,6 +293,7 @@ static void host_tick(void *opaque)
+         }
+     }
+ 
++    host_post_codes_tick(s, now);
+     host_drive(s, s->pwrgd_name, s->pwrgd);
+     host_drive(s, s->boot_ok_name, s->boot_ok);
+     host_drive(s, s->power_button_name, s->power_button_release < 0);
+@@ -406,6 +448,8 @@ static const Property host_properties[] = {
+                      AspeedGPIOState *),
+     DEFINE_PROP_LINK("peci", BMCHostSimState, peci, TYPE_ASPEED_PECI,
+                      AspeedPECIState *),
++    DEFINE_PROP_LINK("lpc", BMCHostSimState, lpc, TYPE_ASPEED_LPC,
++                     AspeedLPCState *),
+     DEFINE_PROP_STRING("power-out", BMCHostSimState, power_out_name),
+     DEFINE_PROP_STRING("reset-out", BMCHostSimState, reset_out_name),
+     DEFINE_PROP_STRING("pwrgd", BMCHostSimState, pwrgd_name),
+-- 
+2.53.0.windows.1
+

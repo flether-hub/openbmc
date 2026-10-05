@@ -1,7 +1,7 @@
-From 0da10f8f55acf569801ef4934555a316ffc7b31d Mon Sep 17 00:00:00 2001
+From e9709c0a5af951b4b8eae1b8c72f70a905810f32 Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:28:52 +0800
-Subject: [PATCH 6/9] hw/sensor: add crps-psu, a generic CRPS PMBus power
+Subject: [PATCH 06/12] hw/sensor: add crps-psu, a generic CRPS PMBus power
  supply
 
 A single page supply in the PMBus linear format that the generic Linux

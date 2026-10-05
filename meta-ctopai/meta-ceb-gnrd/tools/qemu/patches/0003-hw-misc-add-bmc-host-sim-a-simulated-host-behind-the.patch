@@ -1,7 +1,7 @@
-From 328da0abd903400f74d0d7d9498529cca294a0a3 Mon Sep 17 00:00:00 2001
+From 8044f237155833b7a654600d01fd9cc9334a5011 Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:20:35 +0800
-Subject: [PATCH 3/9] hw/misc: add bmc-host-sim, a simulated host behind the
+Subject: [PATCH 03/12] hw/misc: add bmc-host-sim, a simulated host behind the
  Aspeed BMC GPIOs
 
 A user-creatable device that plays the motherboard power sequence on the
@@ -455,10 +455,10 @@ index 0000000..3004abf
 +
 +DEFINE_TYPES(host_types)
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 23265f6..3fe99b9 100644
+index 092f70b..169f816 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -145,7 +145,8 @@ system_ss.add(when: 'CONFIG_ASPEED_SOC', if_true: files(
+@@ -143,7 +143,8 @@ system_ss.add(when: 'CONFIG_ASPEED_SOC', if_true: files(
    'aspeed_sdmc.c',
    'aspeed_xdma.c',
    'aspeed_peci.c',
@@ -469,10 +469,10 @@ index 23265f6..3fe99b9 100644
  system_ss.add(when: 'CONFIG_MSF2', if_true: files('msf2-sysreg.c'))
  system_ss.add(when: 'CONFIG_NRF51_SOC', if_true: files('nrf51_rng.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index c9a868b..f9fe579 100644
+index b88accc..f63f8bd 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -322,6 +322,9 @@ aspeed_xdma_write(uint64_t offset, uint64_t data) "XDMA write: offset 0x%" PRIx6
+@@ -297,6 +297,9 @@ aspeed_xdma_write(uint64_t offset, uint64_t data) "XDMA write: offset 0x%" PRIx6
  aspeed_pwm_read(uint64_t offset, uint64_t data) "read: offset 0x%" PRIx64 " data 0x%" PRIx64
  aspeed_pwm_write(uint64_t offset, uint64_t data) "write: offset 0x%" PRIx64 " data 0x%" PRIx64
  

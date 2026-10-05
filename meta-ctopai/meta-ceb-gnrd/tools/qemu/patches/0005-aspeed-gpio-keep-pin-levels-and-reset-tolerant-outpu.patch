@@ -1,7 +1,7 @@
-From 4fc7bae5096e23de0e8cd04f2f266691ac3d652d Mon Sep 17 00:00:00 2001
+From 4235f50cbc8d86c49975fecd3e9bd317ad6b47bf Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:25:51 +0800
-Subject: [PATCH 5/9] aspeed/gpio: keep pin levels and reset tolerant outputs
+Subject: [PATCH 05/12] aspeed/gpio: keep pin levels and reset tolerant outputs
  across a reset
 
 A watchdog reset of the BMC reset every GPIO to input with a low level,
@@ -15,12 +15,12 @@ hardware does.
  1 file changed, 14 insertions(+), 2 deletions(-)
 
 diff --git a/hw/gpio/aspeed_gpio.c b/hw/gpio/aspeed_gpio.c
-index 1cf6f5d..d3cea83 100644
+index 7d0f87e..8907964 100644
 --- a/hw/gpio/aspeed_gpio.c
 +++ b/hw/gpio/aspeed_gpio.c
-@@ -1434,8 +1434,20 @@ static void aspeed_gpio_reset_hold(Object *obj, ResetType type)
+@@ -1434,8 +1434,20 @@ static void aspeed_gpio_reset(DeviceState *dev)
  {
-     AspeedGPIOState *s = ASPEED_GPIO(obj);
+     AspeedGPIOState *s = ASPEED_GPIO(dev);
  
 -    /* TODO: respect the reset tolerance registers */
 -    memset(s->sets, 0, sizeof(s->sets));

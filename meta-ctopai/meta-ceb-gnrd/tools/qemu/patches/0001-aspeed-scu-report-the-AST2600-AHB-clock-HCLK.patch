@@ -1,7 +1,7 @@
-From bd484b295987658c989b8bba7053d849053dfd3b Mon Sep 17 00:00:00 2001
+From 974f9a5e0d6318cdea0ce820050531a0e4e65f9c Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:14:43 +0800
-Subject: [PATCH 1/9] aspeed/scu: report the AST2600 AHB clock (HCLK)
+Subject: [PATCH 01/12] aspeed/scu: report the AST2600 AHB clock (HCLK)
 
 Add aspeed_scu_get_hclk_freq(), which derives HCLK from HPLL and the
 AXI/AHB ratio straps in SCU500 the same way the Linux clk-ast2600 driver
@@ -13,10 +13,10 @@ expects.  Only the AST2600 SCU implements it; others return 0.
  2 files changed, 48 insertions(+)
 
 diff --git a/hw/misc/aspeed_scu.c b/hw/misc/aspeed_scu.c
-index 5dbf81c..b73b618 100644
+index e416035..f962318 100644
 --- a/hw/misc/aspeed_scu.c
 +++ b/hw/misc/aspeed_scu.c
-@@ -267,6 +267,13 @@ uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s)
+@@ -262,6 +262,13 @@ uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s)
      return ASPEED_SCU_GET_CLASS(s)->get_apb(s);
  }
  
@@ -30,7 +30,7 @@ index 5dbf81c..b73b618 100644
  static uint32_t aspeed_2400_scu_get_apb_freq(AspeedSCUState *s)
  {
      AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
-@@ -285,6 +292,43 @@ static uint32_t aspeed_2600_scu_get_apb_freq(AspeedSCUState *s)
+@@ -280,6 +287,43 @@ static uint32_t aspeed_2600_scu_get_apb_freq(AspeedSCUState *s)
          / asc->apb_divider;
  }
  
@@ -74,7 +74,7 @@ index 5dbf81c..b73b618 100644
  static uint32_t aspeed_1030_scu_get_apb_freq(AspeedSCUState *s)
  {
      AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
-@@ -835,6 +879,7 @@ static void aspeed_2600_scu_class_init(ObjectClass *klass, const void *data)
+@@ -850,6 +894,7 @@ static void aspeed_2600_scu_class_init(ObjectClass *klass, const void *data)
      asc->resets = ast2600_a3_resets;
      asc->calc_hpll = aspeed_2600_scu_calc_hpll;
      asc->get_apb = aspeed_2600_scu_get_apb_freq;
@@ -83,10 +83,10 @@ index 5dbf81c..b73b618 100644
      asc->nr_regs = ASPEED_AST2600_SCU_NR_REGS;
      asc->clkin_25Mhz = true;
 diff --git a/include/hw/misc/aspeed_scu.h b/include/hw/misc/aspeed_scu.h
-index c30940a..ce9d44a 100644
+index d003955..1d785b3 100644
 --- a/include/hw/misc/aspeed_scu.h
 +++ b/include/hw/misc/aspeed_scu.h
-@@ -61,6 +61,7 @@ struct AspeedSCUClass {
+@@ -60,6 +60,7 @@ struct AspeedSCUClass {
      const uint32_t *resets;
      uint32_t (*calc_hpll)(AspeedSCUState *s, uint32_t hpll_reg);
      uint32_t (*get_apb)(AspeedSCUState *s);
@@ -94,7 +94,7 @@ index c30940a..ce9d44a 100644
      uint32_t apb_divider;
      uint32_t nr_regs;
      bool clkin_25Mhz;
-@@ -70,6 +71,8 @@ struct AspeedSCUClass {
+@@ -69,6 +70,8 @@ struct AspeedSCUClass {
  #define ASPEED_SCU_PROT_KEY      0x1688A8A8
  
  uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s);

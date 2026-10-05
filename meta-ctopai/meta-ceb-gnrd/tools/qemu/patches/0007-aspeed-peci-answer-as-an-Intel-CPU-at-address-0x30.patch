@@ -1,7 +1,7 @@
-From 5a2b36a4d7830b3160560576dd36d2b9394a587c Mon Sep 17 00:00:00 2001
+From 481c0bfb0241c749e8e2a2bf8c2e88849192ebec Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:33:29 +0800
-Subject: [PATCH 7/9] aspeed/peci: answer as an Intel CPU at address 0x30
+Subject: [PATCH 07/12] aspeed/peci: answer as an Intel CPU at address 0x30
 
 The PECI controller completed every command with a bare success code, so
 the Linux peci-cpu driver found no usable CPU and no CPU or DIMM
@@ -19,7 +19,7 @@ temperatures, the core count and the populated DIMMs are properties.
  2 files changed, 287 insertions(+), 4 deletions(-)
 
 diff --git a/hw/misc/aspeed_peci.c b/hw/misc/aspeed_peci.c
-index 7469f82..4e8dfc9 100644
+index 0569ee5..e5ea291 100644
 --- a/hw/misc/aspeed_peci.c
 +++ b/hw/misc/aspeed_peci.c
 @@ -12,9 +12,11 @@
@@ -278,7 +278,7 @@ index 7469f82..4e8dfc9 100644
          break;
      default:
          s->regs[offset / sizeof(s->regs[0])] = data;
-@@ -130,6 +344,61 @@ static void aspeed_peci_reset_hold(Object *obj, ResetType type)
+@@ -130,6 +344,61 @@ static void aspeed_peci_reset(DeviceState *dev)
      memset(s->regs, 0, sizeof(s->regs));
  }
  
@@ -340,7 +340,7 @@ index 7469f82..4e8dfc9 100644
  static void aspeed_peci_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
-@@ -145,6 +414,7 @@ static const TypeInfo aspeed_peci_types[] = {
+@@ -144,6 +413,7 @@ static const TypeInfo aspeed_peci_types[] = {
          .name = TYPE_ASPEED_PECI,
          .parent = TYPE_SYS_BUS_DEVICE,
          .instance_size = sizeof(AspeedPECIState),
