@@ -70,6 +70,10 @@ TEMPS = {
 WATCHED = {ALERT_LED: "alert LED", UID_LED: "UID LED",
            FLASH_SEL: "BIOS flash select (1 = BMC)",
            FAN_OVERRIDE: "fan override (1 = BMC)"}
+# BMC outputs that keep their level while the BMC resets (GPIO reset tolerance)
+RETAINED = {POWER_OUT: "power button out", RESET_OUT: "reset out",
+            FLASH_SEL: "BIOS flash select"}
+BMC_BOOT_MAX_S = 240      # give up waiting for the BMC to drive the pins again
 HOST_DEV = "/machine/peripheral/host"   # bmc-host-sim in the patched QEMU
 FORCE_OFF_S = 4.0
 POLL_S = 0.05
@@ -93,6 +97,7 @@ class Qmp:
                 time.sleep(1)
         self.file = self.sock.makefile("rwb")
         self.lock = threading.Lock()
+        self.resets = 0                                # QEMU RESET events seen
         self._read()                                   # greeting
         self.execute("qmp_capabilities")
 
@@ -115,7 +120,10 @@ class Qmp:
                     return reply["return"]
                 if "error" in reply:
                     raise RuntimeError("%s: %s" % (command, reply["error"].get("desc")))
-                # asynchronous event: ignore
+                # asynchronous event: only a machine reset (BMC reboot or watchdog
+                # reset) matters here
+                if reply.get("event") == "RESET":
+                    self.resets += 1
 
     def get(self, pin):
         return bool(self.execute("qom-get", path=GPIO, property=pin))
@@ -141,6 +149,45 @@ class Host:
         self.forced = False
         self.outputs = {}
         self.lock = threading.Lock()
+        self.seen_resets = qmp.resets
+        self.bmc_reset_at = None     # time of the BMC reset being waited out
+        self.held = {}               # pin levels kept across that reset
+        self.prev = {}               # last level seen of the pins in RETAINED
+
+    # --- BMC reset -------------------------------------------------------------
+    # On the board the BMC pins below keep their level while the BMC resets (the
+    # AST2600 GPIO reset tolerance, which the kernel enables for every line that
+    # user space requests; see the GPIO table in quick-start.md).  QEMU resets
+    # its whole GPIO model instead, so the pins read low: BMC_CPU_RESET low would
+    # look like a host reset and BMC_CPU_POWER_BUTTON low for 4 s like a forced
+    # power off.  After a QEMU reset the last levels are therefore held until the
+    # BMC has driven both power pins high again (x86-power-control after boot).
+    # BMC_FAN_BMC_OVERRIDE_N is deliberately not retained (the fans go back to
+    # the CPLD, see ceb-gnrd-fan-owner).
+    def pin(self, pin):
+        value = self.q.get(pin)
+        if self.q.resets != self.seen_resets:
+            self.seen_resets = self.q.resets
+            self.bmc_reset_at = time.time()
+            self.held = dict(self.prev)
+            log("BMC reset: holding %s at their last levels until the BMC drives "
+                "the power pins again" % ", ".join(
+                    sorted(RETAINED[p] for p in self.held)))
+        if self.bmc_reset_at is not None and pin in self.held:
+            return self.held[pin]
+        if pin in RETAINED:
+            self.prev[pin] = value
+        return value
+
+    def check_bmc_back(self):
+        if self.bmc_reset_at is None:
+            return
+        power, reset = self.q.get(POWER_OUT), self.q.get(RESET_OUT)
+        if (power and reset) or time.time() - self.bmc_reset_at > BMC_BOOT_MAX_S:
+            log("BMC reset: the BMC drives the power pins again (%.0f s)"
+                % (time.time() - self.bmc_reset_at))
+            self.bmc_reset_at = None
+            self.held = {}
 
     # --- board outputs -------------------------------------------------------
     def set_power(self, pwrgd, boot_ok):
@@ -183,7 +230,7 @@ class Host:
     def step(self):
         with self.lock:
             now = time.time()
-            power_low = not self.q.get(POWER_OUT)
+            power_low = not self.pin(POWER_OUT)
             if power_low and self.power_low_since is None:
                 self.power_low_since = now
                 self.forced = False
@@ -197,7 +244,7 @@ class Host:
                 if not self.forced:
                     self.on_power_button(held)
 
-            reset_low = not self.q.get(RESET_OUT)
+            reset_low = not self.pin(RESET_OUT)
             if reset_low and not self.reset_low and self.state in ("post", "on"):
                 log("host: reset asserted")
                 self.q.set(BOOT_OK, False)
@@ -220,7 +267,7 @@ class Host:
                     self.power_off("OS shut down")
 
             for pin, name in WATCHED.items():
-                value = self.q.get(pin)
+                value = self.pin(pin)
                 if self.outputs.get(pin) != value:
                     if pin in self.outputs:
                         log("BMC: %s -> %d" % (name, value))
@@ -228,6 +275,7 @@ class Host:
                     if pin == FLASH_SEL and value and self.state != "off":
                         log("WARNING: the BMC took the BIOS flash while the host is %s"
                             % self.state)
+            self.check_bmc_back()
 
     # --- test inputs ---------------------------------------------------------
     def press(self, pin, seconds, name):

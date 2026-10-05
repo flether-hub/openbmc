@@ -120,6 +120,13 @@ or `ipmitool chassis power on`, and watch both terminals.  Commands typed into
 | `post <s>` / `shutdown <s>` | POST time (default 20 s) / OS shutdown time (default 10 s) |
 | `quit` | stop the simulator (QEMU keeps running) |
 
+BMC reset: on the board the power button, reset and BIOS flash select outputs keep
+their level while the BMC resets (AST2600 GPIO reset tolerance), but QEMU resets its
+whole GPIO model, so they read low for a while after a BMC reboot.  In stock-QEMU
+mode `host-sim.py` holds the last levels of these three pins after QEMU's RESET event
+until the BMC drives both power pins high again, so a BMC reboot does not look like
+a host reset or a forced power off.
+
 Environment for `run-qemu.sh`: `DEPLOY` (image directory, default
 `~/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd`), `STATE` (FRU EEPROM and
 QMP socket, default `~/qemu-ceb-gnrd`), `BIOS_FLASH` (default `~/qemu-bios.bin`),
