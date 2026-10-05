@@ -10,6 +10,18 @@ edits come along; untracked scratch files do not.
 .tutorial-build/ is git-ignored scratch space. The destination directory
 is replaced on every run; nothing else under .tutorial-build/ is touched.
 
+Layout of .tutorial-build/ (local only, not in git):
+  ceb-gnrd/                 this script's copy of the layer
+  qemu/kvm-usb/             QEMU base/tree for patch 0018, export_integration.py,
+                            ref/ (downloaded upstream files for reference)
+  qemu/peci-sim/            QEMU base/tree and generator for patch 0019
+  linux/peci-temperature/   kernel base/tree, pinned baseline/ files and
+                            generator for linux patch 0003
+  eds/                      GNR-D EDS-A PDF, extracted text, extractor
+  scripts/                  one-off helpers
+Each generator writes its patch back into this layer; rerunning one on
+unchanged base/tree reproduces the committed patch exactly.
+
 Usage: python3 meta-ctopai/meta-ceb-gnrd/tools/expand-to-tutorial-build.py [DEST]
 """
 from pathlib import Path

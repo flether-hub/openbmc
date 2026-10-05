@@ -108,7 +108,7 @@ c0538446e769fab620225578d378a0627b883bd5
 
 同文件第 43 行把 IFM 定义为 `VFM_MAKE(X86_VENDOR_INTEL, family, model)`。这两个符号来自内核，项目补丁只引用，未自行定义。它们编码 vendor/family/model，不编码 stepping，也不是 PECI 地址或命令号。
 
-来源：[固定版本 intel-family.h](https://github.com/openbmc/linux/blob/c0538446e769fab620225578d378a0627b883bd5/arch/x86/include/asm/intel-family.h#L126)。本地下载副本为 `.tutorial-build/peci-intel-family-baseline.h`，便于核对。
+来源：[固定版本 intel-family.h](https://github.com/openbmc/linux/blob/c0538446e769fab620225578d378a0627b883bd5/arch/x86/include/asm/intel-family.h#L126)。本地下载副本为 `.tutorial-build/linux/peci-temperature/baseline/peci-intel-family-baseline.h`，便于核对。
 
 识别沿用现有 PECI `device.c` 的 PCS index 0 / parameter 0 签名解析。用户提供的 Intel GNR-D EDS-A，文档 737226 rev 2.1.2，表 73、第 226 页确认该访问返回 CPUID。**内核有型号宏不代表温度驱动已支持该型号**；匹配表及读取逻辑是本次补丁的工作。
 

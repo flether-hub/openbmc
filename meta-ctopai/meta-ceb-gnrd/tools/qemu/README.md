@@ -6,7 +6,7 @@
 面板负责驱动硬件输入、注入故障并观察实际 BMC 输出。电源策略、UID LED、风扇策略、
 KVM 服务和虚拟媒体挂载仍由 BMC 固件处理。
 
-正式源码和补丁都在本目录；仓库根目录的 `.tutorial-build/kvm-usb` 是临时源码展开目录，
+正式源码和补丁都在本目录；仓库根目录的 `.tutorial-build/qemu/kvm-usb` 是临时源码展开目录，
 不参与构建，也不是运行依赖。QEMU 的 C 模型通过 `patches/0001..0019` 集成；
 `recipes-devtools/qemu/qemu-system-native_%.bbappend` 引用同一组补丁。
 
