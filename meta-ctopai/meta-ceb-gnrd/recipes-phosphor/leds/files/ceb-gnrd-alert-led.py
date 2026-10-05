@@ -394,7 +394,10 @@ def main():
         # event) when the sensor leaves Normal.  It does not light the alert LED.
         status = intrusion_status()
         if status is not None:
-            if status != INTRUSION_NORMAL and status != intrusion_last:
+            # the status is the D-Bus enum string, e.g.
+            # "xyz.openbmc_project.Chassis.Intrusion.Status.Normal"
+            normal = status.rsplit(".", 1)[-1] == INTRUSION_NORMAL
+            if not normal and status != intrusion_last:
                 LOG.error("Chassis intrusion detected (%s)", status)
                 if not sel_add("Chassis intrusion detected", INTRUSION_SEL_PATH, INTRUSION_SEL_DATA):
                     status = intrusion_last  # retry on the next cycle
