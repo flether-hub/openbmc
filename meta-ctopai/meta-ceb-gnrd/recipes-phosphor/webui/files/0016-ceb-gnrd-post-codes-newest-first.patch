@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] post codes: newest first
+
+The POST Code table is meant to be sorted by "id", descending, but the items
+have no "id", so the codes were listed in the order the service returns them,
+oldest first.  Give each code its position in that order.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/store/modules/Logs/PostCodeLogsStore.js
++++ b/src/store/modules/Logs/PostCodeLogsStore.js
+@@ -20,9 +20,13 @@ const PostCodeLogsStore = {
+           `${await this.dispatch('global/getSystemPath')}/LogServices/PostCodes/Entries`,
+         )
+         .then(({ data: { Members = [] } = {} }) => {
+-          const postCodeLogs = Members.map((log) => {
++          // The service lists the codes oldest first.  The table sorts by "id"
++          // (descending, newest first), but the items had no such field, so the
++          // list was shown oldest first: number the codes in service order.
++          const postCodeLogs = Members.map((log, index) => {
+             const { Created, MessageArgs, AdditionalDataURI } = log;
+             return {
++              id: index,
+               date: new Date(Created),
+               bootCount: MessageArgs[0],
+               timeStampOffset: MessageArgs[1],
