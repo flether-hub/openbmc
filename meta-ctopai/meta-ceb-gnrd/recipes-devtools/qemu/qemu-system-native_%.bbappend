@@ -20,4 +20,5 @@ SRC_URI += " \
     file://0010-aspeed-AST2600-VUART-and-LPC-snoop-port-80h-POST-cod.patch \
     file://0011-bmc-host-sim-POST-codes-on-port-80h-during-POST.patch \
     file://0012-aspeed-read-only-fan-speed-PWM-duty-and-POST-code-pr.patch \
+    file://0013-aspeed-gpio-a-pin-switched-to-output-drives-the-last.patch \
     "

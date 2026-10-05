@@ -6,13 +6,16 @@
 #
 # Modules are hot-pluggable, so the bus is polled and devices are added or
 # removed as modules appear or disappear.  Only state changes are logged.
+# psusensor only looks for PMBus hwmon devices when it starts, so it is
+# restarted after every change: the sensors of a new module then appear on
+# D-Bus (Redfish, IPMI, web) and those of a pulled module go away.
 
 BUS=7
 ADDRS="0x58 0x59 0x5a"
-POLL_SECONDS=30
+POLL_SECONDS=10
 # A module is only removed after this many polls in a row without an answer
 # (one failed transfer, e.g. while the module is busy, must not drop it).
-MISS_LIMIT=3
+MISS_LIMIT=2
 SYSFS=/sys/bus/i2c/devices/i2c-$BUS
 
 log() {
@@ -56,6 +59,7 @@ remove_device() {
 log "PSU presence monitor started on i2c-$BUS ($ADDRS)"
 while :
 do
+    changed=0
     for addr in $ADDRS
     do
         if [ -e "$(dev_dir "$addr")" ]; then
@@ -66,15 +70,23 @@ do
         miss=$(cat "/tmp/ceb-gnrd-psu-miss$addr" 2>/dev/null || echo 0)
         if is_present "$addr"; then
             echo 0 > "/tmp/ceb-gnrd-psu-miss$addr"
-            [ "$have" -eq 0 ] && add_device "$addr"
+            if [ "$have" -eq 0 ]; then
+                add_device "$addr"
+                changed=1
+            fi
         elif [ "$have" -eq 1 ]; then
             miss=$((miss + 1))
             echo "$miss" > "/tmp/ceb-gnrd-psu-miss$addr"
             if [ "$miss" -ge "$MISS_LIMIT" ]; then
                 echo 0 > "/tmp/ceb-gnrd-psu-miss$addr"
                 remove_device "$addr"
+                changed=1
             fi
         fi
     done
+    if [ "$changed" -eq 1 ]; then
+        systemctl restart xyz.openbmc_project.psusensor.service 2>/dev/null ||
+            log "WARNING: could not restart psusensor"
+    fi
     sleep "$POLL_SECONDS"
 done

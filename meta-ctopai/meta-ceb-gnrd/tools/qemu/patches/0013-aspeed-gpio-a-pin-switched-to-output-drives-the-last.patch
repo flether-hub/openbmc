@@ -1,0 +1,50 @@
+From efb79440c803561f5167b8af01bc8e8c37634102 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 14:22:03 +0800
+Subject: [PATCH] aspeed/gpio: a pin switched to output drives the last written
+ value
+
+Linux sets an output by writing the level to the data register and then
+switching the pin to output.  The model only latched data written while a
+pin was already an output, so such a pin (an LED, the power button
+output) kept its old level until the next write.  Apply data_read to the
+pins that become outputs.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
+---
+ hw/gpio/aspeed_gpio.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/hw/gpio/aspeed_gpio.c b/hw/gpio/aspeed_gpio.c
+index 8907964..4f55a90 100644
+--- a/hw/gpio/aspeed_gpio.c
++++ b/hw/gpio/aspeed_gpio.c
+@@ -866,7 +866,24 @@ static void aspeed_gpio_write(void *opaque, hwaddr offset, uint64_t data,
+          *  data = ( data | ~input) & output;
+          */
+         data = (data | ~props->input) & props->output;
+-        set->direction = update_value_control_source(set, set->direction, data);
++        {
++            uint32_t old_dir = set->direction;
++            uint32_t new_out;
++
++            set->direction = update_value_control_source(set, set->direction,
++                                                         data);
++            /*
++             * A pin that becomes an output drives the value last written to
++             * the data register (Linux writes the level, then the direction).
++             */
++            new_out = set->direction & ~old_dir;
++            if (new_out) {
++                aspeed_gpio_update(s, set,
++                                   (set->data_value & ~new_out) |
++                                   (set->data_read & new_out),
++                                   new_out);
++            }
++        }
+         break;
+     case gpio_reg_int_enable:
+         set->int_enable = update_value_control_source(set, set->int_enable,
+-- 
+2.53.0.windows.1
+
