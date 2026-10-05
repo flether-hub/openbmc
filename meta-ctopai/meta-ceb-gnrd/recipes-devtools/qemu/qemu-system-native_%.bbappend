@@ -30,4 +30,5 @@ SRC_URI += " \
     file://0020-bmc-host-sim-consume-force-off-pulse-while-off.patch \
     file://0020-aspeed-adc-keep-the-channel-values-to-10-bits.patch \
     file://0021-aspeed-fix-video-detection-and-usb-ep0-handshakes.patch \
+    file://0022-aspeed-remove-unrealized-legacy-vuart.patch \
     "

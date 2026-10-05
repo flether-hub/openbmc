@@ -1,0 +1,23 @@
+From: CEB-GNRD simulator <qemu-ceb-gnrd@localhost>
+Subject: [PATCH] aspeed: remove the replaced legacy VUART child
+
+0018 replaces the legacy SerialMM VUART with the eSPI Peripheral model,
+but leaves its object_initialize_child call behind. QEMU asserts that
+every device child is realized after machine construction. Remove the
+unused child rather than realizing a second device at the same address.
+
+Upstream-Status: Inappropriate [CEB-GNRD simulation only]
+---
+diff --git a/hw/arm/aspeed_ast2600.c b/hw/arm/aspeed_ast2600.c
+--- a/hw/arm/aspeed_ast2600.c
++++ b/hw/arm/aspeed_ast2600.c
+@@ -265,9 +265,6 @@
+ 
+     object_initialize_child(obj, "lpc", &s->lpc, TYPE_ASPEED_LPC);
+ 
+-    /* Virtual UART: the host's COM port, on the chardev with id "vuart" */
+-    object_initialize_child(obj, "vuart", &s->vuart, TYPE_SERIAL_MM);
+-
+     snprintf(typename, sizeof(typename), "aspeed.hace-%s", socname);
+     object_initialize_child(obj, "hace", &s->hace, typename);
+ 
