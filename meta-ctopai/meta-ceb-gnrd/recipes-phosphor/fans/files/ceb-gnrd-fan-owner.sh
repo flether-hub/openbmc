@@ -52,4 +52,63 @@ fi
 
 # The board GPIO table specifies high as BMC ownership; low leaves control with
 # the CPLD. Keep the line requested for as long as fan control is active.
-exec gpioset --mode=signal "$1" "$2=1"
+#
+# Fan ownership must not survive a BMC reset (watchdog or user triggered): while the
+# BMC restarts it cannot run fan control, so the CPLD has to take the fans back.
+# Every line requested from user space is made reset tolerant by the kernel (the
+# AST2600 then keeps its direction and level across a watchdog reset), so clear the
+# reset tolerance bit of this line again once it is held: a reset then returns the
+# pin to an input.  If that fails, do not take ownership at all.
+chip=$1
+line_no=$2
+
+case "$chip" in
+    gpiochip0) ;;
+    *)
+        echo "$line is on $chip, expected gpiochip0 (1e780000); leaving control with CPLD" >&2
+        exit 1
+        ;;
+esac
+
+# Reset tolerance register of each 32 line bank of the 1e780000 GPIO controller
+# (A-D, E-H, I-L, M-P, Q-T, U-X, Y-AB, AC)
+case $((line_no / 32)) in
+    0) tol=0x1e78001c ;;
+    1) tol=0x1e78003c ;;
+    2) tol=0x1e7800ac ;;
+    3) tol=0x1e7800fc ;;
+    4) tol=0x1e78012c ;;
+    5) tol=0x1e78015c ;;
+    6) tol=0x1e78018c ;;
+    *) tol=0x1e7801bc ;;
+esac
+mask=$((1 << (line_no % 32)))
+
+if command -v devmem >/dev/null 2>&1; then
+    devmem=devmem
+else
+    devmem="busybox devmem"
+fi
+
+gpioset --mode=signal "$chip" "$line_no=1" &
+holder=$!
+trap 'kill "$holder" 2>/dev/null' TERM INT
+
+# give gpioset a moment to request the line (that is what sets the tolerance bit)
+sleep 1
+if ! kill -0 "$holder" 2>/dev/null; then
+    echo "gpioset could not hold $line" >&2
+    exit 1
+fi
+
+reg=$($devmem "$tol" 32 2>/dev/null) || reg=""
+if [ -z "$reg" ] || ! $devmem "$tol" 32 $((reg & ~mask)) 2>/dev/null ||
+    [ $(($($devmem "$tol" 32 2>/dev/null) & mask)) -ne 0 ]; then
+    echo "Cannot clear the reset tolerance of $line ($tol, devmem); leaving control with CPLD" >&2
+    kill "$holder" 2>/dev/null
+    wait "$holder" 2>/dev/null
+    exit 1
+fi
+echo "$line: BMC owns the fans, reset tolerance cleared (a BMC reset returns them to the CPLD)"
+
+wait "$holder"

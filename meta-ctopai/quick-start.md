@@ -544,7 +544,8 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | `BMC_CPU_PWRGD`（V4） | 高有效输入，供状态机判断上电 |
 | 电源按键输入 `BMC_POWER_BUTTON_INPUT`（GPIOM2） | **只检测**：按下时写 SEL 和日志，不触发开关机，也不直通到 CPU 电源按键输出 |
 | 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 内核 LED 名 `fault`，由 phosphor-led-manager 的标准组 `enclosure_fault` 驱动（`ceb-gnrd-alert-led` 只负责置位/清除该组的 `Asserted`，每 30 秒重发一次以防 led-manager 重启丢状态）。电压越限点亮，**温度只有到达 UNR（不可恢复上限）才点亮**，Upper Critical 不亮灯，两者恢复后熄灭；watchdog 超时、BIOS 启动超时（**600 秒**）锁存点亮，BMC 重启后清除 ⚠️ 没有验证 |
-| `BMC_FAN_BMC_OVERRIDE_N`（GPIOI6） | 风扇控制就绪后拉高，BMC 接管风扇；服务停止时拉低交还 CPLD |
+| `BMC_FAN_BMC_OVERRIDE_N`（GPIOI6） | 风扇控制就绪后拉高，BMC 接管风扇；服务停止时拉低交还 CPLD。BMC 复位（看门狗或用户触发）期间 BMC 不能控制风扇，必须交还 CPLD，所以这根脚**不保持**：内核对用户态申请的线都会置位 reset tolerance，`ceb-gnrd-fan-owner` 在占住这根线后用 `devmem` 清掉 `0x1e7800ac` 的 bit6，复位时它回到输入态；清不掉就不接管风扇（留给 CPLD）。正常关机时服务停止，`ceb-gnrd-fan-release` 先把它拉低 ⚠️ 没有在板上验证（复位后这根脚悬空时 CPLD 是否接管风扇要确认） |
+| 复位保持（reset tolerance） | AST2600 的 GPIO 每个引脚有 reset tolerance 位，置位的引脚在看门狗 SoC 复位时保持方向和输出值；用户态（x86-power-control、`gpioset`）申请一根线时内核自动置位。`BMC_CPU_POWER_BUTTON`、`BMC_CPU_RESET`、`BMC_BIOS_FLASH_SELECT` 依赖这个行为，在用户触发的 BMC 复位和看门狗复位中保持状态；`BMC_BIOS_FLASH_SELECT` 只在 BIOS 升级时被改变，其他时间 BMC 不碰它 ⚠️ 没有在板上验证 |
 | `BMC_HBLED_N`（GPIOP7） | eSPI 驱动就绪后启用内核 heartbeat 触发器 |
 | `BMC_BIOS_FLASH_SELECT`（GPIOM1） | BIOS 升级时拉高切给 BMC，等 5 秒后烧写，结束后拉低 |
 | `BMC_BIOS_BOOT_OK`（GPIOM7） | x86-power-control 的标准 `PostComplete`（高有效）：拉高时 D-Bus `xyz.openbmc_project.State.OperatingSystem` 的 `OperatingSystemState` 为 `Standby`，否则为 `Inactive`（主机关机时也是 `Inactive`）。主机开着时它的下降沿会进入 x86-power-control 的热复位检查并记一次软复位的重启原因，**不会产生电源脉冲**。告警灯服务读 `OperatingSystemState` 来取消当次 BIOS 启动超时告警 ⚠️ 没有在板上验证 |
