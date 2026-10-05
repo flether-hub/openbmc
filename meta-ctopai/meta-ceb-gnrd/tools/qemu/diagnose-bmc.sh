@@ -52,6 +52,14 @@ done
 section 'eSPI, USB gadget and video devices'
 run ls -l /sys/bus/platform/drivers/aspeed-espi-ctrl
 run ls -l /sys/class/udc /dev/video0
+run ls -l /dev/hidg0 /dev/hidg1
+run systemctl cat obmc-ikvm.service
+run cat /proc/net/tcp /proc/net/tcp6
+for udc in /sys/class/udc/*; do
+    [ -d "$udc" ] || continue
+    printf '\nUDC: %s\n' "$udc"
+    run cat "$udc/state" "$udc/function" "$udc/current_speed"
+done
 for gadget in /sys/kernel/config/usb_gadget/*; do
     [ -d "$gadget" ] || continue
     printf '\nGADGET: %s\n' "$gadget"

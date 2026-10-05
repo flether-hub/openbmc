@@ -244,3 +244,28 @@ COM1 通过双端 UART FIFO 接到真实 BMC VUART，而不是直接向串口 so
 
 - 2026-10-05 审核后提交：整合上文所有未提交改动并直接推送 master。审核结论：19 个 QEMU 补丁可按序应用到 QEMU v11.0.2，内核 0003/0004 对固定提交源码 `git apply --check` 通过；未构建、未运行。
 - 同次修复：`meta-ctopai/quick-start.md` 中风扇网页调用说明改为单次 `ApplyFan<目标><模式><Keep|Forget>`；`run-qemu.sh` 不再用 `set --` 覆盖脚本参数，改用 `CAPTURE_ARGS`。
+
+## 11. 后续故障修复与当前交付状态
+
+以下更新覆盖前文同名待办的旧状态。当前工作树基线为 `baa4b3ed4d96ad3e2f37d16f4e97f09a176bc185`；本节新增修改尚未提交。第 10 节记录的是此前提交历史。
+
+| 项目 | 代码处理与原因 | 当前状态 |
+|---|---|---|
+| BIOS Web 更新停在 92% | 新增 QEMU `0020-bmc-host-sim-consume-force-off-pulse-while-off.patch`：主机已关机时仍消费长按关机脉冲，避免释放时误判短按并开机。Python fallback 同步修正；未放宽 BIOS updater 成功条件 | 源码已修复，需重建 QEMU 后验证 |
+| GUI 文件选择异常 | `panel_tk.py` 捕获 `focus_get()` 对 Tk 内部文件对话框产生的 KeyError/TclError，避免本轮刷新中断 | 源码已修复，待运行 |
+| KVM 视频检测 | 新增 QEMU `0021-aspeed-fix-video-detection-and-usb-ep0-handshakes.patch`：无 VGA 信号时不伪报检测完成；增加信号、帧数、DMA 错误诊断 | 源码已修复，BMC Web 显示未验证 |
+| USB 枚举、键鼠和媒体 | 同补丁在 BUSRESET/EP0 事件待处理时返回 NAK，避免覆盖握手；`host_io.py` 增加 HID 描述符、六字节绝对鼠标解析、各端口独立重试、STALL/BOT/SCSI 诊断和有限重试 | 源码已整合，枚举及端到端数据未验证 |
+| GPIO 图与日志 | 50ms 最佳努力采样、方向/边沿计数和近期变化提示；实际电平与历史边沿分开。日志保留 2000 条，毫秒时间，复制/清除；左右固定布局及图片预览 | 源码已整合，短脉冲仍可能漏采 |
+| 风扇接管 GPIOI6 | `ceb-gnrd-fan-owner.sh` 修正 busctl tree 参数：旧调用把对象路径当成服务名；改为列出服务树并匹配 zone 路径 | 确认固件脚本缺陷，已修复，需更新固件 |
+| PSU sensor 消失 | 新增 `0001-reuse-i2c-device-by-config-path-and-guard-psu-io.patch`：按 configurationPath 复用设备，避免自定义传感器名无法匹配 CRPS 配置导致反复删建；捕获异步创建中的 I/O 异常 | 固件修复已加入 recipe，需构建和运行验证 |
+| Web 电源操作不刷新 | 新增 Web `0021-ceb-gnrd-refresh-server-power-operation-state.patch`：等待 POST、主动轮询状态、有界超时、finally 释放忙状态，并显示错误 | 固件前端修复已加入 recipe，需构建和运行验证 |
+
+PSU 用户日志证据包括反复 delete/new_device、Boost open ENOENT 崩溃以及 start-limit-hit；其他 hwmon 的 whitelist 提示不是本次主要故障。USB 的 UDC 目录存在只证明驱动注册；没有 KVM 客户端连接时 `/dev/hidg*` 不存在也不能单独证明固件错误。
+
+静态核对：Python AST、面板 JavaScript 与 Web 修改脚本语法、相关 shell 语法，以及新增 QEMU/PSU/Web 补丁对所用基线的应用检查。没有进行 C/Vue 构建、整套新增 22 个 QEMU 补丁的构建或功能测试。两份编号 0020 的 QEMU 补丁修改不同文件，分别保留；当前共 22 份补丁。
+
+生效要求：更新 GUI/Python 文件不能替代重建 QEMU；固件脚本、dbus-sensors 与 webui 修改需要重新构建相应固件组件。`diagnose-bmc.sh` 已补充 UDC、HID、ikvm unit 和监听端口的只读采集。
+
+成功边界：模拟器 POST/BOOT_OK 为合成主机行为，没有执行烧录后的 x86 BIOS，不能证明新 BIOS 内容正确。USB GUI 仅检查 BMC Web 挂载的媒体，不替代 Web 挂载。VGA 帧/DMA 计数不能单独证明浏览器 KVM 已显示。
+
+仍待完成：用户运行新版验证 BIOS 更新、KVM、USB 键鼠、媒体读取、PSU 和电源页；真实板卡 PECI/AMI 模式核对；缺寄存器规范的 DIMMTEMPSTAT MMIO 路径。完整 I3C3/CPU SMBus、eSPI OOB/Flash/full VW 和运行中的 x86 BIOS/OS 未实现；专用 RTL8211FS/E810 模拟按用户要求取消。

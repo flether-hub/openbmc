@@ -148,3 +148,12 @@ USB 覆盖 Linux vHub 常用 control/interrupt/bulk 路径，非完整 USB 主�
 - 某些平台驱动或服务名不存在时会继续采集，输出中的 not found 需要结合 list-units 看实际名称。
 - 运行验证由用户执行，本轮没有启动模拟器或部署镜像；
   不把静态语法/补丁检查作为硬件功能已验证的证据。
+
+## 后续确认与修复（覆盖前文旧待办状态）
+
+- 风扇 owner：确认旧 busctl tree 使用对象路径作为服务参数，导致 readiness 判断失败；已改为服务树路径匹配。真实板卡同样受此脚本问题影响，需要固件更新。
+- PSU：结合用户 delete/new_device、ENOENT core-dump 与 start-limit-hit 日志，修正 dbus-sensors 按配置路径复用设备，并捕获异步创建 I/O 异常。补丁为 sensors/files/0001-reuse-i2c-device-by-config-path-and-guard-psu-io.patch；待构建、运行确认。
+- Web 电源页：加入等待请求、主动轮询、有界超时和忙状态释放。补丁为 webui/files/0021-ceb-gnrd-refresh-server-power-operation-state.patch；不修改主机电源 GPIO 策略，待前端构建和运行确认。
+- 模拟器侧另修复已关机长脉冲误开机（BIOS 更新 92%）、Tk 文件对话框刷新异常、VGA 检测及 USB EP0/reset 握手。不要将这些修改归因于真实 BMC 固件。
+
+完整状态和静态检查边界见 CHANGE-REPORT-2026-10-05.md 第 11 节。合成 POST_OK 不能证明烧录的新 BIOS 可运行。

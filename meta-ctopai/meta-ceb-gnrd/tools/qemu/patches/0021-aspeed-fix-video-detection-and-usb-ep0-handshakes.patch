@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000021 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD simulator <qemu-ceb-gnrd@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] aspeed: preserve no-signal detection and USB EP0 handshakes
+
+The pinned aspeed-video driver waits for mode detection on an absent VGA
+input. An immediate false completion instead exhausts its invalid-mode
+retries and disables the mode-detect interrupt, preventing signal recovery.
+Complete detection only with valid input; signal arrival still raises IRQ.
+
+Do not overwrite a pending USB EP0 ACK/SETUP or race the root bus reset
+with enumeration. QMP tokens retry NAK until the real guest handles it.
+Expose video DMA/frame counts and vHub register diagnostics for the panel.
+These properties observe model state, not BMC Web rendering success.
+
+Upstream-Status: Inappropriate [CEB-GNRD software-test peripheral models]
+---
+diff --git a/hw/misc/aspeed_video.c b/hw/misc/aspeed_video.c
+--- a/hw/misc/aspeed_video.c
++++ b/hw/misc/aspeed_video.c
+@@ -94,10 +94,12 @@
+     if (address_space_write(&address_space_memory, addr,
+                             MEMTXATTRS_UNSPECIFIED, s->jpeg,
+                             s->jpeg_len) != MEMTX_OK) {
++        s->dma_errors++;
+         qemu_log_mask(LOG_GUEST_ERROR, "%s: bad compression buffer 0x%"
+                       HWADDR_PRIx "\n", __func__, addr);
+         return;
+     }
++    s->frames++;
+     s->regs[REG(VE_COMP_SIZE_READ_BACK)] = s->jpeg_len;
+     video_raise(s, VE_INT_CAPTURE_COMPLETE | VE_INT_COMP_COMPLETE |
+                    VE_INT_FRAME_COMPLETE);
+@@ -159,7 +161,7 @@
+     case VE_SEQ_CTRL:
+         s->regs[REG(addr)] = val;
+         if ((val & VE_SEQ_CTRL_TRIG_MODE_DET) &&
+-            !(old & VE_SEQ_CTRL_TRIG_MODE_DET)) {
++            !(old & VE_SEQ_CTRL_TRIG_MODE_DET) && video_has_signal(s)) {
+             video_raise(s, VE_INT_MODE_DETECT);
+         }
+         if ((val & (VE_SEQ_CTRL_TRIG_CAPTURE | VE_SEQ_CTRL_TRIG_COMP)) &&
+@@ -197,6 +199,9 @@
+ {
+     bool has = video_has_signal(s);
+ 
++    if (!has) {
++        timer_del(&s->frame_timer);
++    }
+     if (had && !has &&
+         (s->regs[REG(VE_SEQ_CTRL)] & VE_SEQ_CTRL_EN_WATCHDOG)) {
+         video_raise(s, VE_INT_MODE_DETECT_WD);
+@@ -204,6 +209,19 @@
+     if (!had && has) {
+         video_raise(s, VE_INT_MODE_DETECT);
+     }
++}
++
++static char *video_get_diagnostics(Object *obj, Error **errp)
++{
++    AspeedVideoState *s = ASPEED_VIDEO(obj);
++    return g_strdup_printf("signal=%d jpeg=%zu frames=%" PRIu64
++                           " dma-errors=%" PRIu64 " seq=%08x ier=%08x isr=%08x"
++                           " dma=%08x",
++                           video_has_signal(s), s->jpeg_len, s->frames,
++                           s->dma_errors, s->regs[REG(VE_SEQ_CTRL)],
++                           s->regs[REG(VE_INTERRUPT_CTRL)],
++                           s->regs[REG(VE_INTERRUPT_STATUS)],
++                           s->regs[REG(VE_COMP_ADDR)]);
+ }
+ 
+ static char *video_get_image(Object *obj, Error **errp)
+@@ -259,6 +277,8 @@
+ 
+     memset(s->regs, 0, sizeof(s->regs));
+     timer_del(&s->frame_timer);
++    s->frames = 0;
++    s->dma_errors = 0;
+     video_update_irq(s);
+ }
+ 
+@@ -279,6 +299,7 @@
+     AspeedVideoState *s = ASPEED_VIDEO(obj);
+ 
+     s->signal = true;
++    object_property_add_str(obj, "diagnostics", video_get_diagnostics, NULL);
+     object_property_add_str(obj, "image", video_get_image, video_set_image);
+     object_property_add_bool(obj, "signal", video_get_signal,
+                              video_set_signal);
+diff --git a/include/hw/misc/aspeed_video.h b/include/hw/misc/aspeed_video.h
+--- a/include/hw/misc/aspeed_video.h
++++ b/include/hw/misc/aspeed_video.h
+@@ -28,6 +28,8 @@
+     uint32_t width;
+     uint32_t height;
+     uint32_t frame_ms;
++    uint64_t frames;
++    uint64_t dma_errors;
+     bool signal;
+     char *image;
+     uint8_t *jpeg;
+diff --git a/hw/misc/aspeed_vhub_sim.c b/hw/misc/aspeed_vhub_sim.c
+--- a/hw/misc/aspeed_vhub_sim.c
++++ b/hw/misc/aspeed_vhub_sim.c
+@@ -112,6 +112,22 @@
+     s->host_connected = value;
+     vhub_irq(s);
+ }
++static char *vhub_get_diagnostics(Object *obj, Error **errp)
++{
++    VHubSimState *s = VHUB_SIM(obj);
++    GString *out = g_string_new(NULL);
++    unsigned p;
++    g_string_append_printf(out, "host=%d upstream=%d ier=%08x isr=%08x ack=%08x",
++                           s->host_connected, !!(s->regs[R(0)] & BIT(0)),
++                           s->regs[R(0x08)], s->regs[R(0x0c)],
++                           s->regs[R(0x18)]);
++    for (p = 1; p <= PORTS; p++) {
++        g_string_append_printf(out, " p%u=%08x/%08x", p,
++                               s->regs[R(DEV(p))], s->regs[R(DEV(p) + 4)]);
++    }
++    return g_string_free(out, false);
++}
++
+ static char *vhub_get_result(Object *obj, Error **errp)
+ {
+     return g_strdup(VHUB_SIM(obj)->result ?: "");
+@@ -182,6 +198,15 @@
+         }
+     }
+     if (setup) {
++        /* QMP may deliver tokens before the guest services the previous ACK
++         * or bus reset. Preserve pending EP0 events and let the host retry.
++         * Otherwise reset handling can erase the newly prepared descriptor.
++         */
++        uint32_t pending = s->regs[R(p ? DEV(p) + 4 : 0x0c)];
++        if ((pending & (BIT(0) | BIT(1) | BIT(3))) ||
++            (s->regs[R(0x0c)] & BIT(6))) {
++            vhub_result(s, "nak", NULL, 0); return;
++        }
+         if (ep || len != 8) { error_setg(errp, "SETUP must be 8 bytes on EP0"); return; }
+         s->regs[R(0x80 + p * 8)] = ldl_le_p(data);
+         s->regs[R(0x84 + p * 8)] = ldl_le_p(data + 4);
+@@ -262,6 +287,7 @@
+ }
+ static void vhub_init(Object *obj)
+ {
++    object_property_add_str(obj, "diagnostics", vhub_get_diagnostics, NULL);
+     object_property_add_bool(obj, "host-connected", vhub_get_connected, vhub_set_connected);
+     object_property_add_str(obj, "host-token", NULL, vhub_token);
+     object_property_add_str(obj, "host-result", vhub_get_result, NULL);

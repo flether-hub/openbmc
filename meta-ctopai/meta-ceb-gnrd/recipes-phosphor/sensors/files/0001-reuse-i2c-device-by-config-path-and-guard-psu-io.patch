@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] sensors: reuse I2C devices by configuration path and guard PSU I/O
+
+Custom PSU label names need not contain the device configuration Name.
+Match the configuration path as well, so repeated configuration callbacks
+reuse the active sensor's shared I2CDevice instead of removing its hwmon.
+Catch Boost file-open errors during PSU discovery when sysfs disappears.
+Keep other PSU sensors alive; do not fabricate readings or suppress errors.
+
+Base: dbus-sensors 17f2fc3fe1400bf9e45c075e4864cc79afa2ed91
+Upstream-Status: Pending [custom-label lifecycle and hot-unplug robustness]
+---
+diff --git a/src/DeviceMgmt.hpp b/src/DeviceMgmt.hpp
+--- a/src/DeviceMgmt.hpp
++++ b/src/DeviceMgmt.hpp
+@@ -118,8 +118,13 @@
+             std::shared_ptr<T> findSensor(nullptr);
+             for (const auto& sensor : sensors)
+             {
+-                if (sensorNameFind(sensor.first, *sensorName) !=
+-                    std::string::npos)
++                // Per-label names may differ completely from the device's
++                // Name (CRPS0 versus PSU0_InputVoltage). The configuration path
++                // still identifies the active sensor's owning I2C device.
++                if (sensor.second != nullptr &&
++                    (sensor.second->configurationPath == path.str ||
++                     sensorNameFind(sensor.first, *sensorName) !=
++                         std::string::npos))
+                 {
+                     findSensor = sensor.second;
+                     break;
+diff --git a/src/psu/PSUSensorMain.cpp b/src/psu/PSUSensorMain.cpp
+--- a/src/psu/PSUSensorMain.cpp
++++ b/src/psu/PSUSensorMain.cpp
+@@ -31,6 +31,7 @@
+ #include <boost/asio/steady_timer.hpp>
+ #include <boost/container/flat_map.hpp>
+ #include <boost/container/flat_set.hpp>
++#include <boost/system/system_error.hpp>
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/asio/connection.hpp>
+ #include <sdbusplus/asio/object_server.hpp>
+@@ -1221,8 +1222,19 @@
+     auto getter = std::make_shared<GetSensorConfiguration>(
+         dbusConnection, [&io, &objectServer, &dbusConnection, sensorsChanged,
+                          activateOnly](const ManagedObjectType& sensorConfigs) {
+-            createSensorsCallback(io, objectServer, dbusConnection,
+-                                  sensorConfigs, sensorsChanged, activateOnly);
++            try
++            {
++                createSensorsCallback(io, objectServer, dbusConnection,
++                                      sensorConfigs, sensorsChanged, activateOnly);
++            }
++            catch (const boost::system::system_error& error)
++            {
++                // A hot-unplug can remove a discovered hwmon file before its
++                // async file is opened. Keep the service and other PSUs alive;
++                // the next configuration/presence rescan can retry discovery.
++                lg2::error("PSU discovery interrupted by an I/O error: {ERROR}",
++                           "ERROR", error.what());
++            }
+         });
+     std::vector<std::string_view> types;
+     types.reserve(sensorTypes.size());

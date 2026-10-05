@@ -77,4 +77,5 @@ class PanelServices:
     def state(self):
         with self.lock:
             return {"image": os.path.basename(self.vga_override) if self.vga_override else "自动：POST / OS",
-                    "generation": self.video_generation, "signal_override": self.vga_signal}
+                    "generation": self.video_generation, "signal_override": self.vga_signal,
+                    "preview_path": self.vga_override}

@@ -1,0 +1,217 @@
+From 0000000000000000000000000000000000000021 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] webui: refresh power state while waiting for server operations
+
+Await reset submission and actively poll Redfish rather than watching a
+store value which may never change without manual page refresh. Release
+the busy flag on success, HTTP error or explicit timeout; report failures.
+GracefulRestart must observe departure from On before accepting On again.
+ForceRestart need not drop chassis power; its fresh On state unlocks power
+controls without claiming that POST or OS boot completed.
+
+Base: webui-vue 8538dca185982882a0d72986f45c6a76c18b4048
+Upstream-Status: Pending [power-operation status refresh]
+---
+diff --git a/src/store/modules/Operations/ControlStore.js b/src/store/modules/Operations/ControlStore.js
+--- a/src/store/modules/Operations/ControlStore.js
++++ b/src/store/modules/Operations/ControlStore.js
+@@ -1,31 +1,31 @@
+ import api from '@/store/api';
+ import i18n from '@/i18n';
+ 
+-/**
+- * Watch for serverStatus changes in GlobalStore module
+- * to set isOperationInProgress state
+- * Stop watching status changes and resolve Promise when
+- * serverStatus value matches passed argument or after 5 minutes
+- * @param {string} serverStatus
+- * @returns {Promise}
+- */
+-const checkForServerStatus = function (serverStatus) {
+-  return new Promise((resolve) => {
+-    const timer = setTimeout(() => {
+-      resolve();
+-      unwatch();
+-    }, 300000 /*5mins*/);
+-    const unwatch = this.watch(
+-      (state) => state.global.serverStatus,
+-      (value) => {
+-        if (value === serverStatus) {
+-          resolve();
+-          unwatch();
+-          clearTimeout(timer);
+-        }
+-      },
+-    );
+-  });
++// Actively read Redfish: a Vuex watcher alone cannot refresh PowerState.
++// GracefulRestart on this platform cycles power. Observe Off before accepting
++// On again; an initial On or LastResetTime change is not completion evidence.
++const checkForServerStatus = async function (context, systemPath, resetType, initial) {
++  const target = ['ForceOff', 'GracefulShutdown'].includes(resetType) ? 'Off' : 'On';
++  const deadline = Date.now() + 330000;
++  let transitioned = initial.PowerState !== target;
++  while (Date.now() < deadline) {
++    await new Promise((resolve) => setTimeout(resolve, 1000));
++    let response;
++    try {
++      response = await api.get(systemPath, { timeout: 10000 });
++    } catch (error) {
++      if ([401, 403].includes(error.response?.status)) throw error;
++      console.log(error);
++      continue;
++    }
++    const { PowerState, Status: { State } = {}, LastResetTime } = response.data;
++    context.commit('global/setServerStatus',
++      ['Quiesced', 'InTest'].includes(State) ? State : PowerState, { root: true });
++    if (LastResetTime) context.commit('setLastPowerOperationTime', new Date(LastResetTime));
++    if (PowerState !== target) transitioned = true;
++    if (PowerState === target && (resetType !== 'GracefulRestart' || transitioned)) return;
++  }
++  throw new Error('Power operation timed out. Check the server status before retrying.');
+ };
+ 
+ const ControlStore = {
+@@ -86,52 +86,35 @@
+           );
+         });
+     },
+-    async serverPowerOn({ dispatch, commit }) {
+-      const data = { ResetType: 'On' };
+-      dispatch('serverPowerChange', data);
+-      await checkForServerStatus.bind(this, 'on')();
+-      commit('setOperationInProgress', false);
+-      dispatch('getLastPowerOperationTime');
++    serverPowerOn({ dispatch }) {
++      return dispatch('serverPowerChange', { ResetType: 'On' });
+     },
+-    async serverSoftReboot({ dispatch, commit }) {
+-      const data = { ResetType: 'GracefulRestart' };
+-      dispatch('serverPowerChange', data);
+-      await checkForServerStatus.bind(this, 'on')();
+-      commit('setOperationInProgress', false);
+-      dispatch('getLastPowerOperationTime');
++    serverSoftReboot({ dispatch }) {
++      return dispatch('serverPowerChange', { ResetType: 'GracefulRestart' });
+     },
+-    async serverHardReboot({ dispatch, commit }) {
+-      const data = { ResetType: 'ForceRestart' };
+-      dispatch('serverPowerChange', data);
+-      await checkForServerStatus.bind(this, 'on')();
+-      commit('setOperationInProgress', false);
+-      dispatch('getLastPowerOperationTime');
++    serverHardReboot({ dispatch }) {
++      return dispatch('serverPowerChange', { ResetType: 'ForceRestart' });
+     },
+-    async serverSoftPowerOff({ dispatch, commit }) {
+-      const data = { ResetType: 'GracefulShutdown' };
+-      dispatch('serverPowerChange', data);
+-      await checkForServerStatus.bind(this, 'off')();
+-      commit('setOperationInProgress', false);
+-      dispatch('getLastPowerOperationTime');
++    serverSoftPowerOff({ dispatch }) {
++      return dispatch('serverPowerChange', { ResetType: 'GracefulShutdown' });
+     },
+-    async serverHardPowerOff({ dispatch, commit }) {
+-      const data = { ResetType: 'ForceOff' };
+-      dispatch('serverPowerChange', data);
+-      await checkForServerStatus.bind(this, 'off')();
+-      commit('setOperationInProgress', false);
+-      dispatch('getLastPowerOperationTime');
++    serverHardPowerOff({ dispatch }) {
++      return dispatch('serverPowerChange', { ResetType: 'ForceOff' });
+     },
+-    async serverPowerChange({ commit }, data) {
+-      commit('setOperationInProgress', true);
+-      api
+-        .post(
+-          `${await this.dispatch('global/getSystemPath')}/Actions/ComputerSystem.Reset`,
+-          data,
+-        )
+-        .catch((error) => {
+-          console.log(error);
+-          commit('setOperationInProgress', false);
+-        });
++    async serverPowerChange(context, data) {
++      if (context.state.isOperationInProgress) return;
++      context.commit('setOperationInProgress', true);
++      try {
++        const systemPath = await this.dispatch('global/getSystemPath');
++        if (!systemPath) throw new Error('Server power control is unavailable.');
++        const initial = (await api.get(systemPath, { timeout: 10000 })).data;
++        await api.post(`${systemPath}/Actions/ComputerSystem.Reset`, data, { timeout: 10000 });
++        // ForceRestart may leave PowerState On throughout its reset pulse.
++        // This refreshes power controls; it does not attest BIOS/OS boot success.
++        await checkForServerStatus.call(this, context, systemPath, data.ResetType, initial);
++      } finally {
++        context.commit('setOperationInProgress', false);
++      }
+     },
+   },
+ };
+diff --git a/src/store/modules/GlobalStore.js b/src/store/modules/GlobalStore.js
+--- a/src/store/modules/GlobalStore.js
++++ b/src/store/modules/GlobalStore.js
+@@ -130,7 +130,7 @@
+         .catch((error) => console.log(error));
+     },
+     async getSystemInfo({ commit }) {
+-      api
++      return api
+         .get(`${await this.dispatch('global/getSystemPath')}`)
+         .then(
+           ({
+diff --git a/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue b/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
+--- a/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
++++ b/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
+@@ -235,12 +235,19 @@
+     Promise.all([
+       this.$store.dispatch('serverBootSettings/getBootSettings'),
+       this.$store.dispatch('controls/getLastPowerOperationTime'),
++      this.$store.dispatch('global/getSystemInfo'),
+       bootSettingsPromise,
+     ]).finally(() => this.endLoader());
+   },
+   methods: {
++    runPowerOperation(action) {
++      return this.$store.dispatch(action).catch((error) => {
++        console.log(error);
++        this.errorToast(error.message);
++      });
++    },
+     powerOn() {
+-      this.$store.dispatch('controls/serverPowerOn');
++      this.runPowerOperation('controls/serverPowerOn');
+     },
+     rebootServer() {
+       const modalMessage = i18n.global.t(
+@@ -257,11 +264,11 @@
+ 
+       if (this.form.rebootOption === 'orderly') {
+         this.confirmDialog(modalMessage, modalOptions).then((confirmed) => {
+-          if (confirmed) this.$store.dispatch('controls/serverSoftReboot');
++          if (confirmed) this.runPowerOperation('controls/serverSoftReboot');
+         });
+       } else if (this.form.rebootOption === 'immediate') {
+         this.confirmDialog(modalMessage, modalOptions).then((confirmed) => {
+-          if (confirmed) this.$store.dispatch('controls/serverHardReboot');
++          if (confirmed) this.runPowerOperation('controls/serverHardReboot');
+         });
+       }
+     },
+@@ -280,12 +287,12 @@
+ 
+       if (this.form.shutdownOption === 'orderly') {
+         this.confirmDialog(modalMessage, modalOptions).then((confirmed) => {
+-          if (confirmed) this.$store.dispatch('controls/serverSoftPowerOff');
++          if (confirmed) this.runPowerOperation('controls/serverSoftPowerOff');
+         });
+       }
+       if (this.form.shutdownOption === 'immediate') {
+         this.confirmDialog(modalMessage, modalOptions).then((confirmed) => {
+-          if (confirmed) this.$store.dispatch('controls/serverHardPowerOff');
++          if (confirmed) this.runPowerOperation('controls/serverHardPowerOff');
+         });
+       }
+     },

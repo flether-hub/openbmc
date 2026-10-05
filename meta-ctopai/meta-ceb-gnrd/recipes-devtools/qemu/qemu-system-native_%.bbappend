@@ -27,5 +27,7 @@ SRC_URI += " \
     file://0017-aspeed-adc-compensation-mode-always-reads-half-scale.patch \
     file://0018-aspeed-integrate-espi-usb-chassis-and-video.patch \
     file://0019-aspeed-peci-model-GNR-D-channel-temperatures.patch \
+    file://0020-bmc-host-sim-consume-force-off-pulse-while-off.patch \
     file://0020-aspeed-adc-keep-the-channel-values-to-10-bits.patch \
+    file://0021-aspeed-fix-video-detection-and-usb-ep0-handshakes.patch \
     "

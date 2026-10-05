@@ -122,6 +122,24 @@ main { flex: 1; width: 100%; min-height: 0; align-content: start; overflow: auto
 #diagram { height: min(68dvh, 700px); }
 .preview { max-height: 42dvh; width: auto; max-width: 100%; }
 .card:has(#adc) { max-width: 1100px; width: 100%; justify-self: center; }
+/* Operations stay on the left; GPIO and logs remain visible on the right. */
+body { min-width: 1080px; overflow: hidden; }
+main { max-width: none; overflow: hidden; grid-template-columns: minmax(460px, 44fr) minmax(540px, 56fr); gap: 12px; padding: 12px; align-content: stretch; }
+.workbench { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.workbench .navigation { padding: 0 0 8px; background: transparent; }
+.workbench .navigation button { padding: 6px 9px; font-size: 12px; }
+.tab-content { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: 1fr; gap: 12px; align-content: start; }
+.status-column { display: grid; grid-template-rows: minmax(330px, 65fr) minmax(180px, 35fr); gap: 12px; min-width: 0; min-height: 0; }
+.status-column .card { display: flex; flex-direction: column; min-height: 0; padding: 10px; }
+.status-column .card h2 { flex: none; margin-bottom: 6px; font-size: 13px; }
+.status-column .summary { flex: none; gap: 5px; margin-bottom: 4px; }
+.status-column .summary span { padding: 3px 6px; font-size: 10px; }
+.status-column .diagram-scroll { flex: 1; min-height: 0; overflow: auto; }
+.status-column #diagram { width: 100%; height: 100%; min-width: 540px; min-height: 310px; }
+.status-column .row { flex: none; margin: 2px 0 6px; }
+.status-column .row button { padding: 4px 9px; font-size: 12px; }
+.status-column .log { flex: 1; min-height: 0; height: auto; white-space: pre; }
+.tab-content .split { grid-template-columns: 1fr; }
 </style>
 </head>
 <body>
@@ -244,6 +262,7 @@ main { flex: 1; width: 100%; min-height: 0; align-content: start; overflow: auto
 
 <section class="card wide">
   <h2>事件日志</h2>
+  <div class="row"><button onclick="copyLog()">复制日志</button><button onclick="clearLog()">清除日志</button><span class="muted" id="log-status">只清除面板记录，保留终端与 BMC 日志。</span></div>
   <pre class="log" id="log"></pre>
 </section>
 
@@ -254,6 +273,32 @@ let termPos = 0;
 
 function val(id) { return document.getElementById(id).value; }
 function esc(t) { return String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function copyLog() {
+  const text = document.getElementById('log').textContent;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const input = document.createElement('textarea');
+      input.value = text; input.style.position = 'fixed'; input.style.left = '-9999px';
+      document.body.appendChild(input); input.select();
+      let ok;
+      try { ok = document.execCommand('copy'); } finally { input.remove(); }
+      if (!ok) throw new Error('请选中日志后按 Ctrl+C');
+    }
+    setText('log-status', '日志已复制');
+  } catch (e) { setText('log-status', '复制失败：' + e.message); }
+}
+
+async function clearLog() {
+  try {
+    const response = await fetch('/api/log/clear', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    S.log = []; setText('log', '');
+    setText('log-status', '面板日志已清除；终端与 BMC 日志保留。');
+  } catch (e) { setText('log-status', '清除失败：' + e.message); }
+}
 
 async function cmd(c) {
   try {
@@ -310,10 +355,14 @@ function buildDiagram() {
   h += `<text class="title" x="${BX + 14}" y="34">AST2600 BMC</text><text class="pin" x="${BX + 14}" y="54">GPIO / 外设控制器</text>`;
   h += `<rect class="box" x="${HX}" y="10" width="${HW}" height="${bottom}" rx="10"/>`;
   h += `<text class="title" x="${HX + 14}" y="34">GNR-D / CPLD</text><text class="pin" x="${HX + 14}" y="54">主机输入与输出</text>`;
+  h += `<text class="pin" x="500" y="32" text-anchor="middle">灯色 = 当前电平；橙色外圈 = 最近 2 秒有变化</text>`;
+  h += `<text class="pin" x="500" y="52" text-anchor="middle" id="gpio-age"></text>`;
   SIGS.forEach((s, i) => {
     const y = top + i * step + 14;
     const [name, gpio, key, dir, low, note] = s;
-    h += `<text class="pin" x="${BX + 14}" y="${y + 4}">${gpio}</text>`;
+    h += `<text class="pin" x="${BX + 14}" y="${y - 4}">${gpio}</text>`;
+    h += `<text class="pin" id="pinmode_${key}" x="${BX + 14}" y="${y + 11}"></text>`;
+    h += `<text class="pin" id="edge_${key}" x="${BX + BW + 12}" y="${y - 9}"></text>`;
     h += `<circle id="ledb_${key}" cx="${BX + BW - 16}" cy="${y}" r="7" fill="var(--off)"/>`;
     h += `<line id="wire_${key}" class="wire" x1="${BX + BW}" y1="${y}" x2="${HX}" y2="${y}"/>`;
     const ax = dir === 'b2h' ? HX - 4 : BX + BW + 4;
@@ -363,6 +412,7 @@ function drawDiagram() {
   SIGS.forEach(s => {
     const [name, gpio, key, dir, low] = s;
     const v = pins[key];
+    const detail = (S.pin_details || {})[key] || {};
     const active = low && v === false;   /* a low-active signal asserted */
     const w = document.getElementById('wire_' + key);
     if (w) w.setAttribute('class', 'wire' + (active ? ' act' : (v ? ' hi' : '')));
@@ -374,7 +424,26 @@ function drawDiagram() {
     if (active && low) c = 'var(--warn)';
     setFill('ledb_' + key, c);
     setFill('ledh_' + key, c);
+    const mode = detail.output === true ? 'OUT' : detail.output === false ? 'IN' : 'DIR?';
+    setText('pinmode_' + key, `${mode}=${v == null ? '?' : Number(v)}`);
+    setText('edge_' + key, detail.last_edge ? `Δ${detail.changes} ${detail.last_edge}` : '');
+    const edge = document.getElementById('edge_' + key);
+    if (edge) edge.style.fill = detail.recent ? 'var(--warn)' : 'var(--muted)';
+    for (const id of ['ledb_', 'ledh_']) {
+      const led = document.getElementById(id + key);
+      if (!led) continue;
+      led.setAttribute('stroke', detail.recent ? 'var(--warn)' : 'none');
+      led.setAttribute('stroke-width', '3');
+      led.replaceChildren();
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = `${mode} · 引脚读数 ${detail.raw == null ? '?' : Number(detail.raw)} · 变化 ${detail.changes || 0} 次` +
+        (detail.last_at ? ` · 最近 ${detail.last_at} ${detail.last_edge}` : '') +
+        (detail.pulse_ms != null ? ` · 最近低脉冲约 ${detail.pulse_ms} ms` : '');
+      led.appendChild(title);
+    }
   });
+  setText('gpio-age', S.gpio_sample_age_ms == null ? '等待 GPIO 采样' :
+    `采样距今 ${S.gpio_sample_age_ms} ms · IN 为未驱动/输入，OUT 为 BMC 输出；Δ 为观测变化次数`);
   const peci = S.peci || {};
   setText('busval_peci', peci['cpu-online'] == null ? '' :
           (peci['cpu-online'] ? `CPU ${(peci['cpu-temp-mc'] / 1000).toFixed(0)}°C` : 'CPU 无响应'));
@@ -531,13 +600,19 @@ function drawHardware() {
   ].map(x => '<span>' + esc(x) + '</span>').join('');
   setText('vga-status', v.available ? (v.signal ? 'VGA 有信号 · ' + v.image : 'VGA 无信号') : 'QEMU 没有视频模型');
   const preview = document.getElementById('vga-preview');
-  preview.style.visibility = v.signal ? 'visible' : 'hidden';
-  if (v.signal && changed('vga', [v.path, v.generation])) preview.src = '/api/vga?t=' + Date.now();
+  const previewPath = v.preview_path || (v.signal ? v.path : null);
+  preview.style.visibility = previewPath ? 'visible' : 'hidden';
+  if (previewPath && changed('vga', [previewPath, v.generation])) preview.src = '/api/vga?t=' + Date.now();
+  if (v.preview_path && !v.signal) setText('vga-status', '已选择图片预览 · 主机 VGA 无信号；图片预览不代表 BMC KVM 捕获成功');
   const devices = u.devices || [];
   setText('usb-status', (u.available ? (u.connected ? 'USB 已连接' : '等待主机上电 / gadget 就绪') : 'QEMU 没有 vHub 模型') +
     '\n' + devices.map(d => `端口${d.port} ${d.vid}:${d.pid} · ${d.reports} 个报告`).join(' / ') + (u.error ? '\n' + u.error : ''));
   setText('usb-reports', (u.keyboard_text || '') + '\n\nHID 报告：\n' +
-    (u.reports || []).slice(-20).map(r => `port${r.port} ep${r.endpoint}  ${r.hex}`).join('\n'));
+    (u.reports || []).slice(-20).map(r => `port${r.port} ep${r.endpoint}  ${r.hex}`).join('\n') +
+    '\n\n鼠标：' + JSON.stringify(u.pointer || null) +
+    '\n端口错误：' + JSON.stringify(u.port_errors || {}) + '\n模型：' + (u.diagnostics || '无诊断属性'));
+  setText('vga-status', document.getElementById('vga-status').textContent +
+    '\n' + (v.diagnostics || '旧模型没有视频帧计数器'));
   const ports = devices.filter(d => d.interfaces.some(i => i.class === 8)).map(d => String(d.port));
   const selector = document.getElementById('media-port');
   if (changed('media-ports', ports)) {
@@ -573,16 +648,22 @@ document.getElementById('termin').addEventListener('keydown', async e => {
 
 function buildNavigation() {
   const cards = [...document.querySelectorAll('main > section.card')];
-  const pages = [['硬件连接', [0]], ['主机 / POST', [1, 2]], ['风扇', [3]], ['PSU', [4]],
+  const pages = [['主机 / POST', [1, 2]], ['风扇', [3]], ['PSU', [4]],
     ['温度', [5]], ['电压', [6]], ['RTC', [7]], ['eSPI / CHASI#', [8]],
-    ['VGA / USB', [9]], ['虚拟媒体', [10]], ['SOL', [11]], ['日志', [12]]];
+    ['VGA / USB', [9]], ['虚拟媒体', [10]], ['SOL', [11]]];
   const nav = document.getElementById('navigation');
+  const workbench = document.createElement('div'); workbench.className = 'workbench';
+  const content = document.createElement('div'); content.className = 'tab-content';
+  const status = document.createElement('aside'); status.className = 'status-column';
+  workbench.append(nav, content);
+  cards.forEach((card, index) => (index === 0 || index === 12 ? status : content).appendChild(card));
+  document.querySelector('main').replaceChildren(workbench, status);
   const buttons = pages.map(([title, indices], selected) => {
     const button = document.createElement('button'); button.textContent = title;
     button.onclick = () => {
-      cards.forEach((card, index) => card.classList.toggle('tab-hidden', !indices.includes(index)));
+      cards.forEach((card, index) => card.classList.toggle('tab-hidden', index !== 0 && index !== 12 && !indices.includes(index)));
       buttons.forEach((b, index) => { b.classList.toggle('selected', index === selected); b.setAttribute('aria-pressed', index === selected); });
-      document.querySelector('main').scrollTop = 0;
+      content.scrollTop = 0;
     };
     nav.appendChild(button); return button;
   });

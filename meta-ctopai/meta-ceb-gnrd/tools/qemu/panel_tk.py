@@ -52,9 +52,9 @@ class PanelWindow:
         self.services = services
         self.root = tk.Tk()
         self.root.title("CEB-GNRD 模拟控制面板")
-        self.root.geometry("%dx%d" % (min(1320, self.root.winfo_screenwidth() - 60),
-                                     min(760, self.root.winfo_screenheight() - 80)))
-        self.root.minsize(900, 500)
+        self.root.geometry("%dx%d" % (min(1760, self.root.winfo_screenwidth() - 60),
+                                     min(980, self.root.winfo_screenheight() - 80)))
+        self.root.minsize(1200, 650)
         style = ttk.Style(self.root)
         style.theme_use("clam")
         style.configure(".", background="#f2f5fa", foreground="#19304c", font=("", 10))
@@ -80,6 +80,7 @@ class PanelWindow:
                 msg = ""
             except Exception as exc:          # shown in the status bar
                 msg = str(exc)
+                self.services.log("GUI 命令失败：" + msg)
             self.root.after(0, lambda: self.status.set(msg))
         threading.Thread(target=work, daemon=True).start()
 
@@ -110,14 +111,21 @@ class PanelWindow:
         self.mode_lbl = ttk.Label(top, text="", foreground="#6b7280")
         self.mode_lbl.pack(side="left", padx=12)
 
-        tabs = ttk.Notebook(self.body)
-        tabs.pack(fill="both", expand=True, padx=10, pady=6)
-        overview = ttk.Frame(tabs, padding=8)
-        tabs.add(overview, text="硬件连接")
-        # just tall enough for the 15 rows (no empty area below the drawing)
-        self.canvas = tk.Canvas(overview, height=600, background="#ffffff",
+        self.columns = ttk.Panedwindow(self.body, orient="horizontal")
+        self.columns.pack(fill="both", expand=True, padx=10, pady=6)
+        left = ttk.Frame(self.columns)
+        right = ttk.Panedwindow(self.columns, orient="vertical")
+        self.columns.add(left, weight=45)
+        self.columns.add(right, weight=55)
+        tabs = ttk.Notebook(left)
+        tabs.pack(fill="both", expand=True)
+        overview = ttk.LabelFrame(right, text="硬件连接 · 当前电平 / 最近变化", padding=4)
+        log_area = ttk.Frame(right)
+        right.add(overview, weight=3)
+        right.add(log_area, weight=2)
+        self.canvas = tk.Canvas(overview, height=420, background="#ffffff",
                                 highlightthickness=0)
-        self.canvas.pack(fill="x", anchor="n")
+        self.canvas.pack(fill="both", expand=True)
         self._build_diagram()
         self.diagram_width = None
         self.canvas.bind("<Configure>", self._resize_diagram)
@@ -129,7 +137,9 @@ class PanelWindow:
         self._tab_interfaces(tabs)
         self._tab_kvm_usb(tabs)
         self._tab_console(tabs)
-        self._tab_log(tabs)
+        self._build_log(log_area)
+        self.root.after(200, lambda: self.columns.sashpos(0, int(self.columns.winfo_width() * .45)))
+        self.root.after(200, lambda: right.sashpos(0, int(right.winfo_height() * .65)))
 
         self.status = tk.StringVar()
         ttk.Label(self.body, textvariable=self.status, foreground=ALERT).pack(
@@ -146,10 +156,10 @@ class PanelWindow:
         c.delete("all")
         for child in c.winfo_children():
             child.destroy()
-        bx, bw, hw = 16, 170, 214
-        hx = max(650, width - hw - 16)
-        top = 64
-        step = max(24, min(34, (height - 90) / (len(SIGNALS) + len(BUSES))))
+        bx, bw, hw = 10, 116, 176
+        hx = max(bx + bw + 330, width - hw - 10)
+        top = 62
+        step = max(21, min(32, (height - 82) / (len(SIGNALS) + len(BUSES))))
         mid = (bx + bw + hx) // 2
         bottom = top + (len(SIGNALS) + len(BUSES)) * step + 10
         c.create_rectangle(bx, 12, bx + bw, bottom, outline="#d9e2ef", fill="#eef4fc")
@@ -158,19 +168,23 @@ class PanelWindow:
         c.create_text(bx + 14, 51, text="BMC · GPIO / 外设", anchor="w", fill="#70849d", font=("", 9))
         c.create_text(hx + 14, 32, text="GNR-D / CPLD", anchor="w", fill="#225ba4", font=("", 14, "bold"))
         c.create_text(hx + 14, 51, text="主机 · 输入与输出", anchor="w", fill="#70849d", font=("", 9))
-        self.wires, self.leds = {}, {}
+        c.create_text(mid, 26, text="灯色 = 当前电平；橙色外圈 = 最近 2 秒变化", fill="#70849d", font=("", 8))
+        self.gpio_age = c.create_text(mid, 43, text="等待 GPIO 采样", fill="#70849d", font=("", 8))
+        self.wires, self.leds, self.pin_modes, self.pin_edges = {}, {}, {}, {}
         for i, (name, gpio, key, direction, low, note) in enumerate(SIGNALS):
             y = top + i * step + 10
-            c.create_text(bx + 12, y, text=gpio, anchor="w", fill="#6b7280",
-                          font=("Courier", 9))
+            c.create_text(bx + 8, y - 5, text=gpio, anchor="w", fill="#6b7280",
+                          font=("Courier", 8))
+            self.pin_modes[key] = c.create_text(bx + 8, y + 7, text="", anchor="w", fill="#6b7280", font=("Courier", 8))
+            self.pin_edges[key] = c.create_text(bx + bw + 6, y - 7, text="", anchor="w", fill="#70849d", font=("", 7))
             self.leds[key] = (
                 c.create_oval(bx + bw - 22, y - 7, bx + bw - 8, y + 7, fill=OFF, outline=""),
                 c.create_oval(hx + 8, y - 7, hx + 22, y + 7, fill=OFF, outline=""))
             self.wires[key] = c.create_line(bx + bw, y, hx, y, fill=WIRE, width=2,
                                             arrow="last" if direction == "b2h" else "first")
-            c.create_rectangle(mid - 175, y - 18, mid + 175, y + 17, fill="#ffffff", outline="")
-            c.create_text(mid, y - 7, text=name, font=("", 9))
-            c.create_text(mid, y + 8, text=note, fill="#6b7280", font=("", 8))
+            c.create_rectangle(mid - 130, y - 16, mid + 130, y + 15, fill="#ffffff", outline="")
+            c.create_text(mid, y - 6, text=name, font=("", 8))
+            c.create_text(mid, y + 7, text=note, fill="#6b7280", font=("", 7))
             if key in HOST_LABELS:
                 c.create_text(hx + 30, y, text=HOST_LABELS[key], anchor="w", font=("", 9))
         for key, text, cmd in (("gpioM2", "按前面板电源键", "power"),
@@ -178,7 +192,7 @@ class PanelWindow:
             i = [s[2] for s in SIGNALS].index(key)
             y = top + i * step + 10
             c.create_window(hx + 30, y, anchor="w",
-                            window=self.button(c, text, cmd, width=16))
+                            window=self.button(c, text, cmd, width=12))
         self.bus_vals = {}
         for j, (name, note, key) in enumerate(BUSES):
             y = top + (len(SIGNALS) + j) * step + 16
@@ -192,7 +206,7 @@ class PanelWindow:
         f = ttk.Frame(tabs, padding=10)
         tabs.add(f, text="主机控制 / POST 码")
         left = ttk.LabelFrame(f, text="主机控制", padding=8)
-        left.pack(side="left", fill="both", expand=True)
+        left.pack(side="top", fill="x")
         row = ttk.Frame(left); row.pack(anchor="w", pady=3)
         self.button(row, "前面板电源键（短按）", "power").pack(side="left", padx=2)
         self.button(row, "长按 5 s（强制关机）", "power-hold").pack(side="left", padx=2)
@@ -218,7 +232,7 @@ class PanelWindow:
             self.run("shutdown " + self.shut_s.get()))).pack(side="left", padx=6)
 
         right = ttk.LabelFrame(f, text="80 端口 POST 码（LPC snoop）", padding=8)
-        right.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        right.pack(side="top", fill="both", expand=True, pady=(10, 0))
         self.post_lbl = tk.Label(right, text="--", font=("Courier", 40, "bold"),
                                  fg="#ff4d4d", bg="#0b0f14", width=4)
         self.post_lbl.pack(anchor="w")
@@ -263,7 +277,7 @@ class PanelWindow:
         self.psu_rows = []
         for i in range(3):
             box = ttk.LabelFrame(f, text="PSU%d (0x%02x)" % (i, 0x58 + i), padding=8)
-            box.grid(row=0, column=i, sticky="nsew", padx=4)
+            box.grid(row=i, column=0, sticky="nsew", padx=4, pady=4)
             state = ttk.Label(box, text="--", font=("", 11, "bold"))
             state.pack(anchor="w")
             info = ttk.Label(box, text="", foreground="#6b7280", justify="left")
@@ -283,18 +297,21 @@ class PanelWindow:
             load.bind("<ButtonRelease-1>",
                       lambda e, i=i, s=load: self.run("psu %d load %d" % (i, s.get())))
             self.psu_rows.append((box, state, info, load))
-            f.columnconfigure(i, weight=1)
+            f.rowconfigure(i, weight=1)
+        f.columnconfigure(0, weight=1)
 
     def _tab_sensors(self, tabs):
         f = ttk.Frame(tabs, padding=10)
         tabs.add(f, text="温度 / ADC / RTC")
-        temps = ttk.LabelFrame(f, text="温度 °C（松开滑块即生效）", padding=8)
-        temps.pack(side="left", fill="y")
+        sidebar = ttk.Frame(f)
+        sidebar.pack(side="left", fill="y")
+        temps = ttk.LabelFrame(sidebar, text="温度 °C（松开生效）", padding=6)
+        temps.pack(fill="x")
         self.temp_scales = {}
         rows = TEMP_NAMES + [("cpu", "CPU 封装（PECI）"), ("dimm", "DIMM（PECI）")]
         for key, label in rows:
             ttk.Label(temps, text=label).pack(anchor="w")
-            sc = tk.Scale(temps, from_=0, to=110, orient="horizontal", length=220)
+            sc = tk.Scale(temps, from_=0, to=110, orient="horizontal", length=170)
             sc.pack(anchor="w")
             cmd = ("temp %s" % key) if key not in ("cpu", "dimm") else key
             sc.bind("<ButtonRelease-1>", lambda e, c=cmd, s=sc: self.run("%s %d" % (c, s.get())))
@@ -306,7 +323,7 @@ class PanelWindow:
         for i in range(16):
             name = ttk.Label(adc, text="", font=("Courier", 9))
             name.grid(row=i, column=0, sticky="w")
-            rail = ttk.Label(adc, text="", font=("Courier", 9), width=30)
+            rail = ttk.Label(adc, text="", font=("Courier", 8), width=23)
             rail.grid(row=i, column=1, sticky="w")
             mv = tk.StringVar()
             ttk.Entry(adc, textvariable=mv, width=7).grid(row=i, column=2)
@@ -316,8 +333,8 @@ class PanelWindow:
         ttk.Label(adc, text="填写测量值，如 12.1；÷N 表示模拟器自动分压。\n引脚超过 2.5 V 时保留 ADC 饱和行为。",
                   foreground="#70849d").grid(row=16, column=0, columnspan=4, sticky="w", pady=8)
 
-        rtc = ttk.LabelFrame(f, text="RTC NCT3015Y", padding=8)
-        rtc.pack(side="left", fill="y")
+        rtc = ttk.LabelFrame(sidebar, text="RTC NCT3015Y", padding=6)
+        rtc.pack(fill="x", pady=6)
         self.rtc_lbl = ttk.Label(rtc, text="电池：--")
         self.rtc_lbl.pack(anchor="w")
         self.button(rtc, "电池正常", "rtc battery ok").pack(anchor="w", pady=2)
@@ -336,11 +353,34 @@ class PanelWindow:
         entry.pack(fill="x", pady=4)
         entry.bind("<Return>", self._send_console)
 
-    def _tab_log(self, tabs):
-        f = ttk.Frame(tabs, padding=10)
-        tabs.add(f, text="事件日志")
-        self.log = tk.Text(f, height=16, font=("Courier", 9))
-        self.log.pack(fill="both", expand=True)
+    def _build_log(self, parent):
+        f = ttk.LabelFrame(parent, text="事件日志", padding=8)
+        f.pack(fill="both", expand=True)
+        actions = ttk.Frame(f); actions.pack(fill="x", pady=(0, 5))
+        ttk.Button(actions, text="复制日志", command=self._copy_log).pack(side="left", padx=3)
+        ttk.Button(actions, text="清除日志", command=self._clear_log).pack(side="left", padx=3)
+        self.follow_log = tk.BooleanVar(value=True)
+        ttk.Checkbutton(actions, text="跟随最新", variable=self.follow_log).pack(side="left", padx=6)
+        box = ttk.Frame(f); box.pack(fill="both", expand=True)
+        self.log = tk.Text(box, height=10, wrap="none", font=("Courier", 9), state="disabled")
+        vertical = ttk.Scrollbar(box, orient="vertical", command=self.log.yview)
+        horizontal = ttk.Scrollbar(box, orient="horizontal", command=self.log.xview)
+        self.log.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        box.rowconfigure(0, weight=1); box.columnconfigure(0, weight=1)
+        self.log.grid(row=0, column=0, sticky="nsew")
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+
+    def _copy_log(self):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.log.get("1.0", "end-1c"))
+        self.status.set("日志已复制")
+
+    def _clear_log(self):
+        self.panel.clear_log()
+        self.drawn.pop("log", None)
+        self.status.set("面板记录已清除；终端与 BMC 日志保留")
+        self._refresh()
 
     def _send_console(self, _event):
         text = self.term_in.get() + "\n"
@@ -370,6 +410,13 @@ class PanelWindow:
         pins = st.get("pins", {})
         for name, gpio, key, direction, low, note in SIGNALS:
             v = pins.get(key)
+            detail = st.get("pin_details", {}).get(key, {})
+            mode = "OUT" if detail.get("output") is True else (
+                "IN" if detail.get("output") is False else "DIR?")
+            self.canvas.itemconfigure(self.pin_modes[key], text="%s=%s" % (mode, "?" if v is None else int(v)))
+            edge = detail.get("last_edge", "")
+            self.canvas.itemconfigure(self.pin_edges[key], text=("Δ%d %s" % (detail.get("changes", 0), edge)) if edge else "",
+                                      fill=ACT if detail.get("recent") else "#70849d")
             asserted = low and v is False
             colour = ON if v else OFF
             if key == "gpioI5" and v:
@@ -379,9 +426,12 @@ class PanelWindow:
             if asserted:
                 colour = ACT
             for led in self.leds[key]:
-                self.canvas.itemconfigure(led, fill=colour)
+                self.canvas.itemconfigure(led, fill=colour, outline=ACT if detail.get("recent") else "",
+                                          width=2)
             self.canvas.itemconfigure(self.wires[key], fill=ACT if asserted else (ON if v else WIRE),
                                       width=3 if asserted else 2)
+        age = st.get("gpio_sample_age_ms")
+        self.canvas.itemconfigure(self.gpio_age, text="采样距今 %s ms · IN 输入/未驱动 · OUT 输出 · Δ 变化次数" % ("?" if age is None else age))
         peci = st.get("peci", {})
         online = peci.get("cpu-online")
         self.canvas.itemconfigure(self.bus_vals["peci"], text="" if online is None else (
@@ -437,7 +487,12 @@ class PanelWindow:
         if peci.get("cpu-temp-mc") is not None:
             temps["cpu"] = peci["cpu-temp-mc"] / 1000
             temps["dimm"] = peci["dimm-temp-mc"] / 1000
-        focus = self.root.focus_get()
+        try:
+            focus = self.root.focus_get()
+        except (KeyError, tk.TclError):
+            # Tk creates file-dialog widgets in Tcl, outside tkinter's widget
+            # registry. Do not abort the VGA/USB/log refresh while it has focus.
+            focus = None
         if self.changed("temps", temps):
             for key, sc in self.temp_scales.items():
                 if key in temps and sc is not focus:
@@ -468,9 +523,15 @@ class PanelWindow:
                 self.term.see("end")
         log = st.get("log", [])
         if self.changed("log", log):
+            position = self.log.yview()
+            self.log.configure(state="normal")
             self.log.delete("1.0", "end")
             self.log.insert("end", "\n".join(log))
-            self.log.see("end")
+            self.log.configure(state="disabled")
+            if self.follow_log.get():
+                self.log.see("end")
+            else:
+                self.log.yview_moveto(position[0])
 
     def mainloop(self):
         self.root.mainloop()
@@ -501,6 +562,8 @@ class PanelWindow:
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         self.vga_preview = ttk.Label(left, text="等待 VGA 图片")
         self.vga_preview.pack()
+        self.vga_status = ttk.Label(left, text="", foreground="#70849d", wraplength=330)
+        self.vga_status.pack(anchor="w", pady=5)
         row = ttk.Frame(left); row.pack(anchor="w", pady=8)
         ttk.Button(row, text="选择 JPEG", command=self._choose_vga).pack(side="left", padx=3)
         self.button(row, "自动 POST / OS", "vga auto").pack(side="left", padx=3)
@@ -542,6 +605,7 @@ class PanelWindow:
                 msg = "操作已提交"
             except Exception as exc:
                 msg = str(exc)
+                self.services.log("GUI 操作失败：" + msg)
             self.root.after(0, lambda: self.status.set(msg))
         threading.Thread(target=work, daemon=True).start()
 
@@ -563,6 +627,10 @@ class PanelWindow:
             "\n" + usb["error"] if usb.get("error") else ""))
         text = usb.get("keyboard_text", "") + "\n\nHID 报告：\n" + "\n".join(
             "port%s ep%s  %s" % (r["port"], r["endpoint"], r["hex"]) for r in usb.get("reports", [])[-12:])
+        text += "\n\n鼠标：" + json.dumps(usb.get("pointer"), ensure_ascii=False)
+        if usb.get("port_errors"):
+            text += "\n端口错误：" + json.dumps(usb["port_errors"], ensure_ascii=False)
+        text += "\n模型：" + (usb.get("diagnostics") or "无诊断属性")
         if self.changed("usb-text", text):
             self.usb_text.delete("1.0", "end"); self.usb_text.insert("end", text); self.usb_text.see("end")
         ports = [str(d["port"]) for d in devices if any(i["class"] == 8 for i in d["interfaces"])]
@@ -575,22 +643,26 @@ class PanelWindow:
         if self.changed("media-result", result):
             self.media_result.delete("1.0", "end")
             self.media_result.insert("end", json.dumps(result, ensure_ascii=False, indent=2) if result else "尚未执行读取检查")
-        key = (video.get("path"), video.get("signal"), video.get("generation"))
+        preview_path = video.get("preview_path") or (video.get("path") if video.get("signal") else None)
+        self.vga_status.configure(text=("VGA 有信号" if video.get("signal") else "主机 VGA 无信号") +
+                                  (" · 已选择图片预览" if video.get("preview_path") else "") +
+                                  "\n" + (video.get("diagnostics") or "旧模型没有视频帧计数器"))
+        key = (preview_path, video.get("signal"), video.get("generation"))
         if key != self.preview_key:
             self.preview_key = key
-            if not video.get("signal"):
+            if not preview_path:
                 self.vga_preview.configure(image="", text="VGA 无信号")
-            elif video.get("path"):
+            else:
                 try:
                     # Tk cannot show JPEG itself: decode with Pillow and hand Tk a
                     # PPM (python3-pil is enough, python3-pil.imagetk is not needed)
                     from PIL import Image
-                    with Image.open(video["path"]) as image:
-                        rgb = image.convert("RGB").resize((400, 300))
+                    with Image.open(preview_path) as image:
+                        rgb = image.convert("RGB").resize((320, 240))
                     self.preview_image = tk.PhotoImage(
-                        data=b"P6 400 300 255\n" + rgb.tobytes(), format="PPM")
+                        data=b"P6 320 240 255\n" + rgb.tobytes(), format="PPM")
                     self.vga_preview.configure(image=self.preview_image, text="")
                 except ImportError:
-                    self.vga_preview.configure(image="", text="图片：%s\n安装 python3-pil（sudo apt install python3-pil）可在窗口内预览" % os.path.basename(video["path"]))
+                    self.vga_preview.configure(image="", text="图片：%s\n安装 python3-pil（sudo apt install python3-pil）可在窗口内预览" % os.path.basename(preview_path))
                 except (OSError, tk.TclError) as exc:
-                    self.vga_preview.configure(image="", text="图片：%s\n无法预览：%s" % (os.path.basename(video["path"]), exc))
+                    self.vga_preview.configure(image="", text="图片：%s\n无法预览：%s" % (os.path.basename(preview_path), exc))

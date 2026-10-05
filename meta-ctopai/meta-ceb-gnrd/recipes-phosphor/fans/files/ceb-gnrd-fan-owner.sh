@@ -34,9 +34,11 @@ missing=""
 attempt=0
 while [ "$attempt" -lt 60 ]; do
     fan_control_ready=0
-    if busctl --system tree xyz.openbmc_project.State.FanCtrl \
-        /xyz/openbmc_project/settings/fanctrl --no-pager 2>/dev/null |
-        grep -Eq '/zone[0-9]+$'; then
+    # tree accepts service names, not a service plus object path. Use a flat
+    # list and filter the full zone path ourselves. An invalid second service
+    # makes busctl reject the command before enumerating any objects.
+    if busctl --system --no-pager --list tree xyz.openbmc_project.State.FanCtrl \
+        2>/dev/null | grep -Eq '^/xyz/openbmc_project/settings/fanctrl/zone[0-9]+$'; then
         fan_control_ready=1
     fi
 

@@ -92,6 +92,7 @@ CHASSIS = "/machine/soc/chassis"
 HOST_IO = None
 USB = None
 SERVICES = None
+GPIO_MONITOR = None
 
 TEMPS = {
     "inlet": ("/machine/peripheral/temp-inlet", 25.0),
@@ -102,6 +103,18 @@ TEMPS = {
 WATCHED = {ALERT_LED: "alert LED", UID_LED: "UID LED",
            FLASH_SEL: "BIOS flash select (1 = BMC)",
            FAN_OVERRIDE: "fan override (1 = BMC)"}
+PIN_SIGNALS = {
+    POWER_OUT: ("GPIOV2 BMC_CPU_POWER_BUTTON", "BMC→主机", True),
+    RESET_OUT: ("GPIOV3 BMC_CPU_RESET", "BMC→主机", True),
+    FLASH_SEL: ("GPIOM1 BMC_BIOS_FLASH_SELECT", "BMC→主机", False),
+    FAN_OVERRIDE: ("GPIOI6 BMC_FAN_BMC_OVERRIDE_N", "BMC→主机", False),
+    ALERT_LED: ("GPIOI5 BMC_SYS_ALERT_LED", "BMC→主机", False),
+    UID_LED: ("GPIOV1 BMC_UID_LED", "BMC→主机", False),
+    PWRGD: ("GPIOV4 BMC_CPU_PWRGD", "主机→BMC", False),
+    BOOT_OK: ("GPIOM7 BMC_BIOS_BOOT_OK", "主机→BMC", False),
+    PWR_BTN_IN: ("GPIOM2 BMC_POWER_BUTTON_INPUT", "主机→BMC", True),
+    UID_BTN: ("GPIOV0 BMC_UID_BUTTON_N", "主机→BMC", True),
+}
 # Low-active BMC outputs with a board pull-up: high while the BMC has not driven them
 PULLED_UP = (POWER_OUT, RESET_OUT)
 # BMC outputs that keep their level while the BMC resets (GPIO reset tolerance)
@@ -120,12 +133,15 @@ ADC_NOMINAL_MV = [1091, 455, 1650, 1800, 900, 1130, 850, 1000, 1800, 1130, 1800,
                   1650, 1800, 1200, 1000, 3000]
 ADC_SCALE = [11, 11, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1]
 
-LOG = collections.deque(maxlen=300)     # recent log lines, for the panel
+LOG = collections.deque(maxlen=2000)    # detailed recent history, bounded in RAM
+LOG_LOCK = threading.RLock()
 
 
 def log(msg):
-    line = time.strftime("%H:%M:%S ") + msg
-    LOG.append(line)
+    now = time.time()
+    line = time.strftime("%H:%M:%S", time.localtime(now)) + ".%03d " % (int(now * 1000) % 1000) + msg
+    with LOG_LOCK:
+        LOG.append(line)
     print(line, flush=True)
 
 
@@ -281,10 +297,13 @@ class Host:
             if power_low and self.power_low_since is None:
                 self.power_low_since = now
                 self.forced = False
-            if power_low and not self.forced and self.state != "off" \
+            if power_low and not self.forced \
                     and now - self.power_low_since >= FORCE_OFF_S:
                 self.forced = True
-                self.power_off("power button held %.0f s" % FORCE_OFF_S)
+                if self.state != "off":
+                    self.power_off("power button held %.0f s" % FORCE_OFF_S)
+                else:
+                    log("host: force-off pulse while already off; release will not power on")
             if not power_low and self.power_low_since is not None:
                 held = now - self.power_low_since
                 self.power_low_since = None
@@ -316,7 +335,7 @@ class Host:
             for pin, name in WATCHED.items():
                 value = self.pin(pin)
                 if self.outputs.get(pin) != value:
-                    if pin in self.outputs:
+                    if pin in self.outputs and GPIO_MONITOR is None:
                         log("BMC: %s -> %d" % (name, value))
                     self.outputs[pin] = value
                     if pin == FLASH_SEL and value and self.state != "off":
@@ -396,7 +415,7 @@ class BuiltinHost(Host):
             for pin, name in WATCHED.items():
                 value = self.q.get(pin)
                 if self.outputs.get(pin) != value:
-                    if pin in self.outputs:
+                    if pin in self.outputs and GPIO_MONITOR is None:
                         log("BMC: %s -> %d" % (name, value))
                     self.outputs[pin] = value
                     if pin == FLASH_SEL and value and state != "off":
@@ -438,6 +457,7 @@ def run_command(host, qmp, words):
     """One command, typed or sent by the panel.  Raises on bad input."""
     if not words:
         raise ValueError("请输入命令")
+    log("操作请求：" + shlex.join(words))
     cmd, rest = words[0], words[1:]
     if cmd == "status":
         host.status()
@@ -600,6 +620,73 @@ def qom(qmp, path, prop):
         return None
 
 
+class GPIOMonitor:
+    """Read GPIO banks in the fast host loop; retain observed edges for the UI.
+
+    No pin is written here. LED fill always represents the current board level;
+    a separate recent-change marker survives the slower GUI refresh. Sampling
+    is best effort, not an oscilloscope or a lossless edge counter.
+    """
+    def __init__(self, qmp):
+        self.q = qmp
+        self.lock = threading.Lock()
+        self.details = {}
+        self.low_started = {}
+        self.sampled_at = None
+
+    def observe(self):
+        # Three banks cover I, M and V. Six requests instead of querying each
+        # pin and its direction independently on every 50 ms host-loop tick.
+        banks = {n: qom(self.q, GPIO, "gpio-set[%d]" % n) for n in (2, 3, 5)}
+        dirs = {n: qom(self.q, GPIO, "gpio-dir[%d]" % n) for n in (2, 3, 5)}
+        now = time.monotonic()
+        stamp = time.strftime("%H:%M:%S")
+        messages = []
+        with self.lock:
+            for pin, (name, direction, low_active) in PIN_SIGNALS.items():
+                group = ord(pin[4]) - ord("A")
+                bank, bit = group // 4, (group % 4) * 8 + int(pin[5:])
+                raw = (bool(banks[bank] >> bit & 1) if banks[bank] is not None
+                       else self.q.get(pin))
+                output = (bool(dirs[bank] >> bit & 1)
+                          if dirs[bank] is not None else None)
+                level = BOARD_PULL[pin] if output is False and pin in BOARD_PULL else raw
+                old = self.details.get(pin)
+                detail = dict(old) if old else {"changes": 0}
+                detail.update(raw=raw, output=output, level=level)
+                if old and (old["level"] != level or old["output"] != output):
+                    detail["changes"] += 1
+                    detail["last_at"] = stamp
+                    detail["changed_at"] = now
+                    mode = "OUT" if output else ("IN" if output is False else "DIR?")
+                    detail["last_edge"] = "%d→%d" % (old["level"], level)
+                    note = "（低有效，已动作）" if low_active and not level else (
+                        "（低有效，已释放）" if low_active else "")
+                    old_mode = "OUT" if old["output"] else ("IN" if old["output"] is False else "DIR?")
+                    messages.append("信号 %s [%s] %s · %s→%s · 原始读数=%d 板端电平=%d · host=%s%s" % (
+                        name, direction, detail["last_edge"], old_mode, mode, raw, level, host_state(), note))
+                if pin in PULLED_UP:
+                    if output is not True:
+                        self.low_started.pop(pin, None)
+                    elif old and old["output"] is True and old["level"] and not level:
+                        self.low_started[pin] = now
+                    elif level and pin in self.low_started:
+                        detail["pulse_ms"] = round((now - self.low_started.pop(pin)) * 1000)
+                        messages.append("%s：低脉冲观测时长约 %d ms（轮询估算，非硬件计时）" % (name, detail["pulse_ms"]))
+                self.details[pin] = detail
+            self.sampled_at = now
+        for message in messages:
+            log(message)
+
+    def snapshot(self):
+        now = time.monotonic()
+        with self.lock:
+            details = {pin: dict(detail, recent=(now - detail.get("changed_at", -10)) < 2)
+                       for pin, detail in self.details.items()}
+            age = None if self.sampled_at is None else round((now - self.sampled_at) * 1000)
+        return details, age
+
+
 class HostConsole:
     """The host's end of its serial port (VUART, or UART3 with a stock QEMU).
 
@@ -745,22 +832,25 @@ class Panel:
         self.posts = collections.deque(maxlen=64)
         self.last_post = None
         self.last_host = host.state
-        # Board pull-ups: the BMC's low-active outputs (power button, reset) are
-        # inputs, and so high, until the BMC drives them after it has booted
-        # (x86-power-control); QEMU's GPIO model reads 0 for them instead.  Show
-        # them high until they have been seen high once since the last reset.
-        self.undriven = set(PULLED_UP)
-        self.seen_resets = qmp.resets
         self._prev = None
         threading.Thread(target=self._poller, daemon=True).start()
 
     def _poller(self):
         while True:
             try:
-                self.state = self.collect()
+                state = self.collect()
+                with LOG_LOCK:
+                    state["log"] = list(LOG)
+                    self.state = state
             except RuntimeError as exc:
                 log("QMP error: %s" % exc)
             time.sleep(0.4)
+
+    def clear_log(self):
+        """Clear only the panel buffer; stdout/QEMU/BMC journals are retained."""
+        with LOG_LOCK:
+            LOG.clear()
+            self.state = dict(self.state, log=[])
 
     def collect(self):
         q = self.q
@@ -770,17 +860,11 @@ class Panel:
             if self.console:
                 self.console.on_state(self.last_host, st["host"])
             self.last_host = st["host"]
-        st["pins"] = {pin: q.get(pin) for pin in
-                      (PWRGD, BOOT_OK, PWR_BTN_IN, UID_BTN)}
-        st["pins"].update({pin: board_level(q, pin) for pin in BOARD_PULL})
-        if q.resets != self.seen_resets:
-            self.seen_resets = q.resets
-            self.undriven = set(PULLED_UP)
-        for pin in list(self.undriven):
-            if st["pins"][pin]:
-                self.undriven.discard(pin)       # the BMC drives it high now
-            else:
-                st["pins"][pin] = True           # board pull-up
+        details, age = GPIO_MONITOR.snapshot() if GPIO_MONITOR else ({}, None)
+        st["pin_details"], st["gpio_sample_age_ms"] = details, age
+        st["pins"] = {pin: (details[pin]["level"] if pin in details else
+                            board_level(q, pin) if pin in BOARD_PULL else q.get(pin))
+                      for pin in PIN_SIGNALS}
         st["temps"] = {name: (qom(q, path, "temperature") or 0) / 1000
                        for name, (path, _) in TEMPS.items()}
         st["fans"] = []
@@ -811,6 +895,8 @@ class Panel:
         st["video"]["available"] = qom(q, VIDEO, "signal") is not None
         st["video"]["signal"] = qom(q, VIDEO, "signal")
         st["video"]["path"] = qom(q, VIDEO, "image")
+        st["video"]["diagnostics"] = qom(q, VIDEO, "diagnostics")
+        st["usb"] = dict(st["usb"], diagnostics=qom(q, VHUB, "diagnostics"))
         code = qom(q, LPC, "post-code")
         if code is not None and code != self.last_post:
             self.last_post = code
@@ -818,22 +904,12 @@ class Panel:
         st["post"] = code
         st["posts"] = list(self.posts)
         self._log_changes(st)
-        st["log"] = list(LOG)[-200:]
+        with LOG_LOCK:
+            st["log"] = list(LOG)
         return st
 
     # --- event log: what changed on the board since the last poll -------------
-    PIN_LOG = {
-        POWER_OUT: ("GPIOV2 BMC_CPU_POWER_BUTTON", "BMC→主机", True),
-        RESET_OUT: ("GPIOV3 BMC_CPU_RESET", "BMC→主机", True),
-        FLASH_SEL: ("GPIOM1 BMC_BIOS_FLASH_SELECT", "BMC→主机", False),
-        FAN_OVERRIDE: ("GPIOI6 BMC_FAN_BMC_OVERRIDE_N", "BMC→主机", False),
-        ALERT_LED: ("GPIOI5 BMC_SYS_ALERT_LED", "BMC→主机", False),
-        UID_LED: ("GPIOV1 BMC_UID_LED", "BMC→主机", False),
-        PWRGD: ("GPIOV4 BMC_CPU_PWRGD", "主机→BMC", False),
-        BOOT_OK: ("GPIOM7 BMC_BIOS_BOOT_OK", "主机→BMC", False),
-        PWR_BTN_IN: ("GPIOM2 BMC_POWER_BUTTON_INPUT", "主机→BMC", True),
-        UID_BTN: ("GPIOV0 BMC_UID_BUTTON_N", "主机→BMC", True),
-    }
+    PIN_LOG = PIN_SIGNALS
 
     def _log_changes(self, st):
         prev, self._prev = getattr(self, "_prev", None), st
@@ -844,6 +920,8 @@ class Panel:
             return "-" if v is None else v
 
         for pin, (name, direction, low_active) in self.PIN_LOG.items():
+            if GPIO_MONITOR is not None:
+                continue    # fast observer logs transitions, including pulses
             if pin in WATCHED:
                 continue    # the host model logs these ("BMC: alert LED -> 1")
             old, new = prev["pins"].get(pin), st["pins"].get(pin)
@@ -935,7 +1013,7 @@ def serve_panel(panel, port, host, qmp):
             elif self.path == "/api/state":
                 self.reply(200, panel.state)
             elif self.path.startswith("/api/vga"):
-                path = qom(qmp, VIDEO, "image")
+                path = SERVICES.state().get("preview_path") or qom(qmp, VIDEO, "image")
                 try:
                     self.reply(200, validate_jpeg(path), "image/jpeg")
                 except (OSError, ValueError, TypeError):
@@ -978,6 +1056,8 @@ def serve_panel(panel, port, host, qmp):
                 body = json.loads(self.rfile.read(size))
                 if self.path == "/api/cmd":
                     run_command(host, qmp, shlex.split(body["cmd"]))
+                elif self.path == "/api/log/clear":
+                    panel.clear_log()
                 elif self.path == "/api/console" and panel.console:
                     panel.console.send(body["text"])
                 else:
@@ -1040,14 +1120,18 @@ def main():
             qmp.set_temp(path, celsius)
         except RuntimeError as exc:
             log("temperature sensor %s not available: %s" % (name, exc))
-    global HOST, HOST_IO, USB, SERVICES
+    global HOST, HOST_IO, USB, SERVICES, GPIO_MONITOR
     HOST = host
+    GPIO_MONITOR = GPIOMonitor(qmp)
     SERVICES = PanelServices(qmp, args.state_dir, log)
     if qom(qmp, ESPI, "peripheral-ready") is not None:
         HOST_IO = HostIO(qmp)
         log("主机 COM1 / POST / KCS 使用 eSPI Peripheral 路由")
     if qom(qmp, VHUB, "host-connected") is not None:
         USB = USBHost(HOST_IO or HostIO(qmp), log)
+        log("USB vHub 模型可用；主机上电后枚举真实 BMC gadget")
+    else:
+        log("USB vHub 模型不存在：请重建并选择包含 0018/0021 的 QEMU")
     if args.gui:
         log("simulated host ready (%s)" % host.state)
     else:
@@ -1056,13 +1140,17 @@ def main():
     def loop():
         screen = None
         video_available = qom(qmp, VIDEO, "signal") is not None
+        log("VGA 模型：%s" % ("可用" if video_available else "不存在，请核对 QEMU 版本"))
         last_error = 0
         while True:
             try:
+                GPIO_MONITOR.observe()
                 host.step()
                 key = (host.state, qmp.resets, SERVICES.video_generation)
                 if video_available and key != screen:
                     set_screen(qmp, host.state)
+                    log("VGA 输入更新：host=%s；%s" % (
+                        host.state, qom(qmp, VIDEO, "diagnostics") or "旧模型没有诊断计数器"))
                     screen = key  # failed updates are retried
             except RuntimeError as exc:
                 if time.monotonic() - last_error > 5:

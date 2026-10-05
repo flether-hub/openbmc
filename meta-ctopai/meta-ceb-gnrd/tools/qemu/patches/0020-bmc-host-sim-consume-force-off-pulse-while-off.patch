@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000020 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD simulator <qemu-ceb-gnrd@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] bmc-host-sim: do not boot on release of an off-state force pulse
+
+The board BIOS updater requests an 8 s force-off pulse while already in S5.
+The model marked a pulse forced only when the host was powered, so release
+of this long pulse in HOST_OFF was misclassified as a short power-on pulse.
+That caused the updater's Off-state check at progress 92 to fail.
+
+Consume any pulse reaching the force-off threshold, even in HOST_OFF.
+Keep the host off on release; only a subsequent short pulse starts it.
+This changes the simulator's board behavior, not the firmware success check.
+
+Upstream-Status: Inappropriate [CEB-GNRD host-board test model]
+---
+diff --git a/hw/misc/bmc_host_sim.c b/hw/misc/bmc_host_sim.c
+--- a/hw/misc/bmc_host_sim.c
++++ b/hw/misc/bmc_host_sim.c
+@@ -246,10 +246,14 @@
+         s->power_low_since = now;
+         s->forced = false;
+     }
+-    if (power_low && !s->forced && s->state != HOST_OFF &&
++    if (power_low && !s->forced &&
+         now - s->power_low_since >= FORCE_OFF_MS) {
+         s->forced = true;
+-        host_power_off(s, "BMC power button held 4 s");
++        if (s->state != HOST_OFF) {
++            host_power_off(s, "BMC power button held 4 s");
++        } else {
++            trace_bmc_host_sim_state("off", "force-off pulse while already off");
++        }
+     }
+     if (!power_low && s->power_low_since >= 0) {
+         s->power_low_since = -1;
