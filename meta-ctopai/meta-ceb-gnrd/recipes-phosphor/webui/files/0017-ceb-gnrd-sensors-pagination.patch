@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] sensors: paginate the analog sensor table
+
+The table had no pagination: with the many ADC, fan, PSU and PWM sensors of
+the board the list is long, and its fixed-height sticky header container cut the
+bottom of the table off.  Use the same page size selector and pagination as the
+log pages (20 per page by default, "View all" possible) and drop the fixed
+height.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/views/HardwareStatus/Sensors/Sensors.vue
++++ b/src/views/HardwareStatus/Sensors/Sensors.vue
+@@ -47,7 +47,6 @@
+           sort-icon-left
+           hover
+           must-sort
+-          sticky-header="75vh"
+           thead-class="table-light"
+           :sort-by="['status']"
+           show-empty
+@@ -57,6 +56,8 @@
+           :filter="searchFilter"
+           :empty-text="$t('global.table.emptyMessage')"
+           :empty-filtered-text="$t('global.table.emptySearchMessage')"
++          :per-page="perPage"
++          :current-page="currentPage"
+           :busy="isBusy"
+           @filtered="onFiltered"
+           @row-selected="onRowSelected($event, filteredSensors.length)"
+@@ -105,6 +106,32 @@
+         </b-table>
+       </b-col>
+     </b-row>
++
++    <!-- CEB-GNRD: table pagination, the list is long -->
++    <b-row>
++      <b-col sm="6">
++        <b-form-group
++          class="table-pagination-select"
++          :label="$t('global.table.itemsPerPage')"
++          label-for="pagination-items-per-page"
++        >
++          <b-form-select
++            id="pagination-items-per-page"
++            v-model="perPage"
++            :options="itemsPerPageOptions"
++          />
++        </b-form-group>
++      </b-col>
++      <b-col sm="6">
++        <b-pagination
++          v-model="currentPage"
++          first-number
++          last-number
++          :per-page="perPage"
++          :total-rows="getTotalRowCount(filteredRows)"
++        />
++      </b-col>
++    </b-row>
+       </b-tab>
+       <b-tab :title="$t('pageSensors.tabs.discrete')" lazy>
+         <discrete-sensors />
+@@ -122,6 +149,7 @@ import TableToolbar from '@/components/Global/TableToolbar';
+ import TableToolbarExport from '@/components/Global/TableToolbarExport';
+ import TableCellCount from '@/components/Global/TableCellCount';
+ import DiscreteSensors from './DiscreteSensors';
++import { itemsPerPageOptions } from '@/components/Mixins/BVPaginationMixin';
+ 
+ import { useTableSelection } from '@/components/Composables/useTableSelection';
+ import { useLoadingBar } from '@/components/Composables/useLoadingBar';
+@@ -146,6 +174,8 @@ const {
+ const { data: sensorsData, isLoading, isFetching } = useSensors();
+ 
+ const searchFilter = ref('');
++const currentPage = ref(1);
++const perPage = ref(20);
+ const searchTotalFilteredRows = ref(0);
+ const activeFilters = ref([]);
+ 
+@@ -219,6 +249,17 @@ const filteredRows = computed(() => {
+ 
+ const isBusy = computed(() => isLoading.value || isFetching.value);
+ 
++// perPage 0 is "view all": no pagination
++function getTotalRowCount(count) {
++  return perPage.value === 0 ? 0 : count;
++}
++
++watch(perPage, (newPerPage) => {
++  if (newPerPage === 0) {
++    currentPage.value = 1;
++  }
++});
++
+ function onFilterChange({ activeFilters: filters }) {
+   activeFilters.value = filters;
+ }
