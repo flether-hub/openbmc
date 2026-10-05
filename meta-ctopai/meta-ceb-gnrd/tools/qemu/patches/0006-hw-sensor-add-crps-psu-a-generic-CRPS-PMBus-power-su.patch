@@ -1,0 +1,335 @@
+From e9709c0a5af951b4b8eae1b8c72f70a905810f32 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:28:52 +0800
+Subject: [PATCH 06/12] hw/sensor: add crps-psu, a generic CRPS PMBus power
+ supply
+
+A single page supply in the PMBus linear format that the generic Linux
+pmbus driver binds to, with input and output voltage, current and power,
+two temperatures and a fan.  The input/output voltage, the load, the
+efficiency, the temperatures and the fan speed are properties that can
+be changed at run time; ac-lost drops the output and reports VIN_UV in
+STATUS_WORD/STATUS_INPUT, and present=false makes the address NACK as
+if the module was pulled.  Unsupported commands raise a CML fault so the
+driver skips them.
+---
+ hw/sensor/Kconfig     |   5 +
+ hw/sensor/crps_psu.c  | 277 ++++++++++++++++++++++++++++++++++++++++++
+ hw/sensor/meson.build |   1 +
+ 3 files changed, 283 insertions(+)
+ create mode 100644 hw/sensor/crps_psu.c
+
+diff --git a/hw/sensor/Kconfig b/hw/sensor/Kconfig
+index bc6331b..33be5fa 100644
+--- a/hw/sensor/Kconfig
++++ b/hw/sensor/Kconfig
+@@ -27,6 +27,11 @@ config ADM1266
+     depends on PMBUS
+     default y if PMBUS
+ 
++config CRPS_PSU
++    bool
++    depends on PMBUS
++    default y if PMBUS
++
+ config MAX34451
+     bool
+     depends on I2C
+diff --git a/hw/sensor/crps_psu.c b/hw/sensor/crps_psu.c
+new file mode 100644
+index 0000000..392faa4
+--- /dev/null
++++ b/hw/sensor/crps_psu.c
+@@ -0,0 +1,277 @@
++/*
++ * Generic CRPS (Common Redundant Power Supply) PMBus power supply
++ *
++ * A single page 12 V supply in the PMBus linear format, which the generic
++ * Linux pmbus driver binds to: input/output voltage, current and power, two
++ * temperatures and the fan speed.  The load and the conditions are set with
++ * properties, at start or at run time (qom-set):
++ *
++ *   vin-mv, vout-mv     input and output voltage (230000, 12200)
++ *   pout-mw             output power, the load (250000)
++ *   efficiency          percent, gives the input power (94)
++ *   temp1-mc, temp2-mc  inlet and hotspot temperatures in m°C (30000, 45000)
++ *   fan-rpm             (9000)
++ *   ac-lost             no input: the output drops and STATUS reports VIN_UV
++ *   present             false: the module is pulled, the address NACKs
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "hw/i2c/pmbus_device.h"
++#include "migration/vmstate.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "qemu/log.h"
++
++#define TYPE_CRPS_PSU "crps-psu"
++OBJECT_DECLARE_TYPE(CRPSState, CRPSClass, CRPS_PSU)
++
++/* VOUT_MODE: linear, exponent -9 (1/512 V) */
++#define CRPS_VOUT_EXP   (-9)
++
++struct CRPSState {
++    PMBusDevice parent;
++
++    uint32_t vin_mv;
++    uint32_t vout_mv;
++    uint32_t pout_mw;
++    uint32_t efficiency;
++    int32_t temp1_mc;
++    int32_t temp2_mc;
++    uint32_t fan_rpm;
++    bool ac_lost;
++    bool present;
++};
++
++struct CRPSClass {
++    PMBusDeviceClass parent_class;
++    int (*parent_event)(I2CSlave *s, enum i2c_event event);
++};
++
++/* PMBus linear11: 5-bit exponent, 11-bit mantissa, both two's complement */
++static uint16_t crps_linear11(int64_t milli)
++{
++    for (int exp = -16; exp <= 15; exp++) {
++        int64_t m = exp < 0 ? milli * (1LL << -exp) / 1000
++                            : milli / (1LL << exp) / 1000;
++
++        if (m >= -1024 && m <= 1023) {
++            return ((exp & 0x1f) << 11) | (m & 0x7ff);
++        }
++    }
++    return 0x7bff;      /* largest positive value */
++}
++
++/* Recompute the readings and the status after a property change */
++static void crps_update(CRPSState *s)
++{
++    PMBusPage *page = &PMBUS_DEVICE(s)->pages[0];
++    uint64_t vin = s->ac_lost ? 0 : s->vin_mv;
++    uint64_t vout = s->ac_lost ? 0 : s->vout_mv;
++    uint64_t pout = s->ac_lost ? 0 : s->pout_mw;
++    uint64_t pin = pout * 100 / MAX(s->efficiency, 1);
++
++    page->read_vin = crps_linear11(vin);
++    page->read_vout = (vout << -CRPS_VOUT_EXP) / 1000;
++    page->read_iout = crps_linear11(vout ? pout * 1000 / vout : 0);
++    page->read_iin = crps_linear11(vin ? pin * 1000 / vin : 0);
++    page->read_pout = crps_linear11(pout);
++    page->read_pin = crps_linear11(pin);
++    page->read_temperature_1 = crps_linear11(s->temp1_mc);
++    page->read_temperature_2 = crps_linear11(s->temp2_mc);
++    page->read_fan_speed_1 = crps_linear11((int64_t)s->fan_rpm * 1000);
++
++    if (s->ac_lost) {
++        page->status_word |= PB_STATUS_INPUT | PB_STATUS_POWER_GOOD_N |
++                             PB_STATUS_OFF | PB_STATUS_VIN_UV;
++        page->status_input |= PB_STATUS_INPUT_VIN_UV_FAULT;
++    } else {
++        page->status_word &= ~(PB_STATUS_INPUT | PB_STATUS_POWER_GOOD_N |
++                               PB_STATUS_OFF | PB_STATUS_VIN_UV);
++        page->status_input &= ~PB_STATUS_INPUT_VIN_UV_FAULT;
++    }
++}
++
++static void crps_exit_reset(Object *obj, ResetType type)
++{
++    CRPSState *s = CRPS_PSU(obj);
++    PMBusDevice *pmdev = PMBUS_DEVICE(obj);
++    PMBusPage *page = &pmdev->pages[0];
++
++    pmdev->page = 0;
++    pmdev->capability = 0x20;           /* no PEC, 400 kHz */
++    page->operation = 0x80;             /* on */
++    page->on_off_config = 0x1f;
++    page->revision = 0x22;              /* PMBus 1.2 */
++    page->vout_mode = CRPS_VOUT_EXP & 0x1f;
++    page->status_word = 0;
++    page->status_input = 0;
++    page->fan_config_1_2 = 0x90;        /* fan 1 installed, RPM */
++    page->mfr_id = "QEMU";
++    page->mfr_model = "CRPS-1600";
++    page->mfr_revision = "A1";
++    crps_update(s);
++}
++
++/* Unsupported commands: a CML fault, so the driver skips them */
++static uint8_t crps_receive_byte(PMBusDevice *pmdev)
++{
++    if (pmdev->code == PMBUS_MFR_SERIAL) {
++        pmbus_send_string(pmdev, "SN0000000001");
++        return 0;
++    }
++    pmdev->pages[0].status_word |= PB_STATUS_CML;
++    pmdev->pages[0].status_cml |= PB_CML_FAULT_INVALID_CMD;
++    return 0xff;
++}
++
++static int crps_write_data(PMBusDevice *pmdev, const uint8_t *buf,
++                           uint8_t len)
++{
++    pmdev->pages[0].status_word |= PB_STATUS_CML;
++    pmdev->pages[0].status_cml |= PB_CML_FAULT_INVALID_CMD;
++    return 0;
++}
++
++static int crps_event(I2CSlave *i2c, enum i2c_event event)
++{
++    CRPSState *s = CRPS_PSU(i2c);
++
++    if (!s->present) {
++        return -1;      /* NACK */
++    }
++    return CRPS_PSU_GET_CLASS(s)->parent_event(i2c, event);
++}
++
++static void crps_get_u32(Object *obj, Visitor *v, const char *name,
++                         void *opaque, Error **errp)
++{
++    visit_type_uint32(v, name, opaque, errp);
++}
++
++static void crps_set_u32(Object *obj, Visitor *v, const char *name,
++                         void *opaque, Error **errp)
++{
++    if (visit_type_uint32(v, name, opaque, errp)) {
++        crps_update(CRPS_PSU(obj));
++    }
++}
++
++static void crps_get_i32(Object *obj, Visitor *v, const char *name,
++                         void *opaque, Error **errp)
++{
++    visit_type_int32(v, name, opaque, errp);
++}
++
++static void crps_set_i32(Object *obj, Visitor *v, const char *name,
++                         void *opaque, Error **errp)
++{
++    if (visit_type_int32(v, name, opaque, errp)) {
++        crps_update(CRPS_PSU(obj));
++    }
++}
++
++static void crps_get_bool(Object *obj, Visitor *v, const char *name,
++                          void *opaque, Error **errp)
++{
++    visit_type_bool(v, name, opaque, errp);
++}
++
++static void crps_set_bool(Object *obj, Visitor *v, const char *name,
++                          void *opaque, Error **errp)
++{
++    if (visit_type_bool(v, name, opaque, errp)) {
++        crps_update(CRPS_PSU(obj));
++    }
++}
++
++static void crps_init(Object *obj)
++{
++    CRPSState *s = CRPS_PSU(obj);
++    PMBusDevice *pmdev = PMBUS_DEVICE(obj);
++
++    pmbus_page_config(pmdev, 0, PB_HAS_VOUT_MODE | PB_HAS_VIN | PB_HAS_VOUT |
++                      PB_HAS_IIN | PB_HAS_IOUT | PB_HAS_PIN | PB_HAS_POUT |
++                      PB_HAS_TEMPERATURE | PB_HAS_TEMP2 | PB_HAS_FAN |
++                      PB_HAS_MFR_INFO);
++
++    s->vin_mv = 230000;
++    s->vout_mv = 12200;
++    s->pout_mw = 250000;
++    s->efficiency = 94;
++    s->temp1_mc = 30000;
++    s->temp2_mc = 45000;
++    s->fan_rpm = 9000;
++    s->present = true;
++
++    object_property_add(obj, "vin-mv", "uint32", crps_get_u32, crps_set_u32,
++                        NULL, &s->vin_mv);
++    object_property_add(obj, "vout-mv", "uint32", crps_get_u32, crps_set_u32,
++                        NULL, &s->vout_mv);
++    object_property_add(obj, "pout-mw", "uint32", crps_get_u32, crps_set_u32,
++                        NULL, &s->pout_mw);
++    object_property_add(obj, "efficiency", "uint32", crps_get_u32,
++                        crps_set_u32, NULL, &s->efficiency);
++    object_property_add(obj, "temp1-mc", "int32", crps_get_i32, crps_set_i32,
++                        NULL, &s->temp1_mc);
++    object_property_add(obj, "temp2-mc", "int32", crps_get_i32, crps_set_i32,
++                        NULL, &s->temp2_mc);
++    object_property_add(obj, "fan-rpm", "uint32", crps_get_u32, crps_set_u32,
++                        NULL, &s->fan_rpm);
++    object_property_add(obj, "ac-lost", "bool", crps_get_bool, crps_set_bool,
++                        NULL, &s->ac_lost);
++    object_property_add(obj, "present", "bool", crps_get_bool, crps_set_bool,
++                        NULL, &s->present);
++}
++
++static const VMStateDescription vmstate_crps = {
++    .name = TYPE_CRPS_PSU,
++    .version_id = 0,
++    .minimum_version_id = 0,
++    .fields = (const VMStateField[]){
++        VMSTATE_PMBUS_DEVICE(parent, CRPSState),
++        VMSTATE_UINT32(vin_mv, CRPSState),
++        VMSTATE_UINT32(vout_mv, CRPSState),
++        VMSTATE_UINT32(pout_mw, CRPSState),
++        VMSTATE_UINT32(efficiency, CRPSState),
++        VMSTATE_INT32(temp1_mc, CRPSState),
++        VMSTATE_INT32(temp2_mc, CRPSState),
++        VMSTATE_UINT32(fan_rpm, CRPSState),
++        VMSTATE_BOOL(ac_lost, CRPSState),
++        VMSTATE_BOOL(present, CRPSState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void crps_class_init(ObjectClass *klass, const void *data)
++{
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    I2CSlaveClass *sc = I2C_SLAVE_CLASS(klass);
++    PMBusDeviceClass *k = PMBUS_DEVICE_CLASS(klass);
++    CRPSClass *cc = CRPS_PSU_CLASS(klass);
++
++    dc->desc = "CRPS PMBus power supply";
++    dc->vmsd = &vmstate_crps;
++    k->receive_byte = crps_receive_byte;
++    k->write_data = crps_write_data;
++    k->device_num_pages = 1;
++    rc->phases.exit = crps_exit_reset;
++
++    cc->parent_event = sc->event;
++    sc->event = crps_event;
++}
++
++static const TypeInfo crps_types[] = {
++    {
++        .name = TYPE_CRPS_PSU,
++        .parent = TYPE_PMBUS_DEVICE,
++        .instance_size = sizeof(CRPSState),
++        .instance_init = crps_init,
++        .class_size = sizeof(CRPSClass),
++        .class_init = crps_class_init,
++    }
++};
++
++DEFINE_TYPES(crps_types)
+diff --git a/hw/sensor/meson.build b/hw/sensor/meson.build
+index 420fdc3..d524219 100644
+--- a/hw/sensor/meson.build
++++ b/hw/sensor/meson.build
+@@ -4,6 +4,7 @@ system_ss.add(when: 'CONFIG_DPS310', if_true: files('dps310.c'))
+ system_ss.add(when: 'CONFIG_EMC141X', if_true: files('emc141x.c'))
+ system_ss.add(when: 'CONFIG_ADM1266', if_true: files('adm1266.c'))
+ system_ss.add(when: 'CONFIG_ADM1272', if_true: files('adm1272.c'))
++system_ss.add(when: 'CONFIG_CRPS_PSU', if_true: files('crps_psu.c'))
+ system_ss.add(when: 'CONFIG_MAX34451', if_true: files('max34451.c'))
+ system_ss.add(when: 'CONFIG_LSM303DLHC_MAG', if_true: files('lsm303dlhc_mag.c'))
+ system_ss.add(when: 'CONFIG_ISL_PMBUS_VR', if_true: files('isl_pmbus_vr.c'))
+-- 
+2.53.0.windows.1
+

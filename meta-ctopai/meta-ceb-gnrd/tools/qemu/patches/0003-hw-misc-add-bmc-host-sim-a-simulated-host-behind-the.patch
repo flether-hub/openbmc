@@ -1,0 +1,487 @@
+From 8044f237155833b7a654600d01fd9cc9334a5011 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:20:35 +0800
+Subject: [PATCH 03/12] hw/misc: add bmc-host-sim, a simulated host behind the
+ Aspeed BMC GPIOs
+
+A user-creatable device that plays the motherboard power sequence on the
+BMC's GPIO controller, so power control, reset and the front panel
+buttons can be tested without a host:
+
+  -device bmc-host-sim,id=host,gpio=/machine/soc/gpio
+
+A pulse on the BMC power button output powers the host on (PWRGD after
+pwrgd-ms, BIOS boot OK after post-ms more) or shuts it down after
+shutdown-ms; holding it 4 s forces it off.  A pulse on the reset output
+restarts POST.  Front panel and UID button presses, a power failure and
+a BIOS hang are run-time properties (qom-set), and qom-get state reports
+off, starting, post, on or shutting-down.  The pin names default to the
+CEB-GNRD wiring and can be changed with properties.
+---
+ hw/misc/bmc_host_sim.c | 424 +++++++++++++++++++++++++++++++++++++++++
+ hw/misc/meson.build    |   3 +-
+ hw/misc/trace-events   |   3 +
+ 3 files changed, 429 insertions(+), 1 deletion(-)
+ create mode 100644 hw/misc/bmc_host_sim.c
+
+diff --git a/hw/misc/bmc_host_sim.c b/hw/misc/bmc_host_sim.c
+new file mode 100644
+index 0000000..3004abf
+--- /dev/null
++++ b/hw/misc/bmc_host_sim.c
+@@ -0,0 +1,424 @@
++/*
++ * Simulated host board behind the GPIOs of an Aspeed BMC
++ *
++ * The host power sequence a BMC expects from its motherboard, played on the
++ * BMC's own GPIO controller so that power control, reset and the front panel
++ * buttons can be exercised without a host:
++ *
++ *   BMC output        reaction
++ *   power-out pulse   off: power on, pwrgd high after pwrgd-ms, boot-ok
++ *                     high after post-ms more
++ *                     on:  OS shutdown, off after shutdown-ms
++ *   power-out held    forced off after 4 s
++ *   reset-out pulse   boot-ok low while asserted, high again after post-ms
++ *
++ * The BMC outputs are active low; a pin the BMC does not drive reads high
++ * (board pull-up).  Run-time controls (qom-set on the device):
++ *   press-power-button <ms>  front panel power button (also reaches the
++ *                            host directly, as through the CPLD)
++ *   press-uid-button <ms>    UID button
++ *   power-fail true          power good drops at once
++ *   hang true|false          BIOS never signals POST complete
++ *   post-ms, shutdown-ms     timings
++ * and qom-get "state": off, starting, post, on or shutting-down.
++ *
++ * Example (the defaults are the CEB-GNRD wiring):
++ *   -device bmc-host-sim,id=host,gpio=/machine/soc/gpio
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/bitops.h"
++#include "qemu/timer.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "qom/object.h"
++#include "hw/core/qdev-properties.h"
++#include "hw/gpio/aspeed_gpio.h"
++#include "trace.h"
++
++#define TYPE_BMC_HOST_SIM "bmc-host-sim"
++OBJECT_DECLARE_SIMPLE_TYPE(BMCHostSimState, BMC_HOST_SIM)
++
++#define TICK_MS         10
++#define FORCE_OFF_MS    4000
++
++typedef enum {
++    HOST_OFF,
++    HOST_STARTING,
++    HOST_POST,
++    HOST_ON,
++    HOST_SHUTTING_DOWN,
++} HostState;
++
++static const char *const host_state_names[] = {
++    [HOST_OFF] = "off",
++    [HOST_STARTING] = "starting",
++    [HOST_POST] = "post",
++    [HOST_ON] = "on",
++    [HOST_SHUTTING_DOWN] = "shutting-down",
++};
++
++typedef struct HostPin {
++    int set;
++    uint32_t mask;
++} HostPin;
++
++struct BMCHostSimState {
++    DeviceState parent_obj;
++
++    /* properties */
++    AspeedGPIOState *gpio;
++    char *power_out_name;
++    char *reset_out_name;
++    char *pwrgd_name;
++    char *boot_ok_name;
++    char *power_button_name;
++    char *uid_button_name;
++    uint32_t pwrgd_ms;
++    uint32_t post_ms;
++    uint32_t shutdown_ms;
++    bool hang;
++
++    HostPin power_out;
++    HostPin reset_out;
++    QEMUTimer timer;
++
++    HostState state;
++    int64_t deadline;           /* next automatic step, -1: none */
++    int64_t power_low_since;    /* -1: power-out released */
++    bool forced;
++    bool reset_low;
++
++    /* levels driven into the BMC */
++    bool pwrgd;
++    bool boot_ok;
++    int64_t power_button_release;   /* -1: not pressed */
++    uint32_t power_button_ms;
++    int64_t uid_button_release;
++};
++
++static int64_t host_now(void)
++{
++    return qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
++}
++
++static void host_go(BMCHostSimState *s, HostState state, int64_t delay_ms,
++                    const char *why)
++{
++    s->state = state;
++    s->deadline = delay_ms >= 0 ? host_now() + delay_ms : -1;
++    trace_bmc_host_sim_state(host_state_names[state], why);
++}
++
++static void host_power_off(BMCHostSimState *s, const char *why)
++{
++    s->pwrgd = false;
++    s->boot_ok = false;
++    host_go(s, HOST_OFF, -1, why);
++}
++
++static void host_power_on(BMCHostSimState *s, const char *why)
++{
++    if (s->state == HOST_OFF) {
++        host_go(s, HOST_STARTING, s->pwrgd_ms, why);
++    }
++}
++
++static void host_shutdown(BMCHostSimState *s, const char *why)
++{
++    if (s->state != HOST_OFF) {
++        host_go(s, HOST_SHUTTING_DOWN, s->shutdown_ms, why);
++    }
++}
++
++static void host_start_post(BMCHostSimState *s, const char *why)
++{
++    s->boot_ok = false;
++    host_go(s, HOST_POST, s->hang ? -1 : s->post_ms, why);
++}
++
++/*
++ * Level of a BMC output as the board sees it.  data_read holds the last value
++ * the BMC wrote: data_value misses a write made before the pin was switched to
++ * output, which is how Linux sets the initial level.
++ */
++static bool host_bmc_output(BMCHostSimState *s, HostPin *pin)
++{
++    const struct GPIOSets *regs = &s->gpio->sets[pin->set];
++
++    if (!(regs->direction & pin->mask)) {
++        return true;
++    }
++    return regs->data_read & pin->mask;
++}
++
++static void host_drive(BMCHostSimState *s, const char *pin, bool level)
++{
++    Object *gpio = OBJECT(s->gpio);
++
++    /* re-driven every tick, so the levels survive a BMC reset */
++    if (object_property_get_bool(gpio, pin, &error_abort) != level) {
++        object_property_set_bool(gpio, pin, level, &error_abort);
++    }
++}
++
++static void host_tick(void *opaque)
++{
++    BMCHostSimState *s = opaque;
++    int64_t now = host_now();
++    bool power_low = !host_bmc_output(s, &s->power_out);
++    bool reset_low = !host_bmc_output(s, &s->reset_out);
++
++    /* BMC power button output */
++    if (power_low && s->power_low_since < 0) {
++        s->power_low_since = now;
++        s->forced = false;
++    }
++    if (power_low && !s->forced && s->state != HOST_OFF &&
++        now - s->power_low_since >= FORCE_OFF_MS) {
++        s->forced = true;
++        host_power_off(s, "BMC power button held 4 s");
++    }
++    if (!power_low && s->power_low_since >= 0) {
++        s->power_low_since = -1;
++        if (!s->forced) {
++            if (s->state == HOST_OFF) {
++                host_power_on(s, "BMC power button pulse");
++            } else {
++                host_shutdown(s, "BMC power button pulse");
++            }
++        }
++    }
++
++    /* BMC reset output */
++    if (s->state == HOST_POST || s->state == HOST_ON) {
++        if (reset_low && !s->reset_low) {
++            s->boot_ok = false;
++            trace_bmc_host_sim_state(host_state_names[s->state],
++                                     "reset asserted");
++        }
++        if (!reset_low && s->reset_low) {
++            host_start_post(s, "reset released");
++        }
++    }
++    s->reset_low = reset_low;
++
++    /* front panel buttons */
++    if (s->power_button_release >= 0 && now >= s->power_button_release) {
++        s->power_button_release = -1;
++        if (s->power_button_ms >= FORCE_OFF_MS) {
++            if (s->state != HOST_OFF) {
++                host_power_off(s, "front panel power button held");
++            }
++        } else if (s->state == HOST_OFF) {
++            host_power_on(s, "front panel power button");
++        } else {
++            host_shutdown(s, "front panel power button");
++        }
++    }
++    if (s->uid_button_release >= 0 && now >= s->uid_button_release) {
++        s->uid_button_release = -1;
++    }
++
++    /* timed steps */
++    if (s->deadline >= 0 && now >= s->deadline) {
++        s->deadline = -1;
++        switch (s->state) {
++        case HOST_STARTING:
++            s->pwrgd = true;
++            host_start_post(s, s->hang ? "PWRGD high, BIOS hangs"
++                                       : "PWRGD high");
++            break;
++        case HOST_POST:
++            s->boot_ok = true;
++            host_go(s, HOST_ON, -1, "POST complete, BOOT_OK high");
++            break;
++        case HOST_SHUTTING_DOWN:
++            host_power_off(s, "OS shut down");
++            break;
++        default:
++            break;
++        }
++    }
++
++    host_drive(s, s->pwrgd_name, s->pwrgd);
++    host_drive(s, s->boot_ok_name, s->boot_ok);
++    host_drive(s, s->power_button_name, s->power_button_release < 0);
++    host_drive(s, s->uid_button_name, s->uid_button_release < 0);
++
++    timer_mod(&s->timer, now + TICK_MS);
++}
++
++/* "gpioV2" -> set and bit in the controller */
++static bool host_find_pin(BMCHostSimState *s, const char *name, HostPin *pin,
++                          Error **errp)
++{
++    AspeedGPIOClass *agc = ASPEED_GPIO_GET_CLASS(s->gpio);
++    char label[ASPEED_CHARS_PER_GROUP_LABEL];
++    unsigned int n, set, group;
++
++    if (!name || sscanf(name, "gpio%3[A-Z]%u", label, &n) != 2 || n > 7) {
++        error_setg(errp, "bmc-host-sim: bad GPIO name '%s'", name ?: "");
++        return false;
++    }
++    for (set = 0; set < agc->nr_gpio_sets; set++) {
++        for (group = 0; group < ASPEED_GROUPS_PER_SET; group++) {
++            if (!strcmp(agc->props[set].group_label[group], label)) {
++                pin->set = set;
++                pin->mask = BIT(group * 8 + n);
++                return true;
++            }
++        }
++    }
++    error_setg(errp, "bmc-host-sim: no GPIO '%s' on %s", name,
++               object_get_typename(OBJECT(s->gpio)));
++    return false;
++}
++
++static void host_realize(DeviceState *dev, Error **errp)
++{
++    BMCHostSimState *s = BMC_HOST_SIM(dev);
++    HostPin unused;
++
++    if (!s->gpio) {
++        error_setg(errp, "bmc-host-sim: 'gpio' must point to the BMC GPIO "
++                   "controller, e.g. gpio=/machine/soc/gpio");
++        return;
++    }
++    /* string properties have no default value of their own */
++    s->power_out_name = s->power_out_name ?: g_strdup("gpioV2");
++    s->reset_out_name = s->reset_out_name ?: g_strdup("gpioV3");
++    s->pwrgd_name = s->pwrgd_name ?: g_strdup("gpioV4");
++    s->boot_ok_name = s->boot_ok_name ?: g_strdup("gpioM7");
++    s->power_button_name = s->power_button_name ?: g_strdup("gpioM2");
++    s->uid_button_name = s->uid_button_name ?: g_strdup("gpioV0");
++
++    if (!host_find_pin(s, s->power_out_name, &s->power_out, errp) ||
++        !host_find_pin(s, s->reset_out_name, &s->reset_out, errp) ||
++        !host_find_pin(s, s->pwrgd_name, &unused, errp) ||
++        !host_find_pin(s, s->boot_ok_name, &unused, errp) ||
++        !host_find_pin(s, s->power_button_name, &unused, errp) ||
++        !host_find_pin(s, s->uid_button_name, &unused, errp)) {
++        return;
++    }
++
++    s->state = HOST_OFF;
++    s->deadline = -1;
++    s->power_low_since = -1;
++    s->power_button_release = -1;
++    s->uid_button_release = -1;
++    timer_init_ms(&s->timer, QEMU_CLOCK_VIRTUAL, host_tick, s);
++    timer_mod(&s->timer, host_now() + TICK_MS);
++}
++
++static void host_unrealize(DeviceState *dev)
++{
++    BMCHostSimState *s = BMC_HOST_SIM(dev);
++
++    timer_del(&s->timer);
++}
++
++static void host_get_state(Object *obj, Visitor *v, const char *name,
++                           void *opaque, Error **errp)
++{
++    BMCHostSimState *s = BMC_HOST_SIM(obj);
++    char *state = (char *)host_state_names[s->state];
++
++    visit_type_str(v, name, &state, errp);
++}
++
++static void host_set_press(Object *obj, Visitor *v, const char *name,
++                           void *opaque, Error **errp)
++{
++    BMCHostSimState *s = BMC_HOST_SIM(obj);
++    uint32_t ms;
++
++    if (!visit_type_uint32(v, name, &ms, errp)) {
++        return;
++    }
++    if (!strcmp(name, "press-power-button")) {
++        s->power_button_ms = ms;
++        s->power_button_release = host_now() + ms;
++    } else {
++        s->uid_button_release = host_now() + ms;
++    }
++}
++
++static void host_set_power_fail(Object *obj, bool value, Error **errp)
++{
++    BMCHostSimState *s = BMC_HOST_SIM(obj);
++
++    if (value && s->state != HOST_OFF) {
++        host_power_off(s, "power failure");
++    }
++}
++
++static bool host_get_hang(Object *obj, Error **errp)
++{
++    return BMC_HOST_SIM(obj)->hang;
++}
++
++static void host_set_hang(Object *obj, bool value, Error **errp)
++{
++    BMC_HOST_SIM(obj)->hang = value;
++}
++
++static void host_init(Object *obj)
++{
++    BMCHostSimState *s = BMC_HOST_SIM(obj);
++
++    s->pwrgd_ms = 1000;
++    s->post_ms = 20000;
++    s->shutdown_ms = 10000;
++    object_property_add_uint32_ptr(obj, "pwrgd-ms", &s->pwrgd_ms,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add_uint32_ptr(obj, "post-ms", &s->post_ms,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add_uint32_ptr(obj, "shutdown-ms", &s->shutdown_ms,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add_bool(obj, "hang", host_get_hang, host_set_hang);
++    object_property_add_bool(obj, "power-fail", NULL, host_set_power_fail);
++    object_property_add(obj, "state", "str", host_get_state, NULL, NULL,
++                        NULL);
++    object_property_add(obj, "press-power-button", "uint32", NULL,
++                        host_set_press, NULL, NULL);
++    object_property_add(obj, "press-uid-button", "uint32", NULL,
++                        host_set_press, NULL, NULL);
++}
++
++/* Defaults: the CEB-GNRD (AST2600 + Granite Rapids-D) wiring */
++static const Property host_properties[] = {
++    DEFINE_PROP_LINK("gpio", BMCHostSimState, gpio, TYPE_ASPEED_GPIO,
++                     AspeedGPIOState *),
++    DEFINE_PROP_STRING("power-out", BMCHostSimState, power_out_name),
++    DEFINE_PROP_STRING("reset-out", BMCHostSimState, reset_out_name),
++    DEFINE_PROP_STRING("pwrgd", BMCHostSimState, pwrgd_name),
++    DEFINE_PROP_STRING("boot-ok", BMCHostSimState, boot_ok_name),
++    DEFINE_PROP_STRING("power-button", BMCHostSimState, power_button_name),
++    DEFINE_PROP_STRING("uid-button", BMCHostSimState, uid_button_name),
++};
++
++static void host_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->desc = "Simulated host board behind the BMC GPIOs";
++    dc->realize = host_realize;
++    dc->unrealize = host_unrealize;
++    device_class_set_props(dc, host_properties);
++    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++}
++
++static const TypeInfo host_types[] = {
++    {
++        .name = TYPE_BMC_HOST_SIM,
++        .parent = TYPE_DEVICE,
++        .instance_size = sizeof(BMCHostSimState),
++        .instance_init = host_init,
++        .class_init = host_class_init,
++    }
++};
++
++DEFINE_TYPES(host_types)
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index 092f70b..169f816 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -143,7 +143,8 @@ system_ss.add(when: 'CONFIG_ASPEED_SOC', if_true: files(
+   'aspeed_sdmc.c',
+   'aspeed_xdma.c',
+   'aspeed_peci.c',
+-  'aspeed_sli.c'))
++  'aspeed_sli.c',
++  'bmc_host_sim.c'))
+ 
+ system_ss.add(when: 'CONFIG_MSF2', if_true: files('msf2-sysreg.c'))
+ system_ss.add(when: 'CONFIG_NRF51_SOC', if_true: files('nrf51_rng.c'))
+diff --git a/hw/misc/trace-events b/hw/misc/trace-events
+index b88accc..f63f8bd 100644
+--- a/hw/misc/trace-events
++++ b/hw/misc/trace-events
+@@ -297,6 +297,9 @@ aspeed_xdma_write(uint64_t offset, uint64_t data) "XDMA write: offset 0x%" PRIx6
+ aspeed_pwm_read(uint64_t offset, uint64_t data) "read: offset 0x%" PRIx64 " data 0x%" PRIx64
+ aspeed_pwm_write(uint64_t offset, uint64_t data) "write: offset 0x%" PRIx64 " data 0x%" PRIx64
+ 
++# bmc_host_sim.c
++bmc_host_sim_state(const char *state, const char *why) "host %s: %s"
++
+ # aspeed_sdmc.c
+ aspeed_sdmc_write(uint64_t reg, uint64_t data) "reg @0x%" PRIx64 " data: 0x%" PRIx64
+ aspeed_sdmc_read(uint64_t reg, uint64_t data) "reg @0x%" PRIx64 " data: 0x%" PRIx64
+-- 
+2.53.0.windows.1
+

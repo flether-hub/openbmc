@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 """Simulated host for the ceb-gnrd BMC running in QEMU (run-qemu.sh).
 
-It talks to QEMU's QMP socket and plays the part of the motherboard behind the
-BMC's GPIOs, using only what QEMU already emulates:
+--gui opens the control panel (run-qemu.sh starts it): a Tk window
+(panel_tk.py) when there is a display, else a web page (panel.html,
+http://localhost:8800; --web forces it).  It shows a drawing of the signals between the BMC and the host with their
+LEDs and buttons, the fans, PSUs, temperatures, ADC inputs, POST codes and the
+host serial console.  Without --gui it reads the commands below from stdin.
+
+With the QEMU from build-qemu.sh the host lives inside QEMU (the bmc-host-sim
+device, /machine/peripheral/host) and runs without this script; the script is
+then only a console for it: it shows the host state and the BMC outputs and
+sends the commands below.  With a stock QEMU it plays the host itself through
+QEMU's QMP socket, using only what QEMU already emulates:
 
   BMC output                      simulated board reaction
   BMC_CPU_POWER_BUTTON (GPIOV2)   short pulse while off  -> power on: BMC_CPU_PWRGD
@@ -24,14 +33,27 @@ Commands (type them while it runs; "help" lists them):
   hang on|off            BIOS never signals POST complete (alert LED boot timeout)
   powerfail              power good drops suddenly
   temp <name|all> <C>    names: inlet outlet pcie m2
+  fan <0-5|all> <rpm|auto>  fixed fan speed, or back to following the PWM duty
+  fan max <rpm>          fan speed at 100% PWM (needs the QEMU from build-qemu.sh)
+  The patched QEMU only:
+  psu <0-2> in|out       insert or pull a PSU module (slot 2 starts empty)
+  psu <0-2> ac on|off    AC input present or lost
+  psu <0-2> load <W>     output power
+  psu <0-2> temp <C>     PSU hotspot temperature
+  cpu <C> | dimm <C>     CPU package / DIMM temperature over PECI
+  adc <0-15> <mV>        ADC pad voltage (before the divider)
+  rtc battery ok|low     RTC battery (low: the RTC time is refused)
   post <s> | shutdown <s>
   quit
 
-Usage: host-sim.py [--qmp ~/qemu-ceb-gnrd/qmp.sock] [--post 20] [--shutdown 10]
+Usage: host-sim.py [--gui [--port 8800]] [--qmp ~/qemu-ceb-gnrd/qmp.sock]
+                   [--uart ~/qemu-ceb-gnrd/host-uart.sock] [--post 20] [--shutdown 10]
 Python 3 standard library only.
 """
 
 import argparse
+import collections
+import http.server
 import json
 import os
 import socket
@@ -53,6 +75,13 @@ BOOT_OK = "gpioM7"        # BMC_BIOS_BOOT_OK
 PWR_BTN_IN = "gpioM2"     # BMC_POWER_BUTTON_INPUT, active low (front panel)
 UID_BTN = "gpioV0"        # BMC_UID_BUTTON_N, active low
 
+PWM = "/machine/soc/pwm"
+FANS = 6                  # SYS_FAN0..5 on PWM/TACH channels 0..5
+PECI = "/machine/soc/peci"
+ADC = "/machine/soc/adc"
+PSU = "/machine/peripheral/psu%d"
+RTC = "/machine/peripheral/rtc"
+
 TEMPS = {
     "inlet": ("/machine/peripheral/temp-inlet", 25.0),
     "outlet": ("/machine/peripheral/temp-outlet", 35.0),
@@ -62,12 +91,27 @@ TEMPS = {
 WATCHED = {ALERT_LED: "alert LED", UID_LED: "UID LED",
            FLASH_SEL: "BIOS flash select (1 = BMC)",
            FAN_OVERRIDE: "fan override (1 = BMC)"}
+# BMC outputs that keep their level while the BMC resets (GPIO reset tolerance)
+RETAINED = {POWER_OUT: "power button out", RESET_OUT: "reset out",
+            FLASH_SEL: "BIOS flash select"}
+BMC_BOOT_MAX_S = 240      # give up waiting for the BMC to drive the pins again
+HOST_DEV = "/machine/peripheral/host"   # bmc-host-sim in the patched QEMU
 FORCE_OFF_S = 4.0
 POLL_S = 0.05
+LPC = "/machine/soc/lpc"
+ADC_NAMES = ["P12V_SYS", "P5V0_SYS", "P3V3_SYS", "PVCCIN_CPU", "PVNN_NAC_CPU",
+             "PVCCD0_HV_CPU", "PVCCINF_CPU", "PVNN_MAIN_CPU", "PVCCFA_EHV_CPU",
+             "PVCCD1_HV_CPU", "PVCCINF_EHV_FIVRA_CPU", "P3V3_STBY", "P1V8_STBY",
+             "P1V2_STBY", "P1V0_STBY", "D3V0_BAT0"]
+ADC_SCALE = [11, 11, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1]
+
+LOG = collections.deque(maxlen=300)     # recent log lines, for the panel
 
 
 def log(msg):
-    print(time.strftime("%H:%M:%S ") + msg, flush=True)
+    line = time.strftime("%H:%M:%S ") + msg
+    LOG.append(line)
+    print(line, flush=True)
 
 
 class Qmp:
@@ -84,13 +128,15 @@ class Qmp:
                 time.sleep(1)
         self.file = self.sock.makefile("rwb")
         self.lock = threading.Lock()
+        self.resets = 0                                # QEMU RESET events seen
         self._read()                                   # greeting
         self.execute("qmp_capabilities")
 
     def _read(self):
         line = self.file.readline()
         if not line:
-            sys.exit("QEMU closed the QMP connection")
+            print("QEMU closed the QMP connection", flush=True)
+            os._exit(0)
         return json.loads(line)
 
     def execute(self, command, **arguments):
@@ -106,7 +152,10 @@ class Qmp:
                     return reply["return"]
                 if "error" in reply:
                     raise RuntimeError("%s: %s" % (command, reply["error"].get("desc")))
-                # asynchronous event: ignore
+                # asynchronous event: only a machine reset (BMC reboot or watchdog
+                # reset) matters here
+                if reply.get("event") == "RESET":
+                    self.resets += 1
 
     def get(self, pin):
         return bool(self.execute("qom-get", path=GPIO, property=pin))
@@ -132,6 +181,45 @@ class Host:
         self.forced = False
         self.outputs = {}
         self.lock = threading.Lock()
+        self.seen_resets = qmp.resets
+        self.bmc_reset_at = None     # time of the BMC reset being waited out
+        self.held = {}               # pin levels kept across that reset
+        self.prev = {}               # last level seen of the pins in RETAINED
+
+    # --- BMC reset -------------------------------------------------------------
+    # On the board the BMC pins below keep their level while the BMC resets (the
+    # AST2600 GPIO reset tolerance, which the kernel enables for every line that
+    # user space requests; see the GPIO table in quick-start.md).  QEMU resets
+    # its whole GPIO model instead, so the pins read low: BMC_CPU_RESET low would
+    # look like a host reset and BMC_CPU_POWER_BUTTON low for 4 s like a forced
+    # power off.  After a QEMU reset the last levels are therefore held until the
+    # BMC has driven both power pins high again (x86-power-control after boot).
+    # BMC_FAN_BMC_OVERRIDE_N is deliberately not retained (the fans go back to
+    # the CPLD, see ceb-gnrd-fan-owner).
+    def pin(self, pin):
+        value = self.q.get(pin)
+        if self.q.resets != self.seen_resets:
+            self.seen_resets = self.q.resets
+            self.bmc_reset_at = time.time()
+            self.held = dict(self.prev)
+            log("BMC reset: holding %s at their last levels until the BMC drives "
+                "the power pins again" % ", ".join(
+                    sorted(RETAINED[p] for p in self.held)))
+        if self.bmc_reset_at is not None and pin in self.held:
+            return self.held[pin]
+        if pin in RETAINED:
+            self.prev[pin] = value
+        return value
+
+    def check_bmc_back(self):
+        if self.bmc_reset_at is None:
+            return
+        power, reset = self.q.get(POWER_OUT), self.q.get(RESET_OUT)
+        if (power and reset) or time.time() - self.bmc_reset_at > BMC_BOOT_MAX_S:
+            log("BMC reset: the BMC drives the power pins again (%.0f s)"
+                % (time.time() - self.bmc_reset_at))
+            self.bmc_reset_at = None
+            self.held = {}
 
     # --- board outputs -------------------------------------------------------
     def set_power(self, pwrgd, boot_ok):
@@ -174,7 +262,7 @@ class Host:
     def step(self):
         with self.lock:
             now = time.time()
-            power_low = not self.q.get(POWER_OUT)
+            power_low = not self.pin(POWER_OUT)
             if power_low and self.power_low_since is None:
                 self.power_low_since = now
                 self.forced = False
@@ -188,7 +276,7 @@ class Host:
                 if not self.forced:
                     self.on_power_button(held)
 
-            reset_low = not self.q.get(RESET_OUT)
+            reset_low = not self.pin(RESET_OUT)
             if reset_low and not self.reset_low and self.state in ("post", "on"):
                 log("host: reset asserted")
                 self.q.set(BOOT_OK, False)
@@ -211,7 +299,7 @@ class Host:
                     self.power_off("OS shut down")
 
             for pin, name in WATCHED.items():
-                value = self.q.get(pin)
+                value = self.pin(pin)
                 if self.outputs.get(pin) != value:
                     if pin in self.outputs:
                         log("BMC: %s -> %d" % (name, value))
@@ -219,6 +307,7 @@ class Host:
                     if pin == FLASH_SEL and value and self.state != "off":
                         log("WARNING: the BMC took the BIOS flash while the host is %s"
                             % self.state)
+            self.check_bmc_back()
 
     # --- test inputs ---------------------------------------------------------
     def press(self, pin, seconds, name):
@@ -240,6 +329,16 @@ class Host:
                 else:
                     self.go("shutting-down", self.shutdown_s)
 
+    def set_hang(self, on):
+        self.hang = on
+
+    def power_fail(self):
+        with self.lock:
+            self.power_off("power failure")
+
+    def set_times(self):
+        pass
+
     def status(self):
         with self.lock:
             pins = {name: int(self.q.get(pin)) for pin, name in
@@ -257,27 +356,395 @@ class Host:
         log("temperatures: " + ", ".join("%s=%s" % kv for kv in temps.items()))
 
 
+class BuiltinHost(Host):
+    """Console for the bmc-host-sim device: QEMU runs the host."""
+
+    def __init__(self, qmp, post_s, shutdown_s):
+        super().__init__(qmp, post_s, shutdown_s)
+        self.state = self.prop("state")
+        qmp.execute("qom-set", path=HOST_DEV, property="post-ms", value=int(post_s * 1000))
+        qmp.execute("qom-set", path=HOST_DEV, property="shutdown-ms",
+                    value=int(shutdown_s * 1000))
+
+    def prop(self, name):
+        return self.q.execute("qom-get", path=HOST_DEV, property=name)
+
+    def set_prop(self, name, value):
+        self.q.execute("qom-set", path=HOST_DEV, property=name, value=value)
+
+    def step(self):
+        with self.lock:
+            state = self.prop("state")
+            if state != self.state:
+                self.state = state
+                log("host: %s" % state)
+            for pin, name in WATCHED.items():
+                value = self.q.get(pin)
+                if self.outputs.get(pin) != value:
+                    if pin in self.outputs:
+                        log("BMC: %s -> %d" % (name, value))
+                    self.outputs[pin] = value
+                    if pin == FLASH_SEL and value and state != "off":
+                        log("WARNING: the BMC took the BIOS flash while the host is %s"
+                            % state)
+
+    def front_panel_power(self, seconds):
+        log("press front panel power button for %.1f s" % seconds)
+        self.set_prop("press-power-button", int(seconds * 1000))
+
+    def press(self, pin, seconds, name):
+        log("press %s for %.1f s" % (name, seconds))
+        self.set_prop("press-uid-button", int(seconds * 1000))
+
+    def set_hang(self, on):
+        self.hang = on
+        self.set_prop("hang", on)
+
+    def power_fail(self):
+        self.set_prop("power-fail", True)
+
+    def set_times(self):
+        self.set_prop("post-ms", int(self.post_s * 1000))
+        self.set_prop("shutdown-ms", int(self.shutdown_s * 1000))
+
+
+HELP = ("commands: status | power | power-hold | uid | hang on|off | "
+        "powerfail | temp <inlet|outlet|pcie|m2|all> <C> | "
+        "fan <0-5|all> <rpm|auto> | fan max <rpm> | "
+        "psu <0-2> in|out|ac on|off|load <W>|temp <C> | cpu <C> | "
+        "dimm <C> | adc <0-15> <mV> | rtc battery ok|low | postcode <hex> | "
+        "post <s> | shutdown <s> | quit")
+
+
+def run_command(host, qmp, words):
+    """One command, typed or sent by the panel.  Raises on bad input."""
+    cmd, rest = words[0], words[1:]
+    if cmd == "status":
+        host.status()
+    elif cmd == "power":
+        threading.Thread(target=host.front_panel_power, args=(0.5,), daemon=True).start()
+    elif cmd == "power-hold":
+        threading.Thread(target=host.front_panel_power, args=(5.0,), daemon=True).start()
+    elif cmd == "uid":
+        threading.Thread(target=host.press, args=(UID_BTN, 0.5, "UID button"),
+                         daemon=True).start()
+    elif cmd == "hang" and rest and rest[0] in ("on", "off"):
+        host.set_hang(rest[0] == "on")
+        log("BIOS hang %s (applies to the next POST)" % rest[0])
+    elif cmd == "powerfail":
+        host.power_fail()
+    elif cmd == "temp" and len(rest) == 2:
+        names = list(TEMPS) if rest[0] == "all" else [rest[0]]
+        for name in names:
+            qmp.set_temp(TEMPS[name][0], float(rest[1]))
+        log("temperature %s = %s C" % (rest[0], rest[1]))
+    elif cmd == "fan" and len(rest) == 2:
+        if rest[0] == "max":
+            qmp.execute("qom-set", path=PWM, property="fan-max-rpm", value=int(rest[1]))
+        else:
+            rpm = -1 if rest[1] == "auto" else int(rest[1])
+            fans = range(FANS) if rest[0] == "all" else [int(rest[0])]
+            for fan in fans:
+                qmp.execute("qom-set", path=PWM, property="fan%d-rpm" % fan, value=rpm)
+        log("fan %s = %s" % (rest[0], rest[1]))
+    elif cmd == "psu" and len(rest) >= 2:
+        path = PSU % int(rest[0])
+        if rest[1] in ("in", "out"):
+            qmp.execute("qom-set", path=path, property="present", value=rest[1] == "in")
+        elif rest[1] == "ac" and len(rest) == 3:
+            qmp.execute("qom-set", path=path, property="ac-lost", value=rest[2] == "off")
+        elif rest[1] == "load" and len(rest) == 3:
+            qmp.execute("qom-set", path=path, property="pout-mw",
+                        value=int(float(rest[2]) * 1000))
+        elif rest[1] == "temp" and len(rest) == 3:
+            qmp.execute("qom-set", path=path, property="temp2-mc",
+                        value=int(float(rest[2]) * 1000))
+        else:
+            raise ValueError("psu <0-2> in|out | ac on|off | load <W> | temp <C>")
+        log("PSU %s: %s" % (rest[0], " ".join(rest[1:])))
+    elif cmd in ("cpu", "dimm") and len(rest) == 1:
+        qmp.execute("qom-set", path=PECI, property="%s-temp-mc" % cmd,
+                    value=int(float(rest[0]) * 1000))
+        log("%s temperature = %s C" % (cmd.upper(), rest[0]))
+    elif cmd == "adc" and len(rest) == 2:
+        qmp.execute("qom-set", path=ADC, property="ch%d-mv" % int(rest[0]),
+                    value=int(rest[1]))
+        log("ADC%s = %s mV" % (rest[0], rest[1]))
+    elif cmd == "rtc" and len(rest) == 2 and rest[0] == "battery":
+        qmp.execute("qom-set", path=RTC, property="battery-ok", value=rest[1] == "ok")
+        log("RTC battery %s" % rest[1])
+    elif cmd == "postcode" and len(rest) == 1:
+        qmp.execute("qom-set", path=LPC, property="post-code", value=int(rest[0], 16))
+        log("POST code 0x%02x written to port 80h" % int(rest[0], 16))
+    elif cmd == "post" and rest:
+        host.post_s = float(rest[0])
+        host.set_times()
+        log("POST time %s s" % rest[0])
+    elif cmd == "shutdown" and rest:
+        host.shutdown_s = float(rest[0])
+        host.set_times()
+        log("OS shutdown time %s s" % rest[0])
+    else:
+        raise ValueError(HELP)
+
+
+def qom(qmp, path, prop):
+    """A property, or None when this QEMU does not have it."""
+    try:
+        return qmp.execute("qom-get", path=path, property=prop)
+    except RuntimeError:
+        return None
+
+
+class HostConsole:
+    """The host's end of its serial port (VUART, or UART3 with a stock QEMU).
+
+    It shows what the BMC sends (SOL input), and plays a minimal host: boot
+    messages when the host powers on and a shell that echoes what it gets.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.sock = None
+        self.text = ""          # what crossed the port, for the panel
+        self.offset = 0         # characters dropped from the front of text
+        self.line = ""
+        self.lock = threading.Lock()
+        threading.Thread(target=self._reader, daemon=True).start()
+
+    def _add(self, text):
+        with self.lock:
+            self.text += text
+            if len(self.text) > 65536:
+                cut = len(self.text) - 49152
+                self.text = self.text[cut:]
+                self.offset += cut
+
+    def _reader(self):
+        while True:
+            try:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.connect(self.path)
+            except OSError:
+                time.sleep(1)
+                continue
+            self.sock = sock
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                text = data.decode("utf-8", "replace")
+                self._add(text)
+                self._shell(text)
+            self.sock = None
+
+    def send(self, text):
+        """The host writes text to its serial port (the BMC receives it)."""
+        text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+        self._add(text)
+        if self.sock:
+            try:
+                self.sock.sendall(text.encode())
+            except OSError:
+                pass
+
+    def _shell(self, text):
+        # a host that runs an OS echoes what it is sent, and answers Enter with
+        # a prompt; while it is off, the BMC talks to nobody
+        if host_state() != "on":
+            return
+        for ch in text:
+            if ch in "\r\n":
+                self.send("\n[root@ceb-gnrd-host ~]# ")
+                self.line = ""
+            else:
+                self.line += ch
+                self.send(ch)
+
+    def on_state(self, old, new):
+        if new == "post":
+            self.send("\n\nIntel(R) Xeon(R) 6 SoC (simulated)  BIOS POST\n"
+                      "Memory test ... OK\nPCIe enumeration ... OK\n")
+        elif new == "on":
+            self.send("Booting the OS ...\n\nceb-gnrd-host login: root (automatic login)\n"
+                      "[root@ceb-gnrd-host ~]# ")
+        elif new == "shutting-down":
+            self.send("\nThe system is going down for power off NOW!\n")
+        elif new == "off" and old != "off":
+            self.send("reboot: Power down\n")
+
+    def since(self, pos):
+        with self.lock:
+            start = max(pos - self.offset, 0)
+            return self.offset + len(self.text), self.text[start:]
+
+
+HOST = None             # the Host in use, for host_state()
+
+
+def host_state():
+    return HOST.state if HOST else "off"
+
+
+class Panel:
+    """State of the simulated board, polled from QEMU for the panel."""
+
+    def __init__(self, host, qmp, console):
+        self.host = host
+        self.q = qmp
+        self.console = console
+        self.state = {}
+        self.posts = collections.deque(maxlen=64)
+        self.last_post = None
+        self.last_host = host.state
+        threading.Thread(target=self._poller, daemon=True).start()
+
+    def _poller(self):
+        while True:
+            try:
+                self.state = self.collect()
+            except RuntimeError as exc:
+                log("QMP error: %s" % exc)
+            time.sleep(0.4)
+
+    def collect(self):
+        q = self.q
+        st = {"host": self.host.state, "hang": self.host.hang,
+              "builtin": isinstance(self.host, BuiltinHost)}
+        if st["host"] != self.last_host:
+            if self.console:
+                self.console.on_state(self.last_host, st["host"])
+            self.last_host = st["host"]
+        st["pins"] = {pin: q.get(pin) for pin in
+                      (POWER_OUT, RESET_OUT, ALERT_LED, UID_LED, FLASH_SEL,
+                       FAN_OVERRIDE, PWRGD, BOOT_OK, PWR_BTN_IN, UID_BTN)}
+        st["temps"] = {name: (qom(q, path, "temperature") or 0) / 1000
+                       for name, (path, _) in TEMPS.items()}
+        st["fans"] = []
+        for i in range(FANS):
+            st["fans"].append({"rpm": qom(q, PWM, "fan%d-speed" % i),
+                               "duty": qom(q, PWM, "pwm%d-duty" % i),
+                               "fixed": qom(q, PWM, "fan%d-rpm" % i)})
+        st["fan_max"] = qom(q, PWM, "fan-max-rpm")
+        st["psus"] = []
+        for i in range(3):
+            path = PSU % i
+            psu = {k: qom(q, path, k) for k in
+                   ("present", "ac-lost", "vin-mv", "vout-mv", "pout-mw",
+                    "efficiency", "temp2-mc", "fan-rpm")}
+            psu["model"] = "crps" if psu["present"] is not None else (
+                "basic" if qom(q, path, "type") is not None else None)
+            st["psus"].append(psu)
+        st["peci"] = {k: qom(q, PECI, k) for k in
+                      ("cpu-online", "cpu-temp-mc", "dimm-temp-mc", "tjmax")}
+        st["adc"] = [{"name": ADC_NAMES[i], "scale": ADC_SCALE[i],
+                      "mv": qom(q, ADC, "ch%d-mv" % i)} for i in range(16)]
+        st["rtc_battery"] = qom(q, RTC, "battery-ok")
+        code = qom(q, LPC, "post-code")
+        if code is not None and code != self.last_post:
+            self.last_post = code
+            self.posts.append((time.strftime("%H:%M:%S"), code))
+        st["post"] = code
+        st["posts"] = list(self.posts)
+        st["log"] = list(LOG)[-80:]
+        return st
+
+
+def serve_panel(panel, port, host, qmp):
+    html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "panel.html"), "rb").read()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            pass
+
+        def reply(self, code, body, ctype="application/json"):
+            data = body if isinstance(body, bytes) else json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path in ("/", "/index.html"):
+                self.reply(200, html, "text/html; charset=utf-8")
+            elif self.path == "/api/state":
+                self.reply(200, panel.state)
+            elif self.path.startswith("/api/console"):
+                pos = int(self.path.partition("pos=")[2] or 0)
+                if panel.console:
+                    end, text = panel.console.since(pos)
+                else:
+                    end, text = 0, ""
+                self.reply(200, {"pos": end, "text": text})
+            else:
+                self.reply(404, {"error": "not found"})
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
+            try:
+                if self.path == "/api/cmd":
+                    run_command(host, qmp, body["cmd"].split())
+                elif self.path == "/api/console" and panel.console:
+                    panel.console.send(body["text"])
+                else:
+                    raise ValueError("unknown request")
+                self.reply(200, {"ok": True})
+            except (RuntimeError, KeyError, ValueError) as exc:
+                log("error: %s" % exc)
+                self.reply(400, {"error": str(exc)})
+
+    # localhost only: the panel drives the simulated hardware
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    url = "http://localhost:%d" % port
+    log("control panel on %s" % url)
+    server.serve_forever()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--qmp", default=os.path.expanduser("~/qemu-ceb-gnrd/qmp.sock"))
     parser.add_argument("--post", type=float, default=20, help="POST time in s")
     parser.add_argument("--shutdown", type=float, default=10, help="OS shutdown time in s")
+    parser.add_argument("--gui", action="store_true",
+                        help="control panel: a window when there is a display, else the web panel")
+    parser.add_argument("--web", action="store_true",
+                        help="with --gui: always the web panel (http://localhost:PORT)")
+    parser.add_argument("--port", type=int, default=8800, help="control panel port")
+    parser.add_argument("--uart", default=os.path.expanduser("~/qemu-ceb-gnrd/host-uart.sock"),
+                        help="host serial port socket (the panel plays the host console)")
     args = parser.parse_args()
 
     qmp = Qmp(args.qmp)
-    host = Host(qmp, args.post, args.shutdown)
     try:
-        host.set_power(False, False)
-        qmp.set(PWR_BTN_IN, True)
-        qmp.set(UID_BTN, True)
-    except RuntimeError as exc:
-        sys.exit("GPIO not available through QMP: %s" % exc)
+        qmp.execute("qom-get", path=HOST_DEV, property="state")
+        builtin = True
+    except RuntimeError:
+        builtin = False
+    if builtin:
+        host = BuiltinHost(qmp, args.post, args.shutdown)
+        log("host simulated inside QEMU (bmc-host-sim), state: %s" % host.state)
+    else:
+        host = Host(qmp, args.post, args.shutdown)
+        try:
+            host.set_power(False, False)
+            qmp.set(PWR_BTN_IN, True)
+            qmp.set(UID_BTN, True)
+        except RuntimeError as exc:
+            sys.exit("GPIO not available through QMP: %s" % exc)
     for name, (path, celsius) in TEMPS.items():
         try:
             qmp.set_temp(path, celsius)
         except RuntimeError as exc:
             log("temperature sensor %s not available: %s" % (name, exc))
-    log("simulated host ready (off). Type 'help' for commands.")
+    global HOST
+    HOST = host
+    if args.gui:
+        log("simulated host ready (%s)" % host.state)
+    else:
+        log("simulated host ready (%s). Type 'help' for commands." % host.state)
 
     def loop():
         while True:
@@ -289,41 +756,32 @@ def main():
 
     threading.Thread(target=loop, daemon=True).start()
 
+    if args.gui:
+        console = HostConsole(args.uart)
+        panel = Panel(host, qmp, console)
+        if not args.web and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                import panel_tk
+                window = panel_tk.PanelWindow(
+                    panel, lambda text: run_command(host, qmp, text.split()))
+            except Exception as exc:      # no Tk (python3-tk) or no display
+                log("no panel window (%s), serving the web panel instead" % exc)
+            else:
+                log("control panel window open")
+                window.mainloop()
+                return
+        serve_panel(panel, args.port, host, qmp)
+        return
+
     for line in sys.stdin:
         words = line.split()
         if not words:
             continue
-        cmd, rest = words[0], words[1:]
+        if words[0] in ("quit", "exit"):
+            break
         try:
-            if cmd in ("quit", "exit"):
-                break
-            elif cmd == "status":
-                host.status()
-            elif cmd == "power":
-                host.front_panel_power(0.5)
-            elif cmd == "power-hold":
-                host.front_panel_power(5.0)
-            elif cmd == "uid":
-                host.press(UID_BTN, 0.5, "UID button")
-            elif cmd == "hang" and rest and rest[0] in ("on", "off"):
-                host.hang = rest[0] == "on"
-                log("BIOS hang %s (applies to the next POST)" % rest[0])
-            elif cmd == "powerfail":
-                with host.lock:
-                    host.power_off("power failure")
-            elif cmd == "temp" and len(rest) == 2:
-                names = list(TEMPS) if rest[0] == "all" else [rest[0]]
-                for name in names:
-                    qmp.set_temp(TEMPS[name][0], float(rest[1]))
-                log("temperature %s = %s C" % (rest[0], rest[1]))
-            elif cmd == "post" and rest:
-                host.post_s = float(rest[0])
-            elif cmd == "shutdown" and rest:
-                host.shutdown_s = float(rest[0])
-            else:
-                print("commands: status | power | power-hold | uid | hang on|off | "
-                      "powerfail | temp <inlet|outlet|pcie|m2|all> <C> | "
-                      "post <s> | shutdown <s> | quit")
+            run_command(host, qmp, words)
         except (RuntimeError, KeyError, ValueError) as exc:
             log("error: %s" % exc)
 
