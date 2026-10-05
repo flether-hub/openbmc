@@ -49,9 +49,10 @@ class PanelWindow:
         self.command = command
         self.root = tk.Tk()
         self.root.title("CEB-GNRD 模拟控制面板")
-        self.root.geometry("1180x900")
+        self.root.geometry("1200x%d" % min(1000, self.root.winfo_screenheight() - 80))
         self.term_pos = 0
         self.drawn = {}
+        self._scroll_area()
         self._build()
         self.root.after(300, self.refresh)
 
@@ -77,8 +78,32 @@ class PanelWindow:
         return True
 
     # ---- layout -------------------------------------------------------------
+    def _scroll_area(self):
+        """Everything sits in a scrollable frame, so a small screen can scroll
+        to the parts below (vertical scroll bar, mouse wheel)."""
+        outer = tk.Canvas(self.root, highlightthickness=0)
+        bar = ttk.Scrollbar(self.root, orient="vertical", command=outer.yview)
+        outer.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        outer.pack(side="left", fill="both", expand=True)
+        self.body = ttk.Frame(outer)
+        window = outer.create_window((0, 0), window=self.body, anchor="nw")
+        self.body.bind("<Configure>", lambda e: outer.configure(
+            scrollregion=outer.bbox("all")))
+        outer.bind("<Configure>", lambda e: outer.itemconfigure(
+            window, width=e.width))
+
+        def wheel(event):
+            if isinstance(event.widget, (tk.Text,)):
+                return
+            step = -1 if (event.num == 4 or event.delta > 0) else 1
+            outer.yview_scroll(step * 3, "units")
+        self.root.bind_all("<MouseWheel>", wheel)
+        self.root.bind_all("<Button-4>", wheel)
+        self.root.bind_all("<Button-5>", wheel)
+
     def _build(self):
-        top = ttk.Frame(self.root, padding=(10, 6))
+        top = ttk.Frame(self.body, padding=(10, 6))
         top.pack(fill="x")
         ttk.Label(top, text="CEB-GNRD 模拟控制面板", font=("", 13, "bold")).pack(side="left")
         ttk.Label(top, text="   主机：").pack(side="left")
@@ -88,12 +113,12 @@ class PanelWindow:
         self.mode_lbl = ttk.Label(top, text="", foreground="#6b7280")
         self.mode_lbl.pack(side="left", padx=12)
 
-        self.canvas = tk.Canvas(self.root, height=430, background="#ffffff",
+        self.canvas = tk.Canvas(self.body, height=430, background="#ffffff",
                                 highlightthickness=0)
         self.canvas.pack(fill="x", padx=10)
         self._build_diagram()
 
-        tabs = ttk.Notebook(self.root)
+        tabs = ttk.Notebook(self.body)
         tabs.pack(fill="both", expand=True, padx=10, pady=6)
         self._tab_host(tabs)
         self._tab_fans(tabs)
@@ -103,7 +128,7 @@ class PanelWindow:
         self._tab_log(tabs)
 
         self.status = tk.StringVar()
-        ttk.Label(self.root, textvariable=self.status, foreground=ALERT).pack(
+        ttk.Label(self.body, textvariable=self.status, foreground=ALERT).pack(
             fill="x", padx=10, pady=(0, 4))
 
     def _build_diagram(self):

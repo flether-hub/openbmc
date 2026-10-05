@@ -103,6 +103,8 @@ ADC_NAMES = ["P12V_SYS", "P5V0_SYS", "P3V3_SYS", "PVCCIN_CPU", "PVNN_NAC_CPU",
              "PVCCD0_HV_CPU", "PVCCINF_CPU", "PVNN_MAIN_CPU", "PVCCFA_EHV_CPU",
              "PVCCD1_HV_CPU", "PVCCINF_EHV_FIVRA_CPU", "P3V3_STBY", "P1V8_STBY",
              "P1V2_STBY", "P1V0_STBY", "D3V0_BAT0"]
+ADC_NOMINAL_MV = [1091, 455, 1650, 1800, 900, 1130, 850, 1000, 1800, 1130, 1800,
+                  1650, 1800, 1200, 1000, 3000]
 ADC_SCALE = [11, 11, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1]
 
 LOG = collections.deque(maxlen=300)     # recent log lines, for the panel
@@ -752,6 +754,14 @@ def main():
             qmp.set(UID_BTN, True)
         except RuntimeError as exc:
             sys.exit("GPIO not available through QMP: %s" % exc)
+    # ADC inputs at the nominal rails (run-qemu.sh also passes them with
+    # -global; set them here too so they do not depend on that)
+    for i, mv in enumerate(ADC_NOMINAL_MV):
+        try:
+            if qmp.execute("qom-get", path=ADC, property="ch%d-mv" % i) < 0:
+                qmp.execute("qom-set", path=ADC, property="ch%d-mv" % i, value=mv)
+        except RuntimeError:
+            break               # a QEMU without settable ADC inputs
     for name, (path, celsius) in TEMPS.items():
         try:
             qmp.set_temp(path, celsius)
