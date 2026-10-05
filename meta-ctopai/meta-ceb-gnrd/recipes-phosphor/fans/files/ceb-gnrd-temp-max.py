@@ -259,23 +259,43 @@ class SensorObjectManager(ServiceInterface):
         super().__init__("org.freedesktop.DBus.ObjectManager")
         self.entries = []        # (path, sensor, associations, [threshold objects])
 
+    @staticmethod
+    def interfaces_of(entry):
+        _, sensor, assoc, thresholds = entry
+        interfaces = {
+            VALUE_IFACE: {
+                "Value": Variant("d", sensor.value),
+                "Unit": Variant("s", UNIT_DEGREES_C),
+                "MaxValue": Variant("d", 127.0),
+                "MinValue": Variant("d", -128.0),
+            },
+            ASSOC_IFACE: {"Associations": Variant("a(sss)", assoc.assoc)},
+        }
+        for obj, _, _ in thresholds:
+            interfaces[obj.interface_name] = obj.properties()
+        return interfaces
+
     @method()
     def GetManagedObjects(self) -> "a{oa{sa{sv}}}":
-        result = {}
-        for path, sensor, assoc, thresholds in self.entries:
-            interfaces = {
-                VALUE_IFACE: {
-                    "Value": Variant("d", sensor.value),
-                    "Unit": Variant("s", UNIT_DEGREES_C),
-                    "MaxValue": Variant("d", 127.0),
-                    "MinValue": Variant("d", -128.0),
-                },
-                ASSOC_IFACE: {"Associations": Variant("a(sss)", assoc.assoc)},
-            }
-            for obj, _, _ in thresholds:
-                interfaces[obj.interface_name] = obj.properties()
-            result[path] = interfaces
-        return result
+        return {entry[0]: self.interfaces_of(entry) for entry in self.entries}
+
+    def get_all_handler(self, msg):
+        """Properties.GetAll with an empty interface name: all properties of all
+        interfaces of the object.  bmcweb reads every single sensor like this
+        (Redfish Sensors/<name>), but dbus-fast answers NotSupported, which made
+        bmcweb return an internal error for these sensors: the web page, which
+        reads each sensor, then dropped them."""
+        if (msg.message_type is MessageType.METHOD_CALL
+                and msg.interface == "org.freedesktop.DBus.Properties"
+                and msg.member == "GetAll" and msg.signature == "s"
+                and msg.body[0] == ""):
+            for entry in self.entries:
+                if entry[0] == msg.path:
+                    merged = {}
+                    for props in self.interfaces_of(entry).values():
+                        merged.update(props)
+                    return Message.new_method_return(msg, "a{sv}", [merged])
+        return None
 
 
 async def call(bus, destination, path, interface, member, signature="", body=None):
@@ -434,6 +454,7 @@ async def main():
         manager.entries.append(("%s/%s" % (SENSOR_ROOT, sensor.sensor_name), sensor,
                                 assocs[group], [t[0] for t in thresholds[group]]))
     bus.export(SENSOR_BASE, manager)
+    bus.add_message_handler(manager.get_all_handler)
     await bus.request_name(BUS_NAME)
     LOG.info("started, publishing CPU_MAX_TEMP and DIMM_MAX_TEMP")
     sd_notify("READY=1")
