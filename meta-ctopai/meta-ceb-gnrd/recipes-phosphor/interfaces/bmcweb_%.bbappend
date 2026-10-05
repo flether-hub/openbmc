@@ -1,4 +1,7 @@
 # The fan control page stores its persistence option through the D-Bus REST API.
+FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
+SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-delete-single-file-event-log.patch"
+
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 
 # The web "Dumps" page (BMC dump) uses the Redfish Dump log service.  The recipe

@@ -104,6 +104,7 @@ WATCHED = {ALERT_LED: "alert LED", UID_LED: "UID LED",
            FLASH_SEL: "BIOS flash select (1 = BMC)",
            FAN_OVERRIDE: "fan override (1 = BMC)"}
 PIN_SIGNALS = {
+    "gpioP7": ("GPIOP7 BMC_HBLED_N", "BMC→主机", True),
     POWER_OUT: ("GPIOV2 BMC_CPU_POWER_BUTTON", "BMC→主机", True),
     RESET_OUT: ("GPIOV3 BMC_CPU_RESET", "BMC→主机", True),
     FLASH_SEL: ("GPIOM1 BMC_BIOS_FLASH_SELECT", "BMC→主机", False),
@@ -465,6 +466,17 @@ def run_command(host, qmp, words):
         threading.Thread(target=host.front_panel_power, args=(0.5,), daemon=True).start()
     elif cmd == "power-hold":
         threading.Thread(target=host.front_panel_power, args=(5.0,), daemon=True).start()
+    elif cmd == "reset":
+        with host.lock:
+            if isinstance(host, BuiltinHost):
+                if host.prop("state") not in ("post", "on"):
+                    raise ValueError("主机未处于 POST/运行状态，不能复位")
+                host.set_prop("press-reset-button", 1)
+            else:
+                if host.state not in ("post", "on"):
+                    raise ValueError("主机未处于 POST/运行状态，不能复位")
+                host.start_post()
+        log("主机板端 Reset 按钮：重新 POST，保持 PWRGD；不改变 BMC GPIO")
     elif cmd == "uid":
         threading.Thread(target=host.press, args=(UID_BTN, 0.5, "UID button"),
                          daemon=True).start()
@@ -600,7 +612,7 @@ def set_screen(qmp, state):
 # BMC outputs as the board sees them: the level the BMC drives, or the board's
 # pull-up/down while the pin is not an output (BMC booting, line not requested).
 BOARD_PULL = {POWER_OUT: True, RESET_OUT: True, ALERT_LED: False, UID_LED: False,
-              FLASH_SEL: False, FAN_OVERRIDE: False}
+              FLASH_SEL: False, FAN_OVERRIDE: False, "gpioP7": True}
 
 
 def board_level(qmp, pin):

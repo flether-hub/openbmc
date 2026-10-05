@@ -1,0 +1,203 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] eventlog: support single file-entry deletion without shifting IDs
+
+Upstream-Status: Inappropriate [CEB-GNRD file event log policy]
+
+diff --git a/redfish-core/include/utils/eventlog_utils.hpp b/redfish-core/include/utils/eventlog_utils.hpp
+--- a/redfish-core/include/utils/eventlog_utils.hpp
++++ b/redfish-core/include/utils/eventlog_utils.hpp
+@@ -24,6 +24,8 @@
+ #include "utils/time_utils.hpp"
+ 
+ #include <asm-generic/errno.h>
++#include <fcntl.h>
++#include <unistd.h>
+ 
+ #include <boost/beast/http/status.hpp>
+ #include <boost/url/format.hpp>
+@@ -190,6 +192,91 @@
+     std::ranges::sort(redfishLogFiles);
+ 
+     return !redfishLogFiles.empty();
++}
++
++
++// Reserve the original timestamp/ordinal after deletion so other entry IDs
++// do not move. The message/arguments are overwritten in place, not hidden in
++// a browser cache; rsyslog's inode, append offset and file size stay unchanged.
++inline bool isDeletedFileEvent(const std::string& line)
++{
++    size_t space = line.find(' ');
++    return space != std::string::npos &&
++           std::string_view(line).substr(space + 1).starts_with("#DEL");
++}
++
++inline void deleteFileEvent(
++    const std::shared_ptr<bmcweb::AsyncResp>& asyncResp,
++    const std::string& targetID)
++{
++    std::vector<std::filesystem::path> files;
++    getRedfishLogFiles(files);
++    event_log::UniqueEntryIDState state;
++    for (auto it = files.rbegin(); it != files.rend(); ++it)
++    {
++        int fd = open(it->c_str(), O_RDWR | O_CLOEXEC | O_NOFOLLOW);
++        if (fd < 0)
++        {
++            messages::internalError(asyncResp->res);
++            return;
++        }
++        FILE* raw = fdopen(fd, "r+");
++        if (raw == nullptr)
++        {
++            close(fd);
++            messages::internalError(asyncResp->res);
++            return;
++        }
++        std::unique_ptr<FILE, decltype(&fclose)> stream(raw, &fclose);
++        while (true)
++        {
++            off_t offset = ftello(raw);
++            std::string line;
++            int ch = 0;
++            while ((ch = fgetc(raw)) != EOF && ch != '\n')
++            {
++                line.push_back(static_cast<char>(ch));
++            }
++            if (ferror(raw) != 0 || offset < 0)
++            {
++                messages::internalError(asyncResp->res);
++                return;
++            }
++            // Only complete records can be deleted. An append in progress is
++            // left untouched; the caller can retry when it becomes visible.
++            if (ch == EOF)
++            {
++                break;
++            }
++            std::string id;
++            if (!event_log::getUniqueEntryID(state, line, id) || id != targetID)
++            {
++                continue;
++            }
++            if (isDeletedFileEvent(line))
++            {
++                break;
++            }
++            size_t space = line.find(' ');
++            if (space == std::string::npos || line.size() - space - 1 < 4)
++            {
++                messages::internalError(asyncResp->res);
++                return;
++            }
++            std::string blank(line.size() - space - 1, ' ');
++            blank.replace(0, 4, "#DEL");
++            if (fseeko(raw, offset + static_cast<off_t>(space + 1), SEEK_SET) != 0 ||
++                fwrite(blank.data(), 1, blank.size(), raw) != blank.size() ||
++                fflush(raw) != 0 || fsync(fd) != 0)
++            {
++                messages::internalError(asyncResp->res);
++                return;
++            }
++            asyncResp->res.result(boost::beast::http::status::no_content);
++            return;
++        }
++    }
++    messages::resourceNotFound(asyncResp->res, "LogEntry", targetID);
+ }
+ 
+ enum class LogParseError
+@@ -360,6 +447,11 @@
+                 continue;
+             }
+ 
++            if (isDeletedFileEvent(logEntry))
++            {
++                continue;
++            }
++
+             nlohmann::json::object_t bmcLogEntry;
+             LogParseError status = fillEventLogEntryJson(
+                 idStr, logEntry, bmcLogEntry, collectionStr, memberId,
+@@ -440,7 +532,7 @@
+                 continue;
+             }
+ 
+-            if (idStr == targetID)
++            if (idStr == targetID && !isDeletedFileEvent(logEntry))
+             {
+                 nlohmann::json::object_t bmcLogEntry;
+                 LogParseError status = fillEventLogEntryJson(
+diff --git a/redfish-core/lib/systems_logservices_journal_eventlog.hpp b/redfish-core/lib/systems_logservices_journal_eventlog.hpp
+--- a/redfish-core/lib/systems_logservices_journal_eventlog.hpp
++++ b/redfish-core/lib/systems_logservices_journal_eventlog.hpp
+@@ -104,8 +104,35 @@
+         asyncResp);
+ }
+ 
++inline void handleSystemsLogServiceEventLogEntriesDelete(
++    crow::App& app, const crow::Request& req,
++    const std::shared_ptr<bmcweb::AsyncResp>& asyncResp,
++    const std::string& systemName, const std::string& entryId)
++{
++    if (!redfish::setUpRedfishRoute(app, req, asyncResp))
++    {
++        return;
++    }
++    if (systemName != BMCWEB_REDFISH_SYSTEM_URI_NAME)
++    {
++        messages::resourceNotFound(asyncResp->res, "ComputerSystem", systemName);
++        return;
++    }
++    if constexpr (BMCWEB_EXPERIMENTAL_REDFISH_MULTI_COMPUTER_SYSTEM)
++    {
++        messages::resourceNotFound(asyncResp->res, "ComputerSystem", systemName);
++        return;
++    }
++    eventlog_utils::deleteFileEvent(asyncResp, entryId);
++}
++
+ inline void requestRoutesSystemsJournalEventLog(App& app)
+ {
++    BMCWEB_ROUTE(app, "/redfish/v1/Systems/<str>/LogServices/EventLog/Entries/<str>/")
++        .privileges(redfish::privileges::deleteLogEntrySubOverComputerSystemLogServiceCollectionLogServiceLogEntryCollection)
++        .methods(boost::beast::http::verb::delete_)(std::bind_front(
++            handleSystemsLogServiceEventLogEntriesDelete, std::ref(app)));
++
+     BMCWEB_ROUTE(app, "/redfish/v1/Systems/<str>/LogServices/EventLog/Entries/")
+         .privileges(redfish::privileges::getLogEntryCollection)
+         .methods(boost::beast::http::verb::get)(std::bind_front(
+diff --git a/redfish-core/lib/manager_logservices_journal_eventlog.hpp b/redfish-core/lib/manager_logservices_journal_eventlog.hpp
+--- a/redfish-core/lib/manager_logservices_journal_eventlog.hpp
++++ b/redfish-core/lib/manager_logservices_journal_eventlog.hpp
+@@ -87,8 +87,30 @@
+         asyncResp);
+ }
+ 
++inline void handleManagersJournalEventLogEntryDelete(
++    crow::App& app, const crow::Request& req,
++    const std::shared_ptr<bmcweb::AsyncResp>& asyncResp,
++    const std::string& managerId, const std::string& entryId)
++{
++    if (!redfish::setUpRedfishRoute(app, req, asyncResp))
++    {
++        return;
++    }
++    if (managerId != BMCWEB_REDFISH_MANAGER_URI_NAME)
++    {
++        messages::resourceNotFound(asyncResp->res, "Manager", managerId);
++        return;
++    }
++    eventlog_utils::deleteFileEvent(asyncResp, entryId);
++}
++
+ inline void requestRoutesManagersJournalEventLog(App& app)
+ {
++    BMCWEB_ROUTE(app, "/redfish/v1/Managers/<str>/LogServices/EventLog/Entries/<str>/")
++        .privileges(redfish::privileges::deleteLogEntry)
++        .methods(boost::beast::http::verb::delete_)(std::bind_front(
++            handleManagersJournalEventLogEntryDelete, std::ref(app)));
++
+     BMCWEB_ROUTE(app,
+                  "/redfish/v1/Managers/<str>/LogServices/EventLog/Entries/")
+         .privileges(redfish::privileges::getLogEntryCollection)

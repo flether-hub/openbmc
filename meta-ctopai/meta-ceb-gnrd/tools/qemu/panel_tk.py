@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog
 
 # [name, gpio, property, direction, active low, note]
 SIGNALS = [
+    ("BMC_HBLED_N", "GPIOP7", "gpioP7", "b2h", True, "BMC 心跳输出（低有效）"),
     ("BMC_CPU_POWER_BUTTON", "GPIOV2", "gpioV2", "b2h", True, "电源键输出（低有效）"),
     ("BMC_CPU_RESET", "GPIOV3", "gpioV3", "b2h", True, "主机复位（低有效）"),
     ("BMC_BIOS_FLASH_SELECT", "GPIOM1", "gpioM1", "b2h", False, "高 = BMC 占用 BIOS Flash"),
@@ -29,7 +30,7 @@ SIGNALS = [
 ]
 HOST_LABELS = {"gpioV2": "电源键", "gpioV3": "复位", "gpioM1": "BIOS Flash",
                "gpioI6": "风扇控制", "gpioI5": "告警灯", "gpioV1": "UID 灯",
-               "gpioV4": "电源 PWRGD", "gpioM7": "BIOS BOOT_OK"}
+               "gpioV4": "电源 PWRGD", "gpioM7": "BIOS BOOT_OK", "gpioP7": "BMC 心跳"}
 BUSES = [("PECI", "CPU / DIMM 温度", "peci"), ("eSPI / LPC 80h", "POST 码", "post"),
          ("VUART (COM1)", "SOL 串口", "uart"), ("PWM / TACH", "6 个风扇", "fan"),
          ("I2C", "温度、PSU、FRU、RTC", "i2c")]
@@ -61,7 +62,7 @@ class PanelWindow:
         style.configure("TButton", padding=(12, 7), background="#e8eef7", borderwidth=0)
         style.map("TButton", background=[("active", "#d8e6fb")])
         style.configure("TNotebook", background="#f2f5fa", borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(14, 9))
+        style.configure("TNotebook.Tab", padding=(4, 7))
         style.map("TNotebook.Tab", background=[("selected", "#dceaff")])
         style.configure("TLabelframe", bordercolor="#d9e2ef", relief="solid")
         style.configure("TLabelframe.Label", foreground="#355f93", font=("", 10, "bold"))
@@ -204,12 +205,16 @@ class PanelWindow:
 
     def _tab_host(self, tabs):
         f = ttk.Frame(tabs, padding=10)
-        tabs.add(f, text="主机控制 / POST 码")
+        tabs.add(f, text="主机/POST")
         left = ttk.LabelFrame(f, text="主机控制", padding=8)
         left.pack(side="top", fill="x")
         row = ttk.Frame(left); row.pack(anchor="w", pady=3)
         self.button(row, "前面板电源键（短按）", "power").pack(side="left", padx=2)
         self.button(row, "长按 5 s（强制关机）", "power-hold").pack(side="left", padx=2)
+        row = ttk.Frame(left); row.pack(anchor="w", pady=3)
+        self.button(row, "主机 Reset（板端）", "reset").pack(side="left", padx=2)
+        ttk.Label(row, text="不接入 BMC GPIO；主机保持供电并重新 POST",
+                  foreground="#6b7280").pack(side="left", padx=4)
         row = ttk.Frame(left); row.pack(anchor="w", pady=3)
         self.button(row, "UID 按键", "uid").pack(side="left", padx=2)
         self.button(row, "主机掉电（PWRGD 突然掉）", "powerfail").pack(side="left", padx=2)
@@ -273,7 +278,7 @@ class PanelWindow:
 
     def _tab_psus(self, tabs):
         f = ttk.Frame(tabs, padding=10)
-        tabs.add(f, text="电源 PSU")
+        tabs.add(f, text="PSU")
         self.psu_rows = []
         for i in range(3):
             box = ttk.LabelFrame(f, text="PSU%d (0x%02x)" % (i, 0x58 + i), padding=8)
@@ -302,7 +307,7 @@ class PanelWindow:
 
     def _tab_sensors(self, tabs):
         f = ttk.Frame(tabs, padding=10)
-        tabs.add(f, text="温度 / ADC / RTC")
+        tabs.add(f, text="温度/电压/RTC")
         sidebar = ttk.Frame(f)
         sidebar.pack(side="left", fill="y")
         temps = ttk.LabelFrame(sidebar, text="温度 °C（松开生效）", padding=6)
@@ -342,7 +347,7 @@ class PanelWindow:
 
     def _tab_console(self, tabs):
         f = ttk.Frame(tabs, padding=10)
-        tabs.add(f, text="主机串口 (SOL)")
+        tabs.add(f, text="SOL")
         ttk.Label(f, text="本窗口扮演主机 COM1：BMC 的 SOL 输入显示在这里，下框输入回车后由主机发给 BMC",
                   foreground="#6b7280").pack(anchor="w")
         self.term = tk.Text(f, height=16, bg="#0b0f14", fg="#d1e7d1",
@@ -538,7 +543,7 @@ class PanelWindow:
 
     def _tab_interfaces(self, tabs):
         f = ttk.Frame(tabs, padding=16)
-        tabs.add(f, text="eSPI / CHASI#")
+        tabs.add(f, text="eSPI/开盖")
         self.interface_status = ttk.Label(f, text="等待硬件状态", justify="left")
         self.interface_status.pack(anchor="w", pady=8)
         row = ttk.Frame(f); row.pack(anchor="w", pady=6)
@@ -557,7 +562,7 @@ class PanelWindow:
 
     def _tab_kvm_usb(self, tabs):
         f = ttk.Frame(tabs, padding=16)
-        tabs.add(f, text="VGA / USB")
+        tabs.add(f, text="VGA/USB")
         left = ttk.LabelFrame(f, text="主机 VGA 输入 · 800×600 JPEG", padding=12)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         self.vga_preview = ttk.Label(left, text="等待 VGA 图片")

@@ -31,4 +31,5 @@ SRC_URI += " \
     file://0020-aspeed-adc-keep-the-channel-values-to-10-bits.patch \
     file://0021-aspeed-fix-video-detection-and-usb-ep0-handshakes.patch \
     file://0022-aspeed-remove-unrealized-legacy-vuart.patch \
+    file://0023-bmc-host-sim-add-board-reset-button.patch \
     "

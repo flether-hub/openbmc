@@ -6,6 +6,9 @@ line="BMC_FAN_BMC_OVERRIDE_N"
 location=$(gpiofind "$line")
 set -f
 set -- $location
+# Disable globbing only while splitting gpiofind's chip/offset pair.
+# The readiness scan below requires hwmon* to expand into real devices.
+set +f
 if [ "$#" -ne 2 ]; then
     echo "Unexpected gpiofind result for $line: $location" >&2
     exit 1

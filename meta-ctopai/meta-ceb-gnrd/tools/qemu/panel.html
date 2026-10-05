@@ -163,6 +163,7 @@ main { max-width: none; overflow: hidden; grid-template-columns: minmax(460px, 4
   <div class="row">
     <button class="primary" onclick="cmd('power')">前面板电源键（短按）</button>
     <button onclick="cmd('power-hold')">长按 5 s（强制关机）</button>
+    <button onclick="cmd('reset')" title="板端直接复位主机，不接入 BMC GPIO，保持 PWRGD">主机 Reset（板端）</button>
   </div>
   <div class="row">
     <button onclick="cmd('uid')">UID 按键</button>
@@ -335,6 +336,7 @@ const SIGS = [
   ['BMC_BIOS_BOOT_OK', 'GPIOM7', 'gpioM7', 'h2b', false, 'BIOS POST 完成'],
   ['BMC_POWER_BUTTON_INPUT', 'GPIOM2', 'gpioM2', 'h2b', true, '前面板电源键（低有效）'],
   ['BMC_UID_BUTTON_N', 'GPIOV0', 'gpioV0', 'h2b', true, 'UID 按键（低有效）'],
+  ['BMC_HBLED_N', 'GPIOP7', 'gpioP7', 'b2h', true, 'BMC 心跳输出（低有效）'],
 ];
 const BUSES = [
   ['PECI', 'CPU / DIMM 温度', 'peci'],

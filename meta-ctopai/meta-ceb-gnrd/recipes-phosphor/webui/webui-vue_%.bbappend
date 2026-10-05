@@ -28,5 +28,7 @@ SRC_URI:append:ceb-gnrd = " \
 # complete board locale replaces it after patching so every existing page has
 # Chinese text instead of falling back to English.
 do_configure:append:ceb-gnrd() {
+    # File-backed event logs have no Resolved property/PATCH operation.
+    printf '\nVITE_EVENT_LOGS_TOGGLE_BUTTON_DISABLED=true\n' >> ${S}/.env.production.local
     install -Dm0644 ${UNPACKDIR}/zh-CN.json ${S}/src/locales/zh-CN.json
 }

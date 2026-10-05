@@ -1,0 +1,36 @@
+From: CEB-GNRD simulator <qemu-ceb-gnrd@localhost>
+Subject: [PATCH] bmc-host-sim: add board reset button independent of BMC GPIO
+
+Upstream-Status: Inappropriate [CEB-GNRD simulation only]
+
+diff --git a/hw/misc/bmc_host_sim.c b/hw/misc/bmc_host_sim.c
+--- a/hw/misc/bmc_host_sim.c
++++ b/hw/misc/bmc_host_sim.c
+@@ -421,7 +421,17 @@
+     if (!visit_type_uint32(v, name, &ms, errp)) {
+         return;
+     }
+-    if (!strcmp(name, "press-power-button")) {
++    if (!strcmp(name, "press-reset-button")) {
++        /* Direct board/CPLD reset: no BMC GPIO input is wired to this button.
++         * Keep PWRGD asserted; only restart the simulated BIOS sequence. */
++        if (s->state != HOST_POST && s->state != HOST_ON) {
++            error_setg(errp, "host reset requires POST or running host");
++            return;
++        }
++        if (ms != 0) {
++            host_start_post(s, "front panel reset button (not wired to BMC)");
++        }
++    } else if (!strcmp(name, "press-power-button")) {
+         s->power_button_ms = ms;
+         s->power_button_release = host_now() + ms;
+     } else {
+@@ -469,6 +479,8 @@
+                         host_set_press, NULL, NULL);
+     object_property_add(obj, "press-uid-button", "uint32", NULL,
+                         host_set_press, NULL, NULL);
++    object_property_add(obj, "press-reset-button", "uint32", NULL,
++                        host_set_press, NULL, NULL);
+ }
+ 
+ /* Defaults: the CEB-GNRD (AST2600 + Granite Rapids-D) wiring */
