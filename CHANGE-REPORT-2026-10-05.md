@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 11:56 UTC（北京时间 19:56）
+最后更新：2026-10-05 12:20 UTC（北京时间 20:20）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -88,4 +88,41 @@
 
 ## 二、其他线程
 
-（QEMU 模拟器线程请在此补充：`tools/qemu/`、QEMU 补丁、面板、KVM 画面、PWM/TACH 等。）
+### 线程「QEMU 模拟器 / 控制面板」
+
+约定：直接提交到 `master`，不建分支；固件在用户的 Ubuntu x86 构建机上编译，写这些改动的机器（Windows）没有编译器，凡写「未验证」的都没编译过。
+
+基础信息
+- 运行：仓库根目录 `./run-qemu.sh`（链接到 `meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh`）。BMC 登录 `ssh -p 2222 root@127.0.0.1`，密码 `0penBmc`；网页 https://127.0.0.1:8443。
+- QEMU 板级模型是 `tools/qemu/patches/NNNN-*.patch`（基于 QEMU 11.0.2，即当前 OE-core 的版本），由 `recipes-devtools/qemu/qemu-system-native_%.bbappend` 打到 `qemu-system-native` 上。新增补丁必须加进该文件的 `SRC_URI`，且补丁里要有 `Upstream-Status:` 行，否则 `do_patch` 报错。`tools/qemu/build-qemu.sh` 可在 Yocto 之外编同一个 QEMU。
+- 面板：`tools/qemu/host-sim.py --gui`，有显示用 Tk 窗口（`panel_tk.py`，需 `python3-tk`），否则网页（`panel.html`，端口 8800）。`tools/qemu/README.md` 有完整说明和补丁清单。
+
+只改模拟器、不改 BMC 固件的提交
+| 提交 | 内容 / 原因 | 验证 |
+|---|---|---|
+| `5495773654` `e3027dd9b2` `e6abc1e72d` | 补丁 0001-0012：AHB 时钟、PWM/TACH 风扇、`bmc-host-sim`（GPIO 上的主机上电时序、POST 码）、可设 ADC、GPIO 复位保持、`crps-psu`、PECI 上的 CPU、`nct3018y` RTC、VUART 和 LPC snoop、面板用只读属性 | 能编过；`./run-qemu.sh`；面板有风扇、PSU、POST 码 |
+| `4457decde3` `335ebdf791` | Tk 面板窗口（网页作后备）、滚动条 | 面板能打开、能滚动 |
+| `518c8934d7` | 每个补丁加 `Upstream-Status`（Yocto QA 让 `do_patch` 失败） | `do_patch` 通过 |
+| `4147d44053` | 补丁 0013：引脚切成输出时驱动最后写入的电平（LED 显示旧电平） | 面板 UID/告警灯跟随 |
+| `dbe0abe1aa` `a25b7bed32` | 补丁 0014/0016：AST2600 视频引擎，给 BMC KVM 一张 800x600 静态画面（`tools/qemu/kvm/post.jpg`、`os.jpg`），画面出现时发模式检测中断 | 主机开机后网页 KVM 出画面。**用户还没确认** |
+| `4a131bf841` | 补丁 0015 `gpio-dir[N]`；面板把 BMC 没驱动的输出线按板上上拉/下拉显示 | BMC 启动后复位/电源线是绿色 |
+| `6c61c648b8` | `run-qemu.sh` 的 `-global` 要写成 `driver=aspeed.adc,property=chN-mv,value=…`（简写会在第一个点处被切开）；补丁 0017：补偿模式所有通道都读半量程，驱动偏移为 0 | ADC 读数是额定电压，只剩 D3V0_BAT0 告警 |
+
+模拟器暴露出的固件问题（真板上同样存在）
+| 提交 | 内容 / 原因 | 验证 |
+|---|---|---|
+| `c9984be953` | DTS 加 `pwm-fan0..5` 和 `CONFIG_SENSORS_PWM_FAN`；`aspeed-g6-pwm-tach` 只注册 pwmchip，fansensor 报 "no pwm channel found" | `ls /sys/class/hwmon/*/pwm1` 有 6 个 |
+| `a1cc889b1b` | `ceb-gnrd-fan-owner.sh` 只认 `fanN_input` 旁边的 `pwmN`，改为也认 `pwm-fanN` 的 `pwm1`；否则 `BMC_FAN_BMC_OVERRIDE_N` 永远不拉高 | `gpioinfo` 里该线 `[used]`。**用户反馈线仍是低，等 `journalctl -u ceb-gnrd-fan-owner` 输出** |
+| `4147d44053` | `ceb-gnrd-psu-detect.sh`：PSU 插拔后重启 psusensor，轮询 10 s、2 次不应答算拔出 | 面板插入 PSU2，约 10 s 内出现 PSU2_* sensor |
+| `36a47cd3bf` | `recipes-phosphor/images/obmc-phosphor-image.bbappend`：打包任务等 `linux-yocto-fitimage:do_deploy`（清 sstate 后 "image-kernel: No such file"） | 干净构建能打包 |
+| `77a8624030` | `gpio_defs.json` 里 UID 按键名改成 `ID_BTN`（phosphor-buttons 只认这个名字） | `gpioinfo` 里 `BMC_UID_BUTTON_N` `[used]`，按键切换 identify 灯。**用户反馈：先能亮，重编后不亮，等 `gpioinfo`、`gpio_defs.json`、`gpiomon` 输出** |
+| `d37433c2d8` | `ceb-gnrd-alert-led.py`：入侵状态是完整枚举串，比较最后一段（否则每次启动都误记一条入侵 SEL） | 启动日志没有 "Chassis intrusion detected" |
+| `6e5868b21b` | `ceb-gnrd-alert-led.py`：`mapper_sensors()` 把结果变成元组又要求列表，找不到 sensor，电压告警从不点亮告警灯 | D3V0_BAT0 告警 → 告警灯红 |
+
+开放问题（QEMU 线程）
+1. UID 灯重编后不亮、风扇 override 线仍低：见上面两行「等输出」。
+2. KVM 画面（补丁 0014/0016）在真实 QEMU 构建上没验证。
+3. D3V0_BAT0 额定 3.0 V、ScaleFactor 1，超过 ADC 2.5 V 参考电压，永远读 2.5 V 并告警；需对照原理图改 Entity-Manager 的分压/ScaleFactor。
+4. KVM 的 USB 键鼠输入（aspeed-vhub）没做，工作量约视频引擎的 3 倍；PCIe/USB 画面和 PCIe 插拔也没做（已询问，未答复）。
+5. 提过但没做：主机侧 KCS（带内 IPMI）、机箱入侵模型、用真实 x86 QEMU 当主机、MCTP/PLDM、BIOS 升级流程。
+6. 「ADC 填测量值 V、分压由模拟器自动处理」的面板改动由另一个线程在做（写本节时在工作区未提交）。
