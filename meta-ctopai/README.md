@@ -15,3 +15,10 @@ Or set up manually:
 
     TEMPLATECONF=meta-ctopai/meta-ceb-gnrd/conf/templates/default \
         source oe-init-build-env build/<board-name>
+
+Documentation:
+
+* `quick-start.md` – how to build the ceb-gnrd image, run it in QEMU, develop with
+  devtool, verify each feature, and (last chapter) the implementation notes of
+  the meta-ceb-gnrd layer.
+* `port_guide.xlsx` – signal-by-signal port guide of the ceb-gnrd board.
