@@ -488,6 +488,24 @@ def run_command(host, qmp, words):
         raise ValueError(HELP)
 
 
+VIDEO = "/machine/soc/video-engine"
+KVM_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kvm")
+SCREENS = {"post": "post.jpg", "on": "os.jpg", "shutting-down": "os.jpg"}
+
+
+def set_screen(qmp, state):
+    """The host's VGA output the BMC KVM shows: no signal while the host is
+    off, a BIOS screen during POST, the OS console when it runs."""
+    name = SCREENS.get(state)
+    try:
+        if name:
+            qmp.execute("qom-set", path=VIDEO, property="image",
+                        value=os.path.join(KVM_DIR, name))
+        qmp.execute("qom-set", path=VIDEO, property="signal", value=bool(name))
+    except RuntimeError:
+        pass        # a QEMU without the video engine model
+
+
 def qom(qmp, path, prop):
     """A property, or None when this QEMU does not have it."""
     try:
@@ -747,9 +765,13 @@ def main():
         log("simulated host ready (%s). Type 'help' for commands." % host.state)
 
     def loop():
+        screen = None
         while True:
             try:
                 host.step()
+                if host.state != screen:
+                    screen = host.state
+                    set_screen(qmp, screen)
             except RuntimeError as exc:
                 log("QMP error: %s" % exc)
             time.sleep(POLL_S)

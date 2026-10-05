@@ -34,6 +34,7 @@ stock QEMU `run-qemu.sh` still runs, and `host-sim.py` plays the host over QMP.
 | ADC0-15 | steady nominal rail voltages from the Entity-Manager dividers; panel table |
 | 4 temperature sensors (I2C7 0x48-0x4b) | tmp105; panel sliders |
 | NCT3015Y RTC (I2C10 0x6f) | `nct3018y`, keeps its time across BMC reboots; panel: battery low |
+| Host VGA for the BMC KVM | video engine model: no signal while the host is off, `kvm/post.jpg` during POST, `kvm/os.jpg` when the OS runs (switched by `host-sim.py`, so the panel must run) |
 | BMC reboot | GPIO reset tolerance: the power, reset and flash select outputs hold, `BMC_FAN_BMC_OVERRIDE_N` resets |
 | BIOS flash (SPI1, 64 MiB) | `~/qemu-bios.bin`; the panel log warns when the BMC takes it while the host is on |
 | NC-SI port (MAC3, eth1) | QEMU answers NC-SI, DHCP 10.0.2.x |
@@ -41,7 +42,7 @@ stock QEMU `run-qemu.sh` still runs, and `host-sim.py` plays the host over QMP.
 | PCIe slot I2C buses (I2C1-6) | a 256-byte EEPROM at 0x50 on each |
 
 Not emulated, test on the board: eSPI Virtual Wires and the flash channel, KCS
-from a host OS, KVM video, USB virtual media.
+from a host OS, live KVM video and KVM keyboard/mouse, USB virtual media.
 
 ## Control panel
 
@@ -111,6 +112,8 @@ stock QEMU it plays the host.
 | 0010 | VUART at 0x1e787000 on the chardev with id `vuart`; LPC snoop (HICR5/6, SNPWADR, SNPWDR) on GIC 144 |
 | 0011 | `bmc-host-sim` writes POST codes to port 80h during POST (stops at 0x92 when the BIOS hangs) |
 | 0012 | read-only `fanN-speed`, `pwmN-duty` and `post-code` for the panel |
+| 0013 | GPIO: a pin switched to output drives the value last written to the data register (LEDs and the power/reset outputs show their real level) |
+| 0014 | video engine at 0x1e700000: an 800x600 VGA input whose frames are the JPEG in `image`; `signal false` is no input (`/machine/soc/video-engine`) |
 
 Everything is reachable over QMP (`~/qemu-ceb-gnrd/qmp.sock`) as well:
 `/machine/peripheral/host` (`state`, `press-power-button`, `press-uid-button`,

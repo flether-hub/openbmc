@@ -1,0 +1,474 @@
+From 958e5bc36ab8e3c209bda21846a1fdc584e2edb3 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 14:47:09 +0800
+Subject: [PATCH] aspeed: AST2600 video engine with a still picture for the BMC
+ KVM
+
+The video engine at 0x1e700000 was an unimplemented stub, so the
+aspeed-video driver never found an input and obmc-ikvm showed nothing.
+Model what the driver needs: mode and edge detection report a stable
+VGA input of width x height (800x600), and each capture/compress request
+writes the JPEG file of the image property to the compression buffer and
+raises the completion interrupt, one frame per frame-ms (100).  With no
+image, or signal=false, there is no input; losing the signal while the
+driver streams raises the mode detection watchdog.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
+---
+ hw/arm/aspeed_ast2600.c        |  17 +-
+ hw/misc/aspeed_video.c         | 320 +++++++++++++++++++++++++++++++++
+ hw/misc/meson.build            |   3 +-
+ include/hw/arm/aspeed_soc.h    |   2 +
+ include/hw/misc/aspeed_video.h |  37 ++++
+ 5 files changed, 373 insertions(+), 6 deletions(-)
+ create mode 100644 hw/misc/aspeed_video.c
+ create mode 100644 include/hw/misc/aspeed_video.h
+
+diff --git a/hw/arm/aspeed_ast2600.c b/hw/arm/aspeed_ast2600.c
+index bd23dc6..335ab73 100644
+--- a/hw/arm/aspeed_ast2600.c
++++ b/hw/arm/aspeed_ast2600.c
+@@ -284,7 +284,9 @@ static void aspeed_soc_ast2600_init(Object *obj)
+                              &error_abort);
+ 
+     object_initialize_child(obj, "iomem", &s->iomem, TYPE_UNIMPLEMENTED_DEVICE);
+-    object_initialize_child(obj, "video", &s->video, TYPE_UNIMPLEMENTED_DEVICE);
++    /* Video engine: a still picture for the BMC KVM (aspeed_video.c) */
++    object_initialize_child(obj, "video-engine", &s->video_engine,
++                            TYPE_ASPEED_VIDEO);
+     object_initialize_child(obj, "dpmcu", &s->dpmcu, TYPE_UNIMPLEMENTED_DEVICE);
+     object_initialize_child(obj, "emmc-boot-controller",
+                             &s->emmc_boot_controller,
+@@ -388,10 +390,6 @@ static void aspeed_soc_ast2600_realize(DeviceState *dev, Error **errp)
+                                   sc->memmap[ASPEED_DEV_IOMEM],
+                                   ASPEED_SOC_IOMEM_SIZE);
+ 
+-    /* Video engine stub */
+-    aspeed_mmio_map_unimplemented(s->memory, SYS_BUS_DEVICE(&s->video),
+-                                  "aspeed.video",
+-                                  sc->memmap[ASPEED_DEV_VIDEO], 0x1000);
+ 
+     /* eMMC Boot Controller stub */
+     aspeed_mmio_map_unimplemented(s->memory,
+@@ -762,6 +760,15 @@ static void aspeed_soc_ast2600_realize(DeviceState *dev, Error **errp)
+     aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(&s->sbc), 0,
+                     sc->memmap[ASPEED_DEV_SBC]);
+ 
++    /* Video engine (GIC 7) */
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->video_engine), errp)) {
++        return;
++    }
++    aspeed_mmio_map(s->memory, SYS_BUS_DEVICE(&s->video_engine), 0,
++                    sc->memmap[ASPEED_DEV_VIDEO]);
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->video_engine), 0,
++                       qdev_get_gpio_in(DEVICE(&a->a7mpcore), 7));
++
+     /* PWM/TACH */
+     object_property_set_link(OBJECT(&s->pwm), "scu", OBJECT(&s->scu),
+                              &error_abort);
+diff --git a/hw/misc/aspeed_video.c b/hw/misc/aspeed_video.c
+new file mode 100644
+index 0000000..e470162
+--- /dev/null
++++ b/hw/misc/aspeed_video.c
+@@ -0,0 +1,320 @@
++/*
++ * ASPEED video engine (AST2600), enough for the Linux aspeed-video driver and
++ * obmc-ikvm to show a still picture
++ *
++ * The engine reports a stable VGA input of width x height (mode detection,
++ * edge detection, sync status) and answers every capture/compress request
++ * with the JPEG file set in the "image" property, written to the
++ * compression buffer the driver gave, one frame per frame-ms.  With no image,
++ * or with signal=false, there is no input signal: the driver reports
++ * "no signal" (and a running stream is reset through the mode detection
++ * watchdog when the signal goes away).
++ *
++ * Run-time controls (qom-set /machine/soc/video-engine):
++ *   image <path>      JPEG file, its size should match width x height
++ *   signal true|false
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/bitops.h"
++#include "qemu/log.h"
++#include "qemu/timer.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "hw/core/irq.h"
++#include "hw/core/qdev-properties.h"
++#include "hw/misc/aspeed_video.h"
++#include "system/address-spaces.h"
++#include "system/memory.h"
++#include "migration/vmstate.h"
++
++#define VE_PROTECTION_KEY           0x000
++#define VE_SEQ_CTRL                 0x004
++#define   VE_SEQ_CTRL_TRIG_MODE_DET BIT(0)
++#define   VE_SEQ_CTRL_TRIG_CAPTURE  BIT(1)
++#define   VE_SEQ_CTRL_TRIG_COMP     BIT(4)
++#define   VE_SEQ_CTRL_EN_WATCHDOG   BIT(7)
++#define   VE_SEQ_CTRL_CAP_BUSY      BIT(16)     /* set when idle */
++#define   VE_SEQ_CTRL_COMP_BUSY     BIT(18)     /* set when idle */
++#define VE_COMP_ADDR                0x054
++#define VE_COMP_SIZE_READ_BACK      0x084       /* AST2600 */
++#define VE_SRC_LR_EDGE_DET          0x090
++#define VE_SRC_TB_EDGE_DET          0x094
++#define VE_MODE_DETECT_STATUS       0x098
++#define   VE_MDS_H_STABLE           BIT(13)
++#define   VE_MDS_V_STABLE           BIT(14)
++#define   VE_MDS_VSYNC_RDY          BIT(30)
++#define   VE_MDS_HSYNC_RDY          BIT(31)
++#define VE_SYNC_STATUS              0x09c
++#define VE_H_TOTAL_PIXELS           0x0a0
++#define VE_INTERRUPT_CTRL           0x304
++#define VE_INTERRUPT_STATUS         0x308
++#define   VE_INT_MODE_DETECT_WD     BIT(0)
++#define   VE_INT_CAPTURE_COMPLETE   BIT(1)
++#define   VE_INT_COMP_COMPLETE      BIT(3)
++#define   VE_INT_MODE_DETECT        BIT(4)
++#define   VE_INT_FRAME_COMPLETE     BIT(5)
++
++/* timing of the simulated VGA mode around the active area */
++#define H_START     144
++#define V_START     35
++#define H_SYNC      96
++#define V_SYNC      2
++
++#define REG(off)    ((off) >> 2)
++
++static bool video_has_signal(AspeedVideoState *s)
++{
++    return s->signal && s->jpeg_len;
++}
++
++static void video_update_irq(AspeedVideoState *s)
++{
++    qemu_set_irq(s->irq, !!(s->regs[REG(VE_INTERRUPT_STATUS)] &
++                            s->regs[REG(VE_INTERRUPT_CTRL)]));
++}
++
++static void video_raise(AspeedVideoState *s, uint32_t bits)
++{
++    s->regs[REG(VE_INTERRUPT_STATUS)] |= bits;
++    video_update_irq(s);
++}
++
++/* The capture and compression of one frame complete */
++static void video_frame_done(void *opaque)
++{
++    AspeedVideoState *s = opaque;
++    hwaddr addr = s->regs[REG(VE_COMP_ADDR)];
++
++    if (!video_has_signal(s)) {
++        return;
++    }
++    if (address_space_write(&address_space_memory, addr,
++                            MEMTXATTRS_UNSPECIFIED, s->jpeg,
++                            s->jpeg_len) != MEMTX_OK) {
++        qemu_log_mask(LOG_GUEST_ERROR, "%s: bad compression buffer 0x%"
++                      HWADDR_PRIx "\n", __func__, addr);
++        return;
++    }
++    s->regs[REG(VE_COMP_SIZE_READ_BACK)] = s->jpeg_len;
++    video_raise(s, VE_INT_CAPTURE_COMPLETE | VE_INT_COMP_COMPLETE |
++                   VE_INT_FRAME_COMPLETE);
++}
++
++static uint64_t video_read(void *opaque, hwaddr addr, unsigned size)
++{
++    AspeedVideoState *s = opaque;
++    bool sig = video_has_signal(s);
++    uint32_t htotal = s->width + H_START + 16;
++    uint32_t vtotal = s->height + V_START + 10;
++
++    switch (addr) {
++    case VE_SEQ_CTRL:
++        /* never busy: a frame request is queued on the timer */
++        return s->regs[REG(addr)] | VE_SEQ_CTRL_CAP_BUSY |
++               VE_SEQ_CTRL_COMP_BUSY;
++    case VE_MODE_DETECT_STATUS:
++        if (!sig) {
++            return 0;
++        }
++        /* positive sync polarity: the status sync bits read low */
++        return VE_MDS_HSYNC_RDY | VE_MDS_VSYNC_RDY | VE_MDS_H_STABLE |
++               VE_MDS_V_STABLE | (vtotal & 0xfff) << 16 | (htotal & 0xfff);
++    case VE_SRC_LR_EDGE_DET:
++        return sig ? (H_START + s->width - 1) << 16 | H_START : 0;
++    case VE_SRC_TB_EDGE_DET:
++        return sig ? (V_START + s->height - 1) << 16 | V_START : 0;
++    case VE_SYNC_STATUS:
++        return sig ? V_SYNC << 16 | H_SYNC : 0;
++    case VE_H_TOTAL_PIXELS:
++        return sig ? htotal : 0;
++    default:
++        return addr < ASPEED_VIDEO_REG_SIZE ? s->regs[REG(addr)] : 0;
++    }
++}
++
++static void video_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
++{
++    AspeedVideoState *s = opaque;
++    uint32_t old;
++
++    if (addr >= ASPEED_VIDEO_REG_SIZE) {
++        return;
++    }
++    old = s->regs[REG(addr)];
++
++    switch (addr) {
++    case VE_INTERRUPT_STATUS:
++        s->regs[REG(addr)] &= ~val;
++        video_update_irq(s);
++        return;
++    case VE_INTERRUPT_CTRL:
++        s->regs[REG(addr)] = val;
++        video_update_irq(s);
++        return;
++    case VE_COMP_SIZE_READ_BACK:
++        return;
++    case VE_SEQ_CTRL:
++        s->regs[REG(addr)] = val;
++        if ((val & VE_SEQ_CTRL_TRIG_MODE_DET) &&
++            !(old & VE_SEQ_CTRL_TRIG_MODE_DET) && video_has_signal(s)) {
++            video_raise(s, VE_INT_MODE_DETECT);
++        }
++        if ((val & (VE_SEQ_CTRL_TRIG_CAPTURE | VE_SEQ_CTRL_TRIG_COMP)) &&
++            !(old & (VE_SEQ_CTRL_TRIG_CAPTURE | VE_SEQ_CTRL_TRIG_COMP))) {
++            timer_mod(&s->frame_timer,
++                      qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + s->frame_ms);
++        }
++        return;
++    default:
++        s->regs[REG(addr)] = val;
++        return;
++    }
++}
++
++static const MemoryRegionOps video_ops = {
++    .read = video_read,
++    .write = video_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = {
++        .min_access_size = 1,
++        .max_access_size = 4,
++    },
++    .impl = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    },
++};
++
++/* The signal is lost: the watchdog tells a driver that is streaming */
++static void video_signal_changed(AspeedVideoState *s, bool had)
++{
++    if (had && !video_has_signal(s) &&
++        (s->regs[REG(VE_SEQ_CTRL)] & VE_SEQ_CTRL_EN_WATCHDOG)) {
++        video_raise(s, VE_INT_MODE_DETECT_WD);
++    }
++}
++
++static char *video_get_image(Object *obj, Error **errp)
++{
++    return g_strdup(ASPEED_VIDEO(obj)->image ?: "");
++}
++
++static void video_set_image(Object *obj, const char *value, Error **errp)
++{
++    AspeedVideoState *s = ASPEED_VIDEO(obj);
++    bool had = video_has_signal(s);
++    g_autofree char *data = NULL;
++    gsize len = 0;
++
++    if (*value && !g_file_get_contents(value, &data, &len, NULL)) {
++        error_setg(errp, "aspeed.video: cannot read '%s'", value);
++        return;
++    }
++    if (*value && (len < 4 || (uint8_t)data[0] != 0xff ||
++                   (uint8_t)data[1] != 0xd8)) {
++        error_setg(errp, "aspeed.video: '%s' is not a JPEG file", value);
++        return;
++    }
++    g_free(s->image);
++    g_free(s->jpeg);
++    s->image = g_strdup(value);
++    s->jpeg = (uint8_t *)g_steal_pointer(&data);
++    s->jpeg_len = len;
++    video_signal_changed(s, had);
++}
++
++static bool video_get_signal(Object *obj, Error **errp)
++{
++    return ASPEED_VIDEO(obj)->signal;
++}
++
++static void video_set_signal(Object *obj, bool value, Error **errp)
++{
++    AspeedVideoState *s = ASPEED_VIDEO(obj);
++    bool had = video_has_signal(s);
++
++    s->signal = value;
++    video_signal_changed(s, had);
++}
++
++static void video_reset_hold(Object *obj, ResetType type)
++{
++    AspeedVideoState *s = ASPEED_VIDEO(obj);
++
++    memset(s->regs, 0, sizeof(s->regs));
++    timer_del(&s->frame_timer);
++}
++
++static void video_realize(DeviceState *dev, Error **errp)
++{
++    AspeedVideoState *s = ASPEED_VIDEO(dev);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
++
++    memory_region_init_io(&s->iomem, OBJECT(s), &video_ops, s,
++                          TYPE_ASPEED_VIDEO, 0x1000);
++    sysbus_init_mmio(sbd, &s->iomem);
++    sysbus_init_irq(sbd, &s->irq);
++    timer_init_ms(&s->frame_timer, QEMU_CLOCK_VIRTUAL, video_frame_done, s);
++}
++
++static void video_init(Object *obj)
++{
++    AspeedVideoState *s = ASPEED_VIDEO(obj);
++
++    s->signal = true;
++    object_property_add_str(obj, "image", video_get_image, video_set_image);
++    object_property_add_bool(obj, "signal", video_get_signal,
++                             video_set_signal);
++}
++
++static void video_finalize(Object *obj)
++{
++    AspeedVideoState *s = ASPEED_VIDEO(obj);
++
++    g_free(s->image);
++    g_free(s->jpeg);
++}
++
++static const Property video_properties[] = {
++    DEFINE_PROP_UINT32("width", AspeedVideoState, width, 800),
++    DEFINE_PROP_UINT32("height", AspeedVideoState, height, 600),
++    DEFINE_PROP_UINT32("frame-ms", AspeedVideoState, frame_ms, 100),
++};
++
++static const VMStateDescription vmstate_video = {
++    .name = TYPE_ASPEED_VIDEO,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, AspeedVideoState, ASPEED_VIDEO_NR_REGS),
++        VMSTATE_END_OF_LIST(),
++    }
++};
++
++static void video_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++
++    dc->desc = "Aspeed video engine (still picture)";
++    dc->realize = video_realize;
++    dc->vmsd = &vmstate_video;
++    rc->phases.hold = video_reset_hold;
++    device_class_set_props(dc, video_properties);
++}
++
++static const TypeInfo video_types[] = {
++    {
++        .name = TYPE_ASPEED_VIDEO,
++        .parent = TYPE_SYS_BUS_DEVICE,
++        .instance_size = sizeof(AspeedVideoState),
++        .instance_init = video_init,
++        .instance_finalize = video_finalize,
++        .class_init = video_class_init,
++    },
++};
++
++DEFINE_TYPES(video_types)
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index 169f816..8addd46 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -144,7 +144,8 @@ system_ss.add(when: 'CONFIG_ASPEED_SOC', if_true: files(
+   'aspeed_xdma.c',
+   'aspeed_peci.c',
+   'aspeed_sli.c',
+-  'bmc_host_sim.c'))
++  'bmc_host_sim.c',
++  'aspeed_video.c'))
+ 
+ system_ss.add(when: 'CONFIG_MSF2', if_true: files('msf2-sysreg.c'))
+ system_ss.add(when: 'CONFIG_NRF51_SOC', if_true: files('nrf51_rng.c'))
+diff --git a/include/hw/arm/aspeed_soc.h b/include/hw/arm/aspeed_soc.h
+index ce3e9ed..ade6bee 100644
+--- a/include/hw/arm/aspeed_soc.h
++++ b/include/hw/arm/aspeed_soc.h
+@@ -29,6 +29,7 @@
+ #include "hw/misc/aspeed_sbc.h"
+ #include "hw/misc/aspeed_sli.h"
+ #include "hw/misc/aspeed_pwm.h"
++#include "hw/misc/aspeed_video.h"
+ #include "hw/watchdog/wdt_aspeed.h"
+ #include "hw/net/ftgmac100.h"
+ #include "target/arm/cpu.h"
+@@ -111,6 +112,7 @@ struct AspeedSoCState {
+     UnimplementedDeviceState iomem0;
+     UnimplementedDeviceState iomem1;
+     UnimplementedDeviceState video;
++    AspeedVideoState video_engine;
+     UnimplementedDeviceState emmc_boot_controller;
+     UnimplementedDeviceState dpmcu;
+     UnimplementedDeviceState espi;
+diff --git a/include/hw/misc/aspeed_video.h b/include/hw/misc/aspeed_video.h
+new file mode 100644
+index 0000000..84f31ac
+--- /dev/null
++++ b/include/hw/misc/aspeed_video.h
+@@ -0,0 +1,37 @@
++/*
++ * ASPEED video engine (AST2600), still picture model
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef ASPEED_VIDEO_H
++#define ASPEED_VIDEO_H
++
++#include "hw/core/sysbus.h"
++#include "qemu/timer.h"
++#include "qom/object.h"
++
++#define TYPE_ASPEED_VIDEO "aspeed.video"
++OBJECT_DECLARE_SIMPLE_TYPE(AspeedVideoState, ASPEED_VIDEO)
++
++#define ASPEED_VIDEO_REG_SIZE   0x400
++#define ASPEED_VIDEO_NR_REGS    (ASPEED_VIDEO_REG_SIZE >> 2)
++
++struct AspeedVideoState {
++    SysBusDevice parent_obj;
++
++    MemoryRegion iomem;
++    qemu_irq irq;
++    QEMUTimer frame_timer;
++    uint32_t regs[ASPEED_VIDEO_NR_REGS];
++
++    uint32_t width;
++    uint32_t height;
++    uint32_t frame_ms;
++    bool signal;
++    char *image;
++    uint8_t *jpeg;
++    size_t jpeg_len;
++};
++
++#endif /* ASPEED_VIDEO_H */
+-- 
+2.53.0.windows.1
+
