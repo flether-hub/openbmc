@@ -1,0 +1,79 @@
+From 10cc78afd38199a74906a2bd0d6db8948761687c Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:33:36 +0800
+Subject: [PATCH 8/9] bmc-host-sim: the CPU answers PECI only while the host is
+ on
+
+With the new peci link set, the simulated host takes the CPU off the
+PECI bus while it is off or starting, and puts it back once its power is
+good, as a real CPU does.
+---
+ hw/misc/bmc_host_sim.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/hw/misc/bmc_host_sim.c b/hw/misc/bmc_host_sim.c
+index 3004abf..1b43bac 100644
+--- a/hw/misc/bmc_host_sim.c
++++ b/hw/misc/bmc_host_sim.c
+@@ -22,8 +22,10 @@
+  *   post-ms, shutdown-ms     timings
+  * and qom-get "state": off, starting, post, on or shutting-down.
+  *
++ * With peci= set, the CPU answers PECI only while its power is good.
++ *
+  * Example (the defaults are the CEB-GNRD wiring):
+- *   -device bmc-host-sim,id=host,gpio=/machine/soc/gpio
++ *   -device bmc-host-sim,id=host,gpio=/machine/soc/gpio,peci=/machine/soc/peci
+  *
+  * SPDX-License-Identifier: GPL-2.0-or-later
+  */
+@@ -36,6 +38,7 @@
+ #include "qom/object.h"
+ #include "hw/core/qdev-properties.h"
+ #include "hw/gpio/aspeed_gpio.h"
++#include "hw/misc/aspeed_peci.h"
+ #include "trace.h"
+ 
+ #define TYPE_BMC_HOST_SIM "bmc-host-sim"
+@@ -70,6 +73,7 @@ struct BMCHostSimState {
+ 
+     /* properties */
+     AspeedGPIOState *gpio;
++    AspeedPECIState *peci;
+     char *power_out_name;
+     char *reset_out_name;
+     char *pwrgd_name;
+@@ -109,6 +113,11 @@ static void host_go(BMCHostSimState *s, HostState state, int64_t delay_ms,
+ {
+     s->state = state;
+     s->deadline = delay_ms >= 0 ? host_now() + delay_ms : -1;
++    if (s->peci) {
++        /* the CPU answers PECI once its power is good */
++        s->peci->cpu_online = state == HOST_POST || state == HOST_ON ||
++                              state == HOST_SHUTTING_DOWN;
++    }
+     trace_bmc_host_sim_state(host_state_names[state], why);
+ }
+ 
+@@ -309,6 +318,9 @@ static void host_realize(DeviceState *dev, Error **errp)
+     s->power_low_since = -1;
+     s->power_button_release = -1;
+     s->uid_button_release = -1;
++    if (s->peci) {
++        s->peci->cpu_online = false;
++    }
+     timer_init_ms(&s->timer, QEMU_CLOCK_VIRTUAL, host_tick, s);
+     timer_mod(&s->timer, host_now() + TICK_MS);
+ }
+@@ -392,6 +404,8 @@ static void host_init(Object *obj)
+ static const Property host_properties[] = {
+     DEFINE_PROP_LINK("gpio", BMCHostSimState, gpio, TYPE_ASPEED_GPIO,
+                      AspeedGPIOState *),
++    DEFINE_PROP_LINK("peci", BMCHostSimState, peci, TYPE_ASPEED_PECI,
++                     AspeedPECIState *),
+     DEFINE_PROP_STRING("power-out", BMCHostSimState, power_out_name),
+     DEFINE_PROP_STRING("reset-out", BMCHostSimState, reset_out_name),
+     DEFINE_PROP_STRING("pwrgd", BMCHostSimState, pwrgd_name),
+-- 
+2.53.0.windows.1
+

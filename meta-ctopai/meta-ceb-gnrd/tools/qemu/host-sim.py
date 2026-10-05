@@ -29,6 +29,14 @@ Commands (type them while it runs; "help" lists them):
   temp <name|all> <C>    names: inlet outlet pcie m2
   fan <0-5|all> <rpm|auto>  fixed fan speed, or back to following the PWM duty
   fan max <rpm>          fan speed at 100% PWM (needs the QEMU from build-qemu.sh)
+  The patched QEMU only:
+  psu <0-2> in|out       insert or pull a PSU module (slot 2 starts empty)
+  psu <0-2> ac on|off    AC input present or lost
+  psu <0-2> load <W>     output power
+  psu <0-2> temp <C>     PSU hotspot temperature
+  cpu <C> | dimm <C>     CPU package / DIMM temperature over PECI
+  adc <0-15> <mV>        ADC pad voltage (before the divider)
+  rtc battery ok|low     RTC battery (low: the RTC time is refused)
   post <s> | shutdown <s>
   quit
 
@@ -60,6 +68,10 @@ UID_BTN = "gpioV0"        # BMC_UID_BUTTON_N, active low
 
 PWM = "/machine/soc/pwm"
 FANS = 6                  # SYS_FAN0..5 on PWM/TACH channels 0..5
+PECI = "/machine/soc/peci"
+ADC = "/machine/soc/adc"
+PSU = "/machine/peripheral/psu%d"
+RTC = "/machine/peripheral/rtc"
 
 TEMPS = {
     "inlet": ("/machine/peripheral/temp-inlet", 25.0),
@@ -454,6 +466,35 @@ def main():
                         qmp.execute("qom-set", path=PWM, property="fan%d-rpm" % fan,
                                     value=rpm)
                 log("fan %s = %s" % (rest[0], rest[1]))
+            elif cmd == "psu" and len(rest) >= 2:
+                path = PSU % int(rest[0])
+                if rest[1] in ("in", "out"):
+                    qmp.execute("qom-set", path=path, property="present",
+                                value=rest[1] == "in")
+                elif rest[1] == "ac" and len(rest) == 3:
+                    qmp.execute("qom-set", path=path, property="ac-lost",
+                                value=rest[2] == "off")
+                elif rest[1] == "load" and len(rest) == 3:
+                    qmp.execute("qom-set", path=path, property="pout-mw",
+                                value=int(float(rest[2]) * 1000))
+                elif rest[1] == "temp" and len(rest) == 3:
+                    qmp.execute("qom-set", path=path, property="temp2-mc",
+                                value=int(float(rest[2]) * 1000))
+                else:
+                    raise ValueError("psu <0-2> in|out | ac on|off | load <W> | temp <C>")
+                log("PSU %s: %s" % (rest[0], " ".join(rest[1:])))
+            elif cmd in ("cpu", "dimm") and len(rest) == 1:
+                qmp.execute("qom-set", path=PECI, property="%s-temp-mc" % cmd,
+                            value=int(float(rest[0]) * 1000))
+                log("%s temperature = %s C" % (cmd.upper(), rest[0]))
+            elif cmd == "adc" and len(rest) == 2:
+                qmp.execute("qom-set", path=ADC, property="ch%d-mv" % int(rest[0]),
+                            value=int(rest[1]))
+                log("ADC%s = %s mV" % (rest[0], rest[1]))
+            elif cmd == "rtc" and len(rest) == 2 and rest[0] == "battery":
+                qmp.execute("qom-set", path=RTC, property="battery-ok",
+                            value=rest[1] == "ok")
+                log("RTC battery %s" % rest[1])
             elif cmd == "post" and rest:
                 host.post_s = float(rest[0])
                 host.set_times()
@@ -464,6 +505,8 @@ def main():
                 print("commands: status | power | power-hold | uid | hang on|off | "
                       "powerfail | temp <inlet|outlet|pcie|m2|all> <C> | "
                       "fan <0-5|all> <rpm|auto> | fan max <rpm> | "
+                      "psu <0-2> in|out|ac on|off|load <W>|temp <C> | cpu <C> | "
+                      "dimm <C> | adc <0-15> <mV> | rtc battery ok|low | "
                       "post <s> | shutdown <s> | quit")
         except (RuntimeError, KeyError, ValueError) as exc:
             log("error: %s" % exc)

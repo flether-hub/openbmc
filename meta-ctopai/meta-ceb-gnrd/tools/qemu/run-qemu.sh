@@ -13,6 +13,8 @@
 #                                     256-byte blocks are kept in files
 #   I2C1-6  (Linux i2c-0..5) 0x50     one 256-byte EEPROM per PCIe slot bus
 #   PWM/TACH fan speeds follow the PWM duty (needs the QEMU from build-qemu.sh)
+#   patched QEMU only: CRPS PSUs at 0x58/0x59 (0x5a empty, hot-pluggable), the
+#   NCT3015Y RTC on Linux i2c9 0x6f, steady ADC voltages, PECI CPU/DIMM temps
 #   QMP     control socket used by host-sim.py (host power, buttons, temperatures)
 #   host    with the QEMU from build-qemu.sh the host power sequence (power button,
 #           reset, PWRGD, BIOS boot OK) runs inside QEMU (bmc-host-sim device,
@@ -22,7 +24,7 @@
 #           for SOL tests (QEMU has no VUART; see tools/qemu/README.md)
 #
 # Not emulated (test on the board): eSPI/VUART/KCS/POST codes, PECI, KVM video,
-# USB virtual media, the NCT3015Y RTC; fan PWM/TACH with a stock QEMU.
+# USB virtual media; with a stock QEMU also fans, RTC, PECI and steady ADC values.
 #
 # Usage:  run-qemu.sh                      (then, in a second terminal: host-sim.py)
 # Environment: DEPLOY (image directory), STATE (directory for the FRU EEPROM files
@@ -76,7 +78,14 @@ done
 # PSU slots: the generic pmbus driver (what ceb-gnrd-psu-detect binds) only works
 # with the PMBus linear format.  QEMU's adm1266 reports it (VOUT_MODE 0); the
 # isl69260 and adm1272 report the direct format, which the generic driver rejects.
-if "$QEMU" -device help 2>/dev/null | grep -q adm1266; then
+# The patched QEMU has a CRPS supply model (input/output voltage, current, power,
+# temperatures, fan; hot plug and AC loss over QMP): two modules, slot 3 empty.
+DEVICES=$("$QEMU" -device help 2>/dev/null)
+PSU2=""
+if echo "$DEVICES" | grep -q crps-psu; then
+    PSU_MODEL=crps-psu
+    PSU2="-device crps-psu,bus=aspeed.i2c.bus.7,address=0x5a,id=psu2,present=false"
+elif echo "$DEVICES" | grep -q adm1266; then
     PSU_MODEL=adm1266
 else
     PSU_MODEL=isl69260
@@ -85,9 +94,25 @@ fi
 
 # Host power sequence inside QEMU (patched QEMU); otherwise host-sim.py plays it
 HOST=""
-if "$QEMU" -device help 2>/dev/null | grep -q bmc-host-sim; then
-    HOST="-device bmc-host-sim,id=host,gpio=/machine/soc/gpio -trace bmc_host_sim_state -D $STATE/host.log"
+if echo "$DEVICES" | grep -q bmc-host-sim; then
+    HOST="-device bmc-host-sim,id=host,gpio=/machine/soc/gpio,peci=/machine/soc/peci"
+    HOST="$HOST -trace bmc_host_sim_state -D $STATE/host.log"
     echo "Simulated host inside QEMU, state changes in $STATE/host.log"
+fi
+
+# Patched QEMU: the NCT3015Y RTC (Linux i2c9 0x6f) and steady ADC inputs at the
+# nominal rail voltages divided as in the Entity-Manager configuration
+# (pad mV = rail / ScaleFactor).  D3V0_BAT0 (3.0 V, ScaleFactor 1) is above the
+# 2.5 V reference, so it reads 2.5 V and trips its low threshold, as it would on
+# the board with that configuration.
+EXTRA=""
+if echo "$DEVICES" | grep -q nct3018y; then
+    EXTRA="-device nct3018y,bus=aspeed.i2c.bus.9,address=0x6f,id=rtc"
+    ch=0
+    for mv in 1091 455 1650 1800 900 1130 850 1000 1800 1130 1800 1650 1800 1200 1000 3000; do
+        EXTRA="$EXTRA -global aspeed.adc.ch$ch-mv=$mv"
+        ch=$((ch + 1))
+    done
 fi
 
 echo "QMP socket for host-sim.py: $QMP"
@@ -112,6 +137,8 @@ exec "$QEMU" -M ast2600-evb -m 1G -nographic -monitor none \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x4b,id=temp-m2 \
   -device $PSU_MODEL,bus=aspeed.i2c.bus.7,address=0x58,id=psu0 \
   -device $PSU_MODEL,bus=aspeed.i2c.bus.7,address=0x59,id=psu1 \
+  $PSU2 \
   $FRU \
   $PCIE \
-  $HOST
+  $HOST \
+  $EXTRA

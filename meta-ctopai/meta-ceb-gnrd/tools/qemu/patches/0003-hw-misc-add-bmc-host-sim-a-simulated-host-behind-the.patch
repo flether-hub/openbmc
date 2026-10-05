@@ -1,7 +1,7 @@
 From 328da0abd903400f74d0d7d9498529cca294a0a3 Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:20:35 +0800
-Subject: [PATCH 3/3] hw/misc: add bmc-host-sim, a simulated host behind the
+Subject: [PATCH 3/9] hw/misc: add bmc-host-sim, a simulated host behind the
  Aspeed BMC GPIOs
 
 A user-creatable device that plays the motherboard power sequence on the

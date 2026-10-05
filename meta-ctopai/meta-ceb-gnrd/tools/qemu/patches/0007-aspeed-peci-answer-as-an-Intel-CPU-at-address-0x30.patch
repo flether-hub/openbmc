@@ -1,0 +1,377 @@
+From 5a2b36a4d7830b3160560576dd36d2b9394a587c Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:33:29 +0800
+Subject: [PATCH 7/9] aspeed/peci: answer as an Intel CPU at address 0x30
+
+The PECI controller completed every command with a bare success code, so
+the Linux peci-cpu driver found no usable CPU and no CPU or DIMM
+temperature was ever reported.  Decode the command in the transmit
+buffer and answer as a CPU: Ping, GetDIB, GetTemp, RdPkgConfig (CPUID,
+temperature target, thermal margin, per core and DIMM temperatures) and
+the RdEndPointConfig reads the cputemp and dimmtemp drivers make on Ice
+Lake and later (resolved cores, memory controller bus, DIMM thresholds).
+Other addresses, or the CPU while cpu-online is false, time out.  The
+CPUID (Sapphire Rapids by default), Tjmax, the package and DIMM
+temperatures, the core count and the populated DIMMs are properties.
+---
+ hw/misc/aspeed_peci.c         | 278 +++++++++++++++++++++++++++++++++-
+ include/hw/misc/aspeed_peci.h |  13 ++
+ 2 files changed, 287 insertions(+), 4 deletions(-)
+
+diff --git a/hw/misc/aspeed_peci.c b/hw/misc/aspeed_peci.c
+index 7469f82..4e8dfc9 100644
+--- a/hw/misc/aspeed_peci.c
++++ b/hw/misc/aspeed_peci.c
+@@ -12,9 +12,11 @@
+ #include "hw/core/irq.h"
+ #include "hw/misc/aspeed_peci.h"
+ #include "hw/core/registerfields.h"
++#include "qapi/visitor.h"
+ #include "trace.h"
+ 
+ #define ASPEED_PECI_CC_RSP_SUCCESS (0x40U)
++#define ASPEED_PECI_CC_INVALID_REQ (0x90U)
+ 
+ /* Command Register */
+ REG32(PECI_CMD, 0x08)
+@@ -27,9 +29,17 @@ REG32(PECI_INT_CTRL, 0x18)
+ REG32(PECI_INT_STS, 0x1C)
+     FIELD(PECI_INT_STS, CMD_DONE, 0, 1)
+ 
++/* Read/Write Length Register */
++REG32(PECI_RW_LENGTH, 0x0C)
++    FIELD(PECI_RW_LENGTH, ADDR, 0, 8)
++    FIELD(PECI_RW_LENGTH, WR_LEN, 8, 8)
++    FIELD(PECI_RW_LENGTH, RD_LEN, 16, 8)
++
+ /* Rx/Tx Data Buffer Registers */
+ REG32(PECI_WR_DATA0, 0x20)
+ REG32(PECI_RD_DATA0, 0x30)
++REG32(PECI_WR_DATA4, 0x40)
++REG32(PECI_RD_DATA4, 0x50)
+ 
+ static void aspeed_peci_raise_interrupt(AspeedPECIState *s, uint32_t status)
+ {
+@@ -42,6 +52,213 @@ static void aspeed_peci_raise_interrupt(AspeedPECIState *s, uint32_t status)
+     qemu_irq_raise(s->irq);
+ }
+ 
++/*
++ * Intel PECI client: the CPU at 0x30 answering the commands the Linux
++ * peci-cpu, peci-cputemp and peci-dimmtemp drivers send.
++ */
++#define PECI_CPU_ADDR               0x30
++#define PECI_CMD_GET_TEMP           0x01
++#define PECI_CMD_RD_PKG_CFG         0xa1
++#define PECI_CMD_RD_END_PT_CFG      0xc1
++#define PECI_CMD_GET_DIB            0xf7
++#define PECI_PCS_PKG_ID             0
++#define PECI_PCS_MODULE_TEMP        9
++#define PECI_PCS_THERMAL_MARGIN     10
++#define PECI_PCS_DDR_DIMM_TEMP      14
++#define PECI_PCS_TEMP_TARGET        16
++#define PECI_ENDPT_LOCAL_PCI        0x03
++#define PECI_ENDPT_MMIO             0x05
++#define PECI_TCONTROL_MARGIN        10      /* Tcontrol = Tjmax - 10 */
++#define PECI_DIMM_CHANNELS          8
++#define PECI_DIMM_SLOTS             2
++#define PECI_DIMM_TEMP_MAX          85
++#define PECI_DIMM_TEMP_CRIT         95
++#define PECI_IMC_BUS                0x7e
++
++#define ASPEED_PECI_INT_BUS_TIMEOUT BIT(4)
++#define ASPEED_PECI_BUF_SIZE        32
++
++/* Register holding byte i of the 32-byte transmit or receive buffer */
++static unsigned int aspeed_peci_buf_reg(bool rx, int i)
++{
++    unsigned int base = i < 16 ? (rx ? R_PECI_RD_DATA0 : R_PECI_WR_DATA0)
++                               : (rx ? R_PECI_RD_DATA4 : R_PECI_WR_DATA4);
++
++    return base + (i % 16) / 4;
++}
++
++/* S10.6 temperature, relative to Tjmax when rel_tjmax */
++static uint16_t aspeed_peci_dts(AspeedPECIState *s, int32_t temp_mc,
++                                bool rel_tjmax)
++{
++    int64_t mc = temp_mc - (rel_tjmax ? (int64_t)s->tjmax * 1000 : 0);
++
++    return (uint16_t)(mc * 64 / 1000);
++}
++
++/* Per core temperatures spread a little below the package temperature */
++static int32_t aspeed_peci_core_temp(AspeedPECIState *s, unsigned int core)
++{
++    return s->cpu_temp_mc - (int32_t)(core % 4) * 1000;
++}
++
++static uint8_t aspeed_peci_rd_pkg_cfg(AspeedPECIState *s, uint8_t index,
++                                      uint16_t param, uint32_t *data)
++{
++    int32_t tcontrol_mc = ((int32_t)s->tjmax - PECI_TCONTROL_MARGIN) * 1000;
++
++    switch (index) {
++    case PECI_PCS_PKG_ID:
++        if (param != 0) {
++            return ASPEED_PECI_CC_INVALID_REQ;
++        }
++        *data = s->cpuid;
++        return ASPEED_PECI_CC_RSP_SUCCESS;
++    case PECI_PCS_TEMP_TARGET:
++        *data = (s->tjmax & 0xff) << 16 | PECI_TCONTROL_MARGIN << 8;
++        return ASPEED_PECI_CC_RSP_SUCCESS;
++    case PECI_PCS_THERMAL_MARGIN:
++        *data = aspeed_peci_dts(s, tcontrol_mc - s->cpu_temp_mc, false);
++        return ASPEED_PECI_CC_RSP_SUCCESS;
++    case PECI_PCS_MODULE_TEMP:
++        if (param >= s->cores) {
++            return ASPEED_PECI_CC_INVALID_REQ;
++        }
++        *data = aspeed_peci_dts(s, aspeed_peci_core_temp(s, param), true);
++        return ASPEED_PECI_CC_RSP_SUCCESS;
++    case PECI_PCS_DDR_DIMM_TEMP:
++        if (param >= PECI_DIMM_CHANNELS ||
++            !extract32(s->dimm_mask, param * PECI_DIMM_SLOTS,
++                       PECI_DIMM_SLOTS)) {
++            return ASPEED_PECI_CC_INVALID_REQ;
++        }
++        *data = 0;
++        for (int slot = 0; slot < PECI_DIMM_SLOTS; slot++) {
++            if (extract32(s->dimm_mask, param * PECI_DIMM_SLOTS + slot, 1)) {
++                uint32_t deg = MAX(s->dimm_temp_mc, 1000) / 1000;
++
++                *data |= MIN(deg, 0xff) << (slot * 8);
++            }
++        }
++        return ASPEED_PECI_CC_RSP_SUCCESS;
++    default:
++        return ASPEED_PECI_CC_INVALID_REQ;
++    }
++}
++
++/*
++ * RdEndPointConfig, as the Linux cputemp and dimmtemp drivers use it on
++ * Ice Lake and later: the resolved cores mask (bus 31 dev 30 fn 6, 0x80),
++ * the memory controller bus (bus 0 dev 30 fn 2, 0xd0/0xd4) and the DIMM
++ * thresholds in the memory controller MMIO space.
++ */
++static uint8_t aspeed_peci_rd_end_pt_cfg(AspeedPECIState *s,
++                                         const uint8_t *tx, int tx_len,
++                                         uint32_t *data)
++{
++    uint64_t core_mask = s->cores >= 64 ? UINT64_MAX
++                                        : (1ULL << s->cores) - 1;
++
++    *data = 0;
++    if (tx_len >= 12 && tx[2] == PECI_ENDPT_LOCAL_PCI) {
++        uint32_t addr = ldl_le_p(&tx[8]);
++        uint32_t reg = extract32(addr, 0, 12);
++        uint32_t fn = extract32(addr, 12, 3);
++        uint32_t dev = extract32(addr, 15, 5);
++        uint32_t bus = extract32(addr, 20, 8);
++
++        if (bus == 31 && dev == 30 && fn == 6 && reg == 0x80) {
++            *data = (uint32_t)core_mask;
++        } else if (bus == 31 && dev == 30 && fn == 6 && reg == 0x84) {
++            *data = (uint32_t)(core_mask >> 32);
++        } else if (bus == 0 && dev == 30 && fn == 2 && reg == 0xd4) {
++            *data = BIT(31);
++        } else if (bus == 0 && dev == 30 && fn == 2 && reg == 0xd0) {
++            *data = PECI_IMC_BUS;
++        }
++        return ASPEED_PECI_CC_RSP_SUCCESS;
++    }
++    if (tx_len >= 14 && tx[2] == PECI_ENDPT_MMIO) {
++        uint32_t dev = tx[8] >> 3;
++
++        if (tx[9] == PECI_IMC_BUS && dev >= 26 && dev <= 29) {
++            *data = PECI_DIMM_TEMP_CRIT << 16 | PECI_DIMM_TEMP_MAX << 8;
++        }
++        return ASPEED_PECI_CC_RSP_SUCCESS;
++    }
++    return ASPEED_PECI_CC_INVALID_REQ;
++}
++
++/*
++ * Run the command in the transmit buffer and fill the receive buffer.
++ * Returns false when nobody answers at that address.
++ */
++static bool aspeed_peci_client(AspeedPECIState *s, uint8_t addr,
++                               const uint8_t *tx, int tx_len,
++                               uint8_t *rx, int rx_len)
++{
++    uint32_t data = 0;
++    uint8_t cc;
++
++    if (addr != PECI_CPU_ADDR || !s->cpu_online) {
++        return false;
++    }
++    if (tx_len == 0) {
++        return true;                    /* Ping() */
++    }
++
++    switch (tx[0]) {
++    case PECI_CMD_GET_DIB:
++        rx[0] = 0x01;                   /* one device in the package */
++        rx[1] = 0x40;                   /* PECI revision 4.0 */
++        return true;
++    case PECI_CMD_GET_TEMP:
++        stw_le_p(rx, aspeed_peci_dts(s, s->cpu_temp_mc, true));
++        return true;
++    case PECI_CMD_RD_PKG_CFG:
++        cc = tx_len >= 5 ? aspeed_peci_rd_pkg_cfg(s, tx[2], lduw_le_p(&tx[3]),
++                                                  &data)
++                         : ASPEED_PECI_CC_INVALID_REQ;
++        break;
++    case PECI_CMD_RD_END_PT_CFG:
++        cc = aspeed_peci_rd_end_pt_cfg(s, tx, tx_len, &data);
++        break;
++    default:
++        cc = ASPEED_PECI_CC_INVALID_REQ;
++        break;
++    }
++
++    rx[0] = cc;
++    for (int i = 1; i < rx_len && i <= 4; i++) {
++        rx[i] = data >> ((i - 1) * 8);
++    }
++    return true;
++}
++
++static void aspeed_peci_fire(AspeedPECIState *s)
++{
++    uint32_t head = s->regs[R_PECI_RW_LENGTH];
++    uint8_t addr = FIELD_EX32(head, PECI_RW_LENGTH, ADDR);
++    int tx_len = MIN(FIELD_EX32(head, PECI_RW_LENGTH, WR_LEN),
++                     ASPEED_PECI_BUF_SIZE);
++    int rx_len = MIN(FIELD_EX32(head, PECI_RW_LENGTH, RD_LEN),
++                     ASPEED_PECI_BUF_SIZE);
++    uint8_t tx[ASPEED_PECI_BUF_SIZE] = { 0 };
++    uint8_t rx[ASPEED_PECI_BUF_SIZE] = { 0 };
++    uint32_t status = FIELD_DP32(0, PECI_INT_STS, CMD_DONE, 1);
++
++    for (int i = 0; i < tx_len; i++) {
++        tx[i] = s->regs[aspeed_peci_buf_reg(false, i)] >> ((i % 4) * 8);
++    }
++    if (!aspeed_peci_client(s, addr, tx, tx_len, rx, rx_len)) {
++        status |= ASPEED_PECI_INT_BUS_TIMEOUT;
++    }
++    for (int i = 0; i < ASPEED_PECI_BUF_SIZE; i += 4) {
++        s->regs[aspeed_peci_buf_reg(true, i)] = ldl_le_p(&rx[i]);
++    }
++    aspeed_peci_raise_interrupt(s, status);
++}
++
+ static uint64_t aspeed_peci_read(void *opaque, hwaddr offset, unsigned size)
+ {
+     AspeedPECIState *s = ASPEED_PECI(opaque);
+@@ -95,10 +312,7 @@ static void aspeed_peci_write(void *opaque, hwaddr offset, uint64_t data,
+                           __func__, s->regs[R_PECI_INT_STS]);
+             break;
+         }
+-        s->regs[R_PECI_RD_DATA0] = ASPEED_PECI_CC_RSP_SUCCESS;
+-        s->regs[R_PECI_WR_DATA0] = ASPEED_PECI_CC_RSP_SUCCESS;
+-        aspeed_peci_raise_interrupt(s,
+-                                    FIELD_DP32(0, PECI_INT_STS, CMD_DONE, 1));
++        aspeed_peci_fire(s);
+         break;
+     default:
+         s->regs[offset / sizeof(s->regs[0])] = data;
+@@ -130,6 +344,61 @@ static void aspeed_peci_reset_hold(Object *obj, ResetType type)
+     memset(s->regs, 0, sizeof(s->regs));
+ }
+ 
++static void aspeed_peci_get_i32(Object *obj, Visitor *v, const char *name,
++                                void *opaque, Error **errp)
++{
++    visit_type_int32(v, name, opaque, errp);
++}
++
++static void aspeed_peci_set_i32(Object *obj, Visitor *v, const char *name,
++                                void *opaque, Error **errp)
++{
++    visit_type_int32(v, name, opaque, errp);
++}
++
++static bool aspeed_peci_get_online(Object *obj, Error **errp)
++{
++    return ASPEED_PECI(obj)->cpu_online;
++}
++
++static void aspeed_peci_set_online(Object *obj, bool value, Error **errp)
++{
++    ASPEED_PECI(obj)->cpu_online = value;
++}
++
++/*
++ * The CPU can be changed at run time with qom-set /machine/soc/peci:
++ * cpu-online (false while the host is off), cpu-temp-mc, dimm-temp-mc,
++ * tjmax, cores, dimm-mask and cpuid (default Sapphire Rapids, 0x806f8).
++ */
++static void aspeed_peci_init(Object *obj)
++{
++    AspeedPECIState *s = ASPEED_PECI(obj);
++
++    s->cpu_online = true;
++    s->cpuid = 0x000806f8;
++    s->tjmax = 100;
++    s->cpu_temp_mc = 55000;
++    s->cores = 16;
++    s->dimm_temp_mc = 40000;
++    s->dimm_mask = 0x5555;      /* slot 0 of the 8 channels */
++
++    object_property_add_bool(obj, "cpu-online", aspeed_peci_get_online,
++                             aspeed_peci_set_online);
++    object_property_add_uint32_ptr(obj, "cpuid", &s->cpuid,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add_uint32_ptr(obj, "tjmax", &s->tjmax,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add_uint32_ptr(obj, "cores", &s->cores,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add_uint32_ptr(obj, "dimm-mask", &s->dimm_mask,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add(obj, "cpu-temp-mc", "int32", aspeed_peci_get_i32,
++                        aspeed_peci_set_i32, NULL, &s->cpu_temp_mc);
++    object_property_add(obj, "dimm-temp-mc", "int32", aspeed_peci_get_i32,
++                        aspeed_peci_set_i32, NULL, &s->dimm_temp_mc);
++}
++
+ static void aspeed_peci_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+@@ -145,6 +414,7 @@ static const TypeInfo aspeed_peci_types[] = {
+         .name = TYPE_ASPEED_PECI,
+         .parent = TYPE_SYS_BUS_DEVICE,
+         .instance_size = sizeof(AspeedPECIState),
++        .instance_init = aspeed_peci_init,
+         .class_init = aspeed_peci_class_init,
+         .abstract = false,
+     },
+diff --git a/include/hw/misc/aspeed_peci.h b/include/hw/misc/aspeed_peci.h
+index 7680e5b..4606d0c 100644
+--- a/include/hw/misc/aspeed_peci.h
++++ b/include/hw/misc/aspeed_peci.h
+@@ -24,6 +24,19 @@ struct AspeedPECIState {
+     qemu_irq irq;
+ 
+     uint32_t regs[ASPEED_PECI_NR_REGS];
++
++    /*
++     * The CPU on the bus (Intel PECI client at 0x30): online, CPUID, Tjmax
++     * in degrees C, package temperature in m°C, cores, DIMM temperature in
++     * m°C and the populated DIMM slots (bit channel * 2 + slot).
++     */
++    bool cpu_online;
++    uint32_t cpuid;
++    uint32_t tjmax;
++    int32_t cpu_temp_mc;
++    uint32_t cores;
++    int32_t dimm_temp_mc;
++    uint32_t dimm_mask;
+ };
+ 
+ #endif
+-- 
+2.53.0.windows.1
+

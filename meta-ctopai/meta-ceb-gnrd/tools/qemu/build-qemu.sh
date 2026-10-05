@@ -9,6 +9,12 @@
 #                 fan-max-rpm, fan0-rpm .. fan15-rpm)
 #   patches/0003  bmc-host-sim: the host power sequence on the BMC GPIOs inside QEMU
 #                 (run-qemu.sh adds it; host-sim.py becomes an optional console)
+#   patches/0004  ADC: settable, steady input voltages
+#   patches/0005  GPIO: pin levels and reset tolerant outputs survive a BMC reset
+#   patches/0006  crps-psu: CRPS PMBus power supply (hot plug, AC loss)
+#   patches/0007  PECI: a CPU at 0x30 with package, core and DIMM temperatures
+#   patches/0008  bmc-host-sim: CPU on PECI only while the host is on
+#   patches/0009  nct3018y: the NCT3015Y RTC
 #
 # Re-running it resets the source tree to the tag, re-applies the patches and
 # rebuilds.  Build dependencies (Ubuntu 22.04 or newer):

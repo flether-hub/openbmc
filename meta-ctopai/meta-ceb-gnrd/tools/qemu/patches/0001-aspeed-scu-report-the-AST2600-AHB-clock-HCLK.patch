@@ -1,7 +1,7 @@
 From bd484b295987658c989b8bba7053d849053dfd3b Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:14:43 +0800
-Subject: [PATCH 1/2] aspeed/scu: report the AST2600 AHB clock (HCLK)
+Subject: [PATCH 1/9] aspeed/scu: report the AST2600 AHB clock (HCLK)
 
 Add aspeed_scu_get_hclk_freq(), which derives HCLK from HPLL and the
 AXI/AHB ratio straps in SCU500 the same way the Linux clk-ast2600 driver

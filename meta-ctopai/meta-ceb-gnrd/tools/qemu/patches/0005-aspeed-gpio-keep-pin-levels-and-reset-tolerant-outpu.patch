@@ -1,0 +1,46 @@
+From 4fc7bae5096e23de0e8cd04f2f266691ac3d652d Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:25:51 +0800
+Subject: [PATCH 5/9] aspeed/gpio: keep pin levels and reset tolerant outputs
+ across a reset
+
+A watchdog reset of the BMC reset every GPIO to input with a low level,
+so the board saw every BMC output drop (host reset asserted, power button
+pressed) and every input driven by the board read low until it changed
+again.  Keep the pin levels, the reset tolerance register and the
+direction and output value of the pins marked reset tolerant, as the
+hardware does.
+---
+ hw/gpio/aspeed_gpio.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/hw/gpio/aspeed_gpio.c b/hw/gpio/aspeed_gpio.c
+index 1cf6f5d..d3cea83 100644
+--- a/hw/gpio/aspeed_gpio.c
++++ b/hw/gpio/aspeed_gpio.c
+@@ -1434,8 +1434,20 @@ static void aspeed_gpio_reset_hold(Object *obj, ResetType type)
+ {
+     AspeedGPIOState *s = ASPEED_GPIO(obj);
+ 
+-    /* TODO: respect the reset tolerance registers */
+-    memset(s->sets, 0, sizeof(s->sets));
++    /*
++     * A BMC reset (the watchdog) leaves the board around the BMC running: the
++     * pins keep their levels, and the outputs marked reset tolerant stay
++     * driven.  Everything else returns to its reset value.
++     */
++    for (int i = 0; i < ASPEED_GPIO_MAX_NR_SETS; i++) {
++        GPIOSets old = s->sets[i];
++
++        memset(&s->sets[i], 0, sizeof(s->sets[i]));
++        s->sets[i].reset_tol = old.reset_tol;
++        s->sets[i].data_value = old.data_value;
++        s->sets[i].data_read = old.data_read & old.reset_tol;
++        s->sets[i].direction = old.direction & old.reset_tol;
++    }
+ }
+ 
+ static void aspeed_gpio_realize(DeviceState *dev, Error **errp)
+-- 
+2.53.0.windows.1
+

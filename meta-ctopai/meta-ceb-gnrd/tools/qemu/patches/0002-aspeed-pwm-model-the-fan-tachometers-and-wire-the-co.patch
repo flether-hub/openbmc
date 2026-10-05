@@ -1,7 +1,7 @@
 From f3d71f9e7edd5d6ce5694ae1fdf7bdd5303caccf Mon Sep 17 00:00:00 2001
 From: flether-hub <flether@gmail.com>
 Date: Mon, 5 Oct 2026 11:15:10 +0800
-Subject: [PATCH 2/2] aspeed/pwm: model the fan tachometers and wire the
+Subject: [PATCH 2/9] aspeed/pwm: model the fan tachometers and wire the
  controller on AST2600
 
 The AST2600 PWM/TACH controller at 0x1e610000 was not instantiated, so

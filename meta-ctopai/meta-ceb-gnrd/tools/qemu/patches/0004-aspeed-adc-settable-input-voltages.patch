@@ -1,0 +1,177 @@
+From f3a12ab655031cb50c616978ed3827d5378592c4 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:25:41 +0800
+Subject: [PATCH 4/9] aspeed/adc: settable input voltages
+
+The ADC data registers count up on every read, so every voltage sensor of
+a BMC ramps through its thresholds and raises alarms.  Add chN-mv
+properties to the ADC (pad ADCN, -global or qom-set): a channel with a
+voltage set returns that voltage scaled to the selected reference
+(2.5 V, or 1.2 V when the AST2600 reference select is 1).  While the
+compensation mode is on, such channels read half scale, so the Linux
+driver computes a zero offset.  Channels left at -1 keep the old ramp.
+---
+ hw/adc/aspeed_adc.c         | 85 ++++++++++++++++++++++++++++++++++++-
+ include/hw/adc/aspeed_adc.h |  4 ++
+ 2 files changed, 87 insertions(+), 2 deletions(-)
+
+diff --git a/hw/adc/aspeed_adc.c b/hw/adc/aspeed_adc.c
+index 7065580..093b1bb 100644
+--- a/hw/adc/aspeed_adc.c
++++ b/hw/adc/aspeed_adc.c
+@@ -10,6 +10,7 @@
+ 
+ #include "qemu/osdep.h"
+ #include "qapi/error.h"
++#include "qapi/visitor.h"
+ #include "qemu/log.h"
+ #include "hw/core/irq.h"
+ #include "hw/core/qdev-properties.h"
+@@ -22,6 +23,7 @@
+ #define  ASPEED_ADC_ENGINE_CH_EN_MASK           0xffff0000
+ #define   ASPEED_ADC_ENGINE_CH_EN(x)            ((BIT(x)) << 16)
+ #define  ASPEED_ADC_ENGINE_INIT                 BIT(8)
++#define  ASPEED_ADC_ENGINE_REF_SHIFT            6
+ #define  ASPEED_ADC_ENGINE_AUTO_COMP            BIT(5)
+ #define  ASPEED_ADC_ENGINE_COMP                 BIT(4)
+ #define  ASPEED_ADC_ENGINE_MODE_MASK            0x0000000e
+@@ -87,14 +89,57 @@ static bool breaks_threshold(AspeedADCEngineState *s, int reg)
+            (b < b_lower || b > b_upper);
+ }
+ 
++/*
++ * Sample of a channel with a set input voltage.  The reference is 1.2 V when
++ * the AST2600 reference select (bits 7:6) is 1, otherwise 2.5 V.
++ */
++static uint32_t channel_sample_mv(AspeedADCEngineState *s, int32_t mv)
++{
++    uint32_t ref = extract32(s->regs[ENGINE_CONTROL],
++                             ASPEED_ADC_ENGINE_REF_SHIFT, 2);
++    uint32_t vref_mv = ref == 1 ? 1200 : 2500;
++
++    return MIN((uint64_t)mv * (ASPEED_ADC_L_MASK + 1) / vref_mv,
++               ASPEED_ADC_L_MASK);
++}
++
+ static uint32_t read_channel_sample(AspeedADCEngineState *s, int reg)
+ {
+     assert(reg >= DATA_CHANNEL_1_AND_0 &&
+            reg < DATA_CHANNEL_1_AND_0 + s->nr_channels / 2);
+ 
+-    /* Poor man's sampling */
++    int ch = (reg - DATA_CHANNEL_1_AND_0) * 2;
++    int32_t mv_a = s->ch_mv ? s->ch_mv[ch] : -1;
++    int32_t mv_b = s->ch_mv ? s->ch_mv[ch + 1] : -1;
++
++    if (s->regs[ENGINE_CONTROL] & ASPEED_ADC_ENGINE_COMP) {
++        /* compensation mode: inputs held at half the reference */
++        if (mv_a >= 0 || mv_b >= 0) {
++            return (0x200 << 16) | 0x200;
++        }
++    } else {
++        if (mv_a >= 0) {
++            s->regs[reg] = (s->regs[reg] & ~ASPEED_ADC_L_MASK) |
++                           channel_sample_mv(s, mv_a);
++        }
++        if (mv_b >= 0) {
++            s->regs[reg] = (s->regs[reg] & ~(ASPEED_ADC_L_MASK << 16)) |
++                           channel_sample_mv(s, mv_b) << 16;
++        }
++    }
++
++    /* Poor man's sampling for the channels without a set voltage */
+     uint32_t value = s->regs[reg];
+-    s->regs[reg] = update_channels(s->regs[reg]);
++    uint32_t next = update_channels(s->regs[reg]);
++
++    if (mv_a >= 0) {
++        next = (next & ~ASPEED_ADC_L_MASK) | (value & ASPEED_ADC_L_MASK);
++    }
++    if (mv_b >= 0) {
++        next = (next & ~(ASPEED_ADC_L_MASK << 16)) |
++               (value & (ASPEED_ADC_L_MASK << 16));
++    }
++    s->regs[reg] = next;
+ 
+     if (breaks_threshold(s, reg)) {
+         s->regs[INTERRUPT_CONTROL] |= BIT(reg - DATA_CHANNEL_1_AND_0);
+@@ -304,18 +349,54 @@ static void aspeed_adc_engine_class_init(ObjectClass *klass, const void *data)
+     dc->vmsd = &vmstate_aspeed_adc_engine;
+ }
+ 
++static void aspeed_adc_get_mv(Object *obj, Visitor *v, const char *name,
++                              void *opaque, Error **errp)
++{
++    visit_type_int32(v, name, opaque, errp);
++}
++
++static void aspeed_adc_set_mv(Object *obj, Visitor *v, const char *name,
++                              void *opaque, Error **errp)
++{
++    int32_t mv;
++
++    if (!visit_type_int32(v, name, &mv, errp)) {
++        return;
++    }
++    if (mv < -1) {
++        error_setg(errp, "%s: %d mV is not an input voltage (-1: test ramp)",
++                   name, mv);
++        return;
++    }
++    *(int32_t *)opaque = mv;
++}
++
++/*
++ * Input voltages can be set with -global aspeed.adc.chN-mv=<mV> or at run
++ * time with qom-set /machine/soc/adc chN-mv <mV>; channel N is the pad
++ * ADCN, channels 8-15 being the second engine of the AST2600.
++ */
+ static void aspeed_adc_instance_init(Object *obj)
+ {
+     AspeedADCState *s = ASPEED_ADC(obj);
+     AspeedADCClass *aac = ASPEED_ADC_GET_CLASS(obj);
+     uint32_t nr_channels = ASPEED_ADC_NR_CHANNELS / aac->nr_engines;
+ 
++    for (int i = 0; i < ASPEED_ADC_NR_CHANNELS; i++) {
++        g_autofree char *name = g_strdup_printf("ch%d-mv", i);
++
++        s->ch_mv[i] = -1;
++        object_property_add(obj, name, "int32", aspeed_adc_get_mv,
++                            aspeed_adc_set_mv, NULL, &s->ch_mv[i]);
++    }
++
+     for (int i = 0; i < aac->nr_engines; i++) {
+         AspeedADCEngineState *engine = &s->engines[i];
+         object_initialize_child(obj, "engine[*]", engine,
+                                 TYPE_ASPEED_ADC_ENGINE);
+         qdev_prop_set_uint32(DEVICE(engine), "engine-id", i);
+         qdev_prop_set_uint32(DEVICE(engine), "nr-channels", nr_channels);
++        engine->ch_mv = &s->ch_mv[i * nr_channels];
+     }
+ }
+ 
+diff --git a/include/hw/adc/aspeed_adc.h b/include/hw/adc/aspeed_adc.h
+index 75c00b0..e2efe22 100644
+--- a/include/hw/adc/aspeed_adc.h
++++ b/include/hw/adc/aspeed_adc.h
+@@ -36,6 +36,8 @@ struct AspeedADCEngineState {
+     uint32_t engine_id;
+     uint32_t nr_channels;
+     uint32_t regs[ASPEED_ADC_NR_REGS];
++    /* input voltages in mV of this engine's channels, -1: test ramp */
++    int32_t *ch_mv;
+ };
+ 
+ struct AspeedADCState {
+@@ -46,6 +48,8 @@ struct AspeedADCState {
+     qemu_irq irq;
+ 
+     AspeedADCEngineState engines[2];
++    /* chN-mv properties: pin voltage of channel N in mV, -1: test ramp */
++    int32_t ch_mv[ASPEED_ADC_NR_CHANNELS];
+ };
+ 
+ struct AspeedADCClass {
+-- 
+2.53.0.windows.1
+

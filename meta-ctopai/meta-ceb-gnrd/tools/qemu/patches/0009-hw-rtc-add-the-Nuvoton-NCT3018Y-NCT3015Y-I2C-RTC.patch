@@ -1,0 +1,320 @@
+From 68d92bb3a2345d577132d55527d57404a9ec5b64 Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 11:35:12 +0800
+Subject: [PATCH 9/9] hw/rtc: add the Nuvoton NCT3018Y/NCT3015Y I2C RTC
+
+BCD time and date, alarm, control, status and clock output registers as
+the Linux rtc-nct3018y driver uses them.  The clock runs from the host
+time plus an offset set by the guest; time fields written in one
+transfer take effect together at its end.  Like the battery-backed part
+it keeps its time across a BMC reset.  battery-ok=false reports a low
+battery in the status register, which makes the driver reject the time.
+---
+ hw/arm/Kconfig     |   1 +
+ hw/rtc/Kconfig     |   5 +
+ hw/rtc/meson.build |   1 +
+ hw/rtc/nct3018y.c  | 256 +++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 263 insertions(+)
+ create mode 100644 hw/rtc/nct3018y.c
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index 6f5b2ad..11713a4 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -535,6 +535,7 @@ config ASPEED_SOC
+     depends on TCG && ARM
+     imply PCI_DEVICES
+     select DS1338
++    select NCT3018Y
+     select FTGMAC100
+     select I2C
+     select I3C
+diff --git a/hw/rtc/Kconfig b/hw/rtc/Kconfig
+index 315b0e4..6a8bf4a 100644
+--- a/hw/rtc/Kconfig
++++ b/hw/rtc/Kconfig
+@@ -1,3 +1,8 @@
++config NCT3018Y
++    bool
++    depends on I2C
++    default y if I2C_DEVICES
++
+ config DS1338
+     bool
+     depends on I2C
+diff --git a/hw/rtc/meson.build b/hw/rtc/meson.build
+index 6c87864..817e3f1 100644
+--- a/hw/rtc/meson.build
++++ b/hw/rtc/meson.build
+@@ -1,5 +1,6 @@
+ 
+ system_ss.add(when: 'CONFIG_DS1338', if_true: files('ds1338.c'))
++system_ss.add(when: 'CONFIG_NCT3018Y', if_true: files('nct3018y.c'))
+ system_ss.add(when: 'CONFIG_M41T80', if_true: files('m41t80.c'))
+ system_ss.add(when: 'CONFIG_M48T59', if_true: files('m48t59.c'))
+ system_ss.add(when: 'CONFIG_PL031', if_true: files('pl031.c'))
+diff --git a/hw/rtc/nct3018y.c b/hw/rtc/nct3018y.c
+new file mode 100644
+index 0000000..c5f566d
+--- /dev/null
++++ b/hw/rtc/nct3018y.c
+@@ -0,0 +1,256 @@
++/*
++ * Nuvoton NCT3018Y / NCT3015Y I2C real time clock
++ *
++ * Time and date in BCD, the alarm registers, control, status and the clock
++ * output register, as the Linux rtc-nct3018y driver uses them.  The clock
++ * runs from the host time plus an offset that the guest sets.  Like the
++ * battery-backed part, it keeps its time across a reset of the BMC.
++ *
++ * Properties: battery-ok (false: the status register reports a low
++ * battery, so the driver refuses the time) and part (bits 1:0 of the part
++ * register, 2 = NCT3018Y).
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "hw/i2c/i2c.h"
++#include "hw/core/qdev-properties.h"
++#include "migration/vmstate.h"
++#include "qemu/bcd.h"
++#include "qom/object.h"
++#include "system/rtc.h"
++
++#define TYPE_NCT3018Y "nct3018y"
++OBJECT_DECLARE_SIMPLE_TYPE(NCT3018YState, NCT3018Y)
++
++#define NCT_NR_REGS     0x40
++
++#define NCT_REG_SC      0x00
++#define NCT_REG_SCA     0x01
++#define NCT_REG_MN      0x02
++#define NCT_REG_MNA     0x03
++#define NCT_REG_HR      0x04
++#define NCT_REG_HRA     0x05
++#define NCT_REG_DW      0x06
++#define NCT_REG_DM      0x07
++#define NCT_REG_MO      0x08
++#define NCT_REG_YR      0x09
++#define NCT_REG_CTRL    0x0a
++#define NCT_REG_ST      0x0b
++#define NCT_REG_CLKO    0x0c
++#define NCT_REG_PART    0x21
++
++#define NCT_ST_BAT_MASK 0x07    /* battery level, read only */
++#define NCT_ST_BAT_OK   0x07
++
++struct NCT3018YState {
++    I2CSlave parent_obj;
++
++    int64_t offset;
++    uint8_t wday_offset;
++    uint8_t regs[NCT_NR_REGS];
++    uint8_t ptr;
++    bool addr_byte;
++    bool time_written;
++
++    bool battery_ok;
++    uint8_t part;
++};
++
++static void nct_capture_time(NCT3018YState *s)
++{
++    struct tm now;
++
++    qemu_get_timedate(&now, s->offset);
++    s->regs[NCT_REG_SC] = to_bcd(now.tm_sec);
++    s->regs[NCT_REG_MN] = to_bcd(now.tm_min);
++    s->regs[NCT_REG_HR] = to_bcd(now.tm_hour);
++    s->regs[NCT_REG_DW] = (now.tm_wday + s->wday_offset) % 7;
++    s->regs[NCT_REG_DM] = to_bcd(now.tm_mday);
++    s->regs[NCT_REG_MO] = to_bcd(now.tm_mon + 1);
++    s->regs[NCT_REG_YR] = to_bcd(now.tm_year % 100);
++}
++
++/*
++ * Time registers written in a transfer take effect together at its end, so
++ * that a date written field by field is never normalized half way (31 in
++ * a 30 day month).
++ */
++static void nct_commit_time(NCT3018YState *s)
++{
++    struct tm now;
++
++    qemu_get_timedate(&now, s->offset);
++    now.tm_sec = from_bcd(s->regs[NCT_REG_SC] & 0x7f);
++    now.tm_min = from_bcd(s->regs[NCT_REG_MN] & 0x7f);
++    now.tm_hour = from_bcd(s->regs[NCT_REG_HR] & 0x3f);
++    now.tm_mday = from_bcd(s->regs[NCT_REG_DM] & 0x3f);
++    now.tm_mon = from_bcd(s->regs[NCT_REG_MO] & 0x1f) - 1;
++    now.tm_year = from_bcd(s->regs[NCT_REG_YR]) + 100;
++    s->offset = qemu_timedate_diff(&now);
++    /* the weekday is relative to the new date */
++    qemu_get_timedate(&now, s->offset);
++    s->wday_offset = ((s->regs[NCT_REG_DW] & 7) - now.tm_wday + 7) % 7;
++}
++
++static uint8_t nct_read_reg(NCT3018YState *s, uint8_t reg)
++{
++    switch (reg) {
++    case NCT_REG_ST:
++        return (s->regs[reg] & ~NCT_ST_BAT_MASK) |
++               (s->battery_ok ? NCT_ST_BAT_OK : 0);
++    case NCT_REG_PART:
++        return s->part & 0x03;
++    default:
++        return s->regs[reg];
++    }
++}
++
++static int nct_event(I2CSlave *i2c, enum i2c_event event)
++{
++    NCT3018YState *s = NCT3018Y(i2c);
++
++    switch (event) {
++    case I2C_START_RECV:
++        nct_capture_time(s);
++        break;
++    case I2C_START_SEND:
++        nct_capture_time(s);
++        s->addr_byte = true;
++        s->time_written = false;
++        break;
++    case I2C_FINISH:
++        if (s->time_written) {
++            nct_commit_time(s);
++            s->time_written = false;
++        }
++        break;
++    default:
++        break;
++    }
++    return 0;
++}
++
++static uint8_t nct_recv(I2CSlave *i2c)
++{
++    NCT3018YState *s = NCT3018Y(i2c);
++    uint8_t val = nct_read_reg(s, s->ptr);
++
++    s->ptr = (s->ptr + 1) % NCT_NR_REGS;
++    return val;
++}
++
++static int nct_send(I2CSlave *i2c, uint8_t data)
++{
++    NCT3018YState *s = NCT3018Y(i2c);
++
++    if (s->addr_byte) {
++        s->ptr = data % NCT_NR_REGS;
++        s->addr_byte = false;
++        return 0;
++    }
++
++    switch (s->ptr) {
++    case NCT_REG_SC:
++    case NCT_REG_MN:
++    case NCT_REG_HR:
++    case NCT_REG_DW:
++    case NCT_REG_DM:
++    case NCT_REG_MO:
++    case NCT_REG_YR:
++        s->regs[s->ptr] = data;
++        s->time_written = true;
++        break;
++    case NCT_REG_PART:
++        break;
++    default:
++        s->regs[s->ptr] = data;
++        break;
++    }
++    s->ptr = (s->ptr + 1) % NCT_NR_REGS;
++    return 0;
++}
++
++static void nct_realize(DeviceState *dev, Error **errp)
++{
++    NCT3018YState *s = NCT3018Y(dev);
++
++    /* battery backed: the time is set once, not on every reset */
++    s->offset = 0;
++    s->wday_offset = 0;
++}
++
++static void nct_reset_hold(Object *obj, ResetType type)
++{
++    NCT3018YState *s = NCT3018Y(obj);
++
++    s->ptr = 0;
++    s->addr_byte = false;
++}
++
++static bool nct_get_battery_ok(Object *obj, Error **errp)
++{
++    return NCT3018Y(obj)->battery_ok;
++}
++
++static void nct_set_battery_ok(Object *obj, bool value, Error **errp)
++{
++    NCT3018Y(obj)->battery_ok = value;
++}
++
++/* battery-ok can be changed at run time (qom-set) */
++static void nct_init(Object *obj)
++{
++    NCT3018Y(obj)->battery_ok = true;
++    object_property_add_bool(obj, "battery-ok", nct_get_battery_ok,
++                             nct_set_battery_ok);
++}
++
++static const Property nct_properties[] = {
++    DEFINE_PROP_UINT8("part", NCT3018YState, part, 2),
++};
++
++static const VMStateDescription vmstate_nct = {
++    .name = TYPE_NCT3018Y,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_I2C_SLAVE(parent_obj, NCT3018YState),
++        VMSTATE_INT64(offset, NCT3018YState),
++        VMSTATE_UINT8(wday_offset, NCT3018YState),
++        VMSTATE_UINT8_ARRAY(regs, NCT3018YState, NCT_NR_REGS),
++        VMSTATE_UINT8(ptr, NCT3018YState),
++        VMSTATE_BOOL(addr_byte, NCT3018YState),
++        VMSTATE_BOOL(time_written, NCT3018YState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void nct_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
++
++    dc->desc = "Nuvoton NCT3018Y/NCT3015Y RTC";
++    dc->realize = nct_realize;
++    dc->vmsd = &vmstate_nct;
++    rc->phases.hold = nct_reset_hold;
++    k->event = nct_event;
++    k->recv = nct_recv;
++    k->send = nct_send;
++    device_class_set_props(dc, nct_properties);
++}
++
++static const TypeInfo nct_types[] = {
++    {
++        .name          = TYPE_NCT3018Y,
++        .parent        = TYPE_I2C_SLAVE,
++        .instance_size = sizeof(NCT3018YState),
++        .instance_init = nct_init,
++        .class_init    = nct_class_init,
++    },
++};
++
++DEFINE_TYPES(nct_types)
+-- 
+2.53.0.windows.1
+
