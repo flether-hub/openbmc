@@ -1,0 +1,41 @@
+From faf9b24c6a1cb26d7a0c04c4cdec8abe771f7fde Mon Sep 17 00:00:00 2001
+From: flether-hub <flether@gmail.com>
+Date: Mon, 5 Oct 2026 15:48:40 +0800
+Subject: [PATCH] aspeed/adc: compensation mode always reads half scale
+
+The Linux driver measures its offset once, at probe, in compensation mode.
+The voltages are set after that (over QMP), so channel 0 still ramped and
+the driver kept a random offset: every ADC sensor read far off (3.3 V rails
+at 0.8 V, a 3 V battery at 5 V) and raised critical alarms.  Read half scale
+in compensation mode on every channel.
+
+Upstream-Status: Inappropriate [CEB-GNRD board models for emulation only]
+---
+ hw/adc/aspeed_adc.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/hw/adc/aspeed_adc.c b/hw/adc/aspeed_adc.c
+index 33841c5..d4318a3 100644
+--- a/hw/adc/aspeed_adc.c
++++ b/hw/adc/aspeed_adc.c
+@@ -113,10 +113,13 @@ static uint32_t read_channel_sample(AspeedADCEngineState *s, int reg)
+     int32_t mv_b = s->ch_mv ? s->ch_mv[ch + 1] : -1;
+ 
+     if (s->regs[ENGINE_CONTROL] & ASPEED_ADC_ENGINE_COMP) {
+-        /* compensation mode: inputs held at half the reference */
+-        if (mv_a >= 0 || mv_b >= 0) {
+-            return (0x200 << 16) | 0x200;
+-        }
++        /*
++         * Compensation mode: the inputs are held at half the reference, so
++         * the Linux driver computes a zero offset.  Also for the channels
++         * still on the test ramp: the driver measures the offset once at
++         * probe, before the board sets the voltages.
++         */
++        return (0x200 << 16) | 0x200;
+     } else {
+         if (mv_a >= 0) {
+             s->regs[reg] = (s->regs[reg] & ~ASPEED_ADC_L_MASK) |
+-- 
+2.53.0.windows.1
+

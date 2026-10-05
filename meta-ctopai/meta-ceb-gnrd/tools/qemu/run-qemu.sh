@@ -125,7 +125,8 @@ if [ -n "$BOARD_QEMU" ]; then
     BOARD="$BOARD -device nct3018y,bus=aspeed.i2c.bus.9,address=0x6f,id=rtc"
     ch=0
     for mv in 1091 455 1650 1800 900 1130 850 1000 1800 1130 1800 1650 1800 1200 1000 3000; do
-        BOARD="$BOARD -global aspeed.adc.ch$ch-mv=$mv"
+        # long form: the short one splits "aspeed.adc.chN-mv" at the first dot
+        BOARD="$BOARD -global driver=aspeed.adc,property=ch$ch-mv,value=$mv"
         ch=$((ch + 1))
     done
     UART3=null
