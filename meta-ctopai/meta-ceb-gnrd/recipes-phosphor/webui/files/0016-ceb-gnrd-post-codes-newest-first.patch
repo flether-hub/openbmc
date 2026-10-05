@@ -4,25 +4,42 @@ Date: Mon, 5 Oct 2026 00:00:00 +0000
 Subject: [PATCH] post codes: newest first
 
 The POST Code table is meant to be sorted by "id", descending, but the items
-have no "id", so the codes were listed in the order the service returns them,
-oldest first.  Give each code its position in that order.
+have no "id", so the codes were listed in the order the service returns them:
+boot 1 (the newest boot) first, and the codes of each boot oldest first.  Give
+each code an id that makes the newest code come first.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
 --- a/src/store/modules/Logs/PostCodeLogsStore.js
 +++ b/src/store/modules/Logs/PostCodeLogsStore.js
-@@ -20,9 +20,13 @@ const PostCodeLogsStore = {
+@@ -20,9 +20,10 @@ const PostCodeLogsStore = {
            `${await this.dispatch('global/getSystemPath')}/LogServices/PostCodes/Entries`,
          )
          .then(({ data: { Members = [] } = {} }) => {
 -          const postCodeLogs = Members.map((log) => {
-+          // The service lists the codes oldest first.  The table sorts by "id"
-+          // (descending, newest first), but the items had no such field, so the
-+          // list was shown oldest first: number the codes in service order.
 +          const postCodeLogs = Members.map((log, index) => {
              const { Created, MessageArgs, AdditionalDataURI } = log;
              return {
-+              id: index,
++              index,
                date: new Date(Created),
                bootCount: MessageArgs[0],
                timeStampOffset: MessageArgs[1],
+@@ -30,6 +31,18 @@ const PostCodeLogsStore = {
+               uri: AdditionalDataURI,
+             };
+           });
++          // The page sorts by "id", descending, but these entries had no "id",
++          // so the list kept the order of the service (boot 1, the newest boot,
++          // first, and the codes of each boot oldest first).  Number them so
++          // that the newest code comes first: by time, and for codes with the
++          // same time (the time has a resolution of a second) the later one in
++          // the service order first.
++          const newestFirst = [...postCodeLogs].sort(
++            (a, b) => b.date - a.date || b.index - a.index,
++          );
++          newestFirst.forEach((log, position) => {
++            log.id = newestFirst.length - position;
++          });
+           commit('setAllPostCodes', postCodeLogs);
+         })
+         .catch((error) => {
