@@ -19,6 +19,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0017-ceb-gnrd-sensors-pagination.patch \
     file://0018-ceb-gnrd-firmware-progress-survives-page-change.patch \
     file://0019-ceb-gnrd-factory-reset-bmc-wording.patch \
+    file://0020-ceb-gnrd-overview-firmware-card.patch \
     file://zh-CN.json \
 "
 

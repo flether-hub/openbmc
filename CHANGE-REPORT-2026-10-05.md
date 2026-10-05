@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 14:10 UTC（北京时间 22:10）
+最后更新：2026-10-05 13:12 UTC（北京时间 21:12）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -59,7 +59,8 @@
 | `0016-ceb-gnrd-post-codes-newest-first.patch` | `fddb2f60d2`、`71ee34f2ab`、`eb73d3bce9` | POST Code 最新的在前：表格按 `id` 倒序，但条目没有 `id`；现在按时间排，同一秒内按服务返回顺序靠后的在前（bmcweb 是最新一次启动在前、每次启动内旧的在前） |
 | `0017-ceb-gnrd-sensors-pagination.patch` | `a91ed50ad5` | 模拟量传感器表分页（每页 20 条，可选 10/20/30/40/查看全部），去掉固定高度 |
 | `0018-ceb-gnrd-firmware-progress-survives-page-change.patch` | `9cce0ee99f` | 升级过程中切换页面再回来，进度条保留：运行状态存 `sessionStorage`（BIOS 存升级任务地址，BMC 存等待重启的起点），回来时继续轮询；上传阶段离开页面无法恢复 |
-| `0019-ceb-gnrd-factory-reset-bmc-wording.patch`、`files/zh-CN.json` | （见下方提交号） | 恢复出厂设置页只重置 BMC，去掉和服务器有关的说明：标题/按钮/成功失败提示不再写"BMC 和服务器设置"，去掉"分区配置和平台密钥库可能被恢复"一项，去掉"没有关闭系统会出现不可恢复错误"的警告和"继续执行且不关闭系统"勾选框（弹窗确认不再要求勾选）；中文提示同步 |
+| `0019-ceb-gnrd-factory-reset-bmc-wording.patch`、`files/zh-CN.json` | `98e5c97e5f` | 恢复出厂设置页只重置 BMC，去掉和服务器有关的说明：标题/按钮/成功失败提示不再写"BMC 和服务器设置"，去掉"分区配置和平台密钥库可能被恢复"一项，去掉"没有关闭系统会出现不可恢复错误"的警告和"继续执行且不关闭系统"勾选框（弹窗确认不再要求勾选）；中文提示同步 |
+| `0020-ceb-gnrd-overview-firmware-card.patch` | （本条提交） | 概览页固件卡片去掉没用的两项："Backup version"（显示 --，板子只有一个 BMC 镜像）和 "Firmware version"（显示 null，板子没有系统固件版本），只保留运行中的 BMC 版本 |
 
 验证：补丁都在锁定的 webui-vue `8538dca1`（先套用前面的补丁）上 `patch --dry-run` 通过，`0017`、`0018` 本机跑过 `eslint` 和 `vite build`（构建树在 `C:\Users\nini_\AppData\Local\Temp\claude\D--openbmc\<会话>\scratchpad\wv`）。没有在真实网页上看过。
 
