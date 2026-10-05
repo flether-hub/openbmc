@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] factory reset: no server wording, no shutdown warning
+
+The factory reset only resets the BMC (the host BIOS cannot be reached on this
+board).  Remove what is about the server: the "BMC and server settings" titles,
+the partition configuration / platform keystore item and the warning with the
+"continue without shutting down the system" check box.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -301,8 +301,8 @@
+             "resetOptionsLabel": "Reset options",
+             "resetBiosOptionLabel": "Reset server settings only",
+             "resetBiosOptionHelperText": "Resets firmware settings including: Platform keystore, partition NVRAM, and partition configurations.",
+-            "resetToDefaultsOptionLabel": "Reset BMC and server settings",
+-            "resetToDefaultsOptionHelperText": "In addition to server settings, this option resets BMC settings, including: all BMC account data, all changed passwords, all policies, LDAP configurations, network addresses, and time of day."
++            "resetToDefaultsOptionLabel": "Reset BMC settings",
++            "resetToDefaultsOptionHelperText": "This option resets the BMC settings, including: all BMC account data, all changed passwords, all policies, network addresses, and time of day. The server (host) is not affected."
+         },
+         "modal": {
+             "resetBiosTitle": "Reset server settings",
+@@ -312,9 +312,9 @@
+                 "item1": "All manual settings will be deleted.",
+                 "item2": "Partition configurations and the platform keystore may be recovered if backups exist."
+             },
+-            "resetToDefaultsTitle": "Reset BMC and server settings",
+-            "resetToDefaultsHeader": "Do you want to reset both the BMC and server settings?",
+-            "resetToDefaultsSubmitText": "Reset BMC and server settings",
++            "resetToDefaultsTitle": "Reset BMC settings",
++            "resetToDefaultsHeader": "Do you want to reset the BMC settings?",
++            "resetToDefaultsSubmitText": "Reset BMC settings",
+             "resetToDefaultsSettingsList": {
+                 "item1": "All manual settings will be deleted.",
+                 "item2": "Partition configurations and the platform keystore may be recovered if backups exist.",
+@@ -327,8 +327,8 @@
+         "toast": {
+             "resetBiosSuccess": "Factory reset of server settings successful.",
+             "resetBiosError": "Factory reset of server settings failed.",
+-            "resetToDefaultsSuccess": "Factory reset of BMC and server settings successful.",
+-            "resetToDefaultsError": "Factory reset of BMC and server settings failed."
++            "resetToDefaultsSuccess": "Factory reset of the BMC settings successful.",
++            "resetToDefaultsError": "Factory reset of the BMC settings failed."
+         }
+     },
+     "pageFirmware": {
+--- a/src/views/Operations/FactoryReset/FactoryResetModal.vue
++++ b/src/views/Operations/FactoryReset/FactoryResetModal.vue
+@@ -22,9 +22,6 @@
+       <li class="mt-1 mb-1">
+         {{ t('pageFactoryReset.modal.resetToDefaultsSettingsList.item1') }}
+       </li>
+-      <li class="mt-1 mb-1">
+-        {{ t('pageFactoryReset.modal.resetToDefaultsSettingsList.item2') }}
+-      </li>
+       <li class="mt-1 mb-1">
+         {{ t('pageFactoryReset.modal.resetToDefaultsSettingsList.item3') }}
+       </li>
+@@ -33,28 +30,8 @@
+       </li>
+     </ul>
+ 
+-    <!-- Warning message -->
+-    <template v-if="!isServerOff">
+-      <p class="d-flex mb-2">
+-        <status-icon status="danger" />
+-        <span id="reset-to-default-warning" class="ms-1">
+-          {{ t(`pageFactoryReset.modal.resetWarningMessage`) }}
+-        </span>
+-      </p>
+-      <b-form-checkbox
+-        v-model="confirm"
+-        aria-describedby="reset-to-default-warning"
+-        @change="v$.confirm.$touch()"
+-      >
+-        {{ t(`pageFactoryReset.modal.resetWarningCheckLabel`) }}
+-      </b-form-checkbox>
+-      <b-form-invalid-feedback
+-        role="alert"
+-        :state="getValidationState(v$.confirm)"
+-      >
+-        {{ t('global.form.fieldRequired') }}
+-      </b-form-invalid-feedback>
+-    </template>
++    <!-- CEB-GNRD: the reset only concerns the BMC, the host keeps running, so
++         there is no warning about shutting the system down first -->
+ 
+     <template #footer="{ cancel }">
+       <b-button
+@@ -135,8 +112,8 @@ export default {
+   validations() {
+     return {
+       confirm: {
+-        mustBeTrue: function (value) {
+-          return this.isServerOff || value === true;
++        mustBeTrue: function () {
++          return true;
+         },
+       },
+     };

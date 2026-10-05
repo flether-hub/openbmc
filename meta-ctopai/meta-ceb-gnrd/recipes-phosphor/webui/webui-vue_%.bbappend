@@ -18,6 +18,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0016-ceb-gnrd-post-codes-newest-first.patch \
     file://0017-ceb-gnrd-sensors-pagination.patch \
     file://0018-ceb-gnrd-firmware-progress-survives-page-change.patch \
+    file://0019-ceb-gnrd-factory-reset-bmc-wording.patch \
     file://zh-CN.json \
 "
 

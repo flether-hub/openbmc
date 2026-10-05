@@ -325,7 +325,7 @@
       "resetBiosOptionLabel": "仅重置服务器选项",
       "resetBiosOptionHelperText": "重新设置固件设置包括平台密钥储存、NVRAM 分割、配置分割。",
       "resetToDefaultsOptionLabel": "恢复 BMC 出厂设置",
-      "resetToDefaultsOptionHelperText": "此选项重置 BMC 设置，包括所有 BMC 账号资料、所有已改变密码、所有策略、网络地址、日期时间。"
+      "resetToDefaultsOptionHelperText": "此选项重置 BMC 设置，包括所有 BMC 账号资料、所有已改变密码、所有策略、网络地址、日期时间。不影响服务器（主机）。"
     },
     "modal": {
       "resetBiosTitle": "重置服务器设置",
@@ -350,8 +350,8 @@
     "toast": {
       "resetBiosSuccess": "成功恢复出厂服务器设置。",
       "resetBiosError": "恢复出厂服务器设置失败。",
-      "resetToDefaultsSuccess": "成功恢复 BMC 与出厂服务器设置。",
-      "resetToDefaultsError": "恢复 BMC 与出厂服务器设置失败。"
+      "resetToDefaultsSuccess": "成功恢复 BMC 出厂设置。",
+      "resetToDefaultsError": "恢复 BMC 出厂设置失败。"
     }
   },
   "pageFirmware": {
