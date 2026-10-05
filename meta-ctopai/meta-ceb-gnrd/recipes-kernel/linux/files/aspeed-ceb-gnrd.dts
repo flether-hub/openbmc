@@ -22,6 +22,42 @@
         ethernet1 = &mac2;
     };
 
+    /* PWM outputs of SYS_FAN0-5 as hwmon pwm1 of pwm-fan0..5: the
+     * aspeed-g6-pwm-tach driver registers its PWMs only as a pwmchip, and
+     * dbus-sensors' fansensor finds a fan's PWM in a "pwm-fanN" device
+     * (otherwise "Connector ... no pwm channel found" and phosphor-pid-control
+     * cannot set the fan speed).  pwm-fan starts at full duty; the fans stay
+     * with the CPLD until BMC_FAN_BMC_OVERRIDE_N is driven high. */
+    pwm-fan0 {
+        compatible = "pwm-fan";
+        pwms = <&pwm_tach 0 40000 0>;
+    };
+
+    pwm-fan1 {
+        compatible = "pwm-fan";
+        pwms = <&pwm_tach 1 40000 0>;
+    };
+
+    pwm-fan2 {
+        compatible = "pwm-fan";
+        pwms = <&pwm_tach 2 40000 0>;
+    };
+
+    pwm-fan3 {
+        compatible = "pwm-fan";
+        pwms = <&pwm_tach 3 40000 0>;
+    };
+
+    pwm-fan4 {
+        compatible = "pwm-fan";
+        pwms = <&pwm_tach 4 40000 0>;
+    };
+
+    pwm-fan5 {
+        compatible = "pwm-fan";
+        pwms = <&pwm_tach 5 40000 0>;
+    };
+
     leds {
         compatible = "gpio-leds";
 
