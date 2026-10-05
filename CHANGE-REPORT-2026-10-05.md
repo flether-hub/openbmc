@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 12:20 UTC（北京时间 20:20）
+最后更新：2026-10-05 12:35 UTC（北京时间 20:35）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -138,3 +138,5 @@
   * 目标默认 `.tutorial-build/ceb-gnrd/`，每次运行先删掉该目录再复制，`.tutorial-build/` 下其他内容不动；可传参数指定其他目标，但拒绝写到仓库内 `.tutorial-build` 以外的位置。
   * 不包括：上游源码（QEMU、内核、webui-vue 等）的 base/tree 展开和打补丁，那需要联网取固定版本源码，没做。
   * 验证：`python3 meta-ctopai/meta-ceb-gnrd/tools/expand-to-tutorial-build.py` 输出 `N files -> ...\.tutorial-build\ceb-gnrd`；`diff -r meta-ctopai/meta-ceb-gnrd .tutorial-build/ceb-gnrd/meta-ctopai/meta-ceb-gnrd` 无差异。已在本机运行两次（第二次覆盖），193 个文件，diff 一致。
+* `990db41c7e`：用户说原来的子目录不合理可以自行处理，于是整理了 `.tutorial-build/`（本地目录，不在 git 里）：`ceb-gnrd/`（层的副本）、`qemu/kvm-usb/`（补丁 0018 的 base/tree、`export_integration.py`，零散下载文件放 `ref/`）、`qemu/peci-sim/`（补丁 0019 的 base/tree 和生成脚本）、`linux/peci-temperature/`（内核补丁 0003 的 base/tree、固定版本 `baseline/` 和生成脚本）、`eds/`（GNR-D EDS PDF、文本和提取脚本）、`scripts/`。改了各生成脚本里的路径（`export_integration.py` 去掉硬编码 `D:/openbmc`，改为相对路径），并在 `.tutorial-build/README.md` 和展开脚本的说明里写明布局；`tools/qemu/README.md` 和 `tools/qemu/CHANGE-REPORT-2026-10-05.md` 里两处旧路径已更新。`kvm-usb/tree` 被占用无法改名，用复制后 `diff -r` 一致再删除原目录。
+  * 验证：在新位置运行三个生成脚本（`qemu/peci-sim/build_gnrd_peci_sim_patch.py`、`linux/peci-temperature/build_gnrd_temperature_patch.py`、`qemu/kvm-usb/export_integration.py`），重新生成的补丁 0019、内核 0003、0018 与已提交版本逐字节一致（`git status` 无变化）。`qemu/kvm-usb/revise_media.py` 是一次性改仓库文件的脚本，没有运行。
