@@ -45,12 +45,16 @@ import sys
 
 from dbus_fast import BusType, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
-from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, signal
+from dbus_fast.service import (PropertyAccess, ServiceInterface, dbus_property, method,
+                               signal)
 
 LOG = logging.getLogger("ceb-gnrd-temp-max")
 
 BUS_NAME = "com.ctopai.CebGnrd.TempMax"
-SENSOR_ROOT = "/xyz/openbmc_project/sensors/temperature"
+SENSOR_BASE = "/xyz/openbmc_project/sensors"
+SENSOR_ROOT = SENSOR_BASE + "/temperature"
+INVENTORY_ROOT = "/xyz/openbmc_project/inventory"
+BOARD_IFACE = "xyz.openbmc_project.Inventory.Item.Board"
 ADC_ROOT = "/xyz/openbmc_project/sensors/voltage"
 HWMON_ROOT = "/sys/class/hwmon"
 VALUE_IFACE = "xyz.openbmc_project.Sensor.Value"
@@ -148,6 +152,12 @@ class WarningThreshold(_Threshold):
     def __init__(self, high):
         super().__init__("xyz.openbmc_project.Sensor.Threshold.Warning", high)
 
+    def properties(self):
+        return {"WarningHigh": Variant("d", self.high),
+                "WarningLow": Variant("d", math.nan),
+                "WarningAlarmHigh": Variant("b", self.alarm),
+                "WarningAlarmLow": Variant("b", False)}
+
     @dbus_property(access=PropertyAccess.READ)
     def WarningHigh(self) -> "d":
         return self.high
@@ -169,6 +179,12 @@ class CriticalThreshold(_Threshold):
     def __init__(self, high):
         super().__init__("xyz.openbmc_project.Sensor.Threshold.Critical", high)
 
+    def properties(self):
+        return {"CriticalHigh": Variant("d", self.high),
+                "CriticalLow": Variant("d", math.nan),
+                "CriticalAlarmHigh": Variant("b", self.alarm),
+                "CriticalAlarmLow": Variant("b", False)}
+
     @dbus_property(access=PropertyAccess.READ)
     def CriticalHigh(self) -> "d":
         return self.high
@@ -189,6 +205,12 @@ class CriticalThreshold(_Threshold):
 class NonRecoverableThreshold(_Threshold):
     def __init__(self, high):
         super().__init__(NONRECOVERABLE_IFACE, high)
+
+    def properties(self):
+        return {"NonRecoverableHigh": Variant("d", self.high),
+                "NonRecoverableLow": Variant("d", math.nan),
+                "NonRecoverableAlarmHigh": Variant("b", self.alarm),
+                "NonRecoverableAlarmLow": Variant("b", False)}
 
     @dbus_property(access=PropertyAccess.READ)
     def NonRecoverableHigh(self) -> "d":
@@ -223,6 +245,37 @@ class Associations(ServiceInterface):
         if assoc != self.assoc:
             self.assoc = assoc
             self.emit_properties_changed({"Associations": assoc})
+
+
+class SensorObjectManager(ServiceInterface):
+    """org.freedesktop.DBus.ObjectManager on /xyz/openbmc_project/sensors.
+
+    bmcweb reads the values of all the sensors of a service with one
+    GetManagedObjects call on that path (the dbus-sensors daemons implement it).
+    Without it the Redfish sensor list, which the web page shows, has no value
+    for these sensors, while IPMI reads the properties one by one and works."""
+
+    def __init__(self):
+        super().__init__("org.freedesktop.DBus.ObjectManager")
+        self.entries = []        # (path, sensor, associations, [threshold objects])
+
+    @method()
+    def GetManagedObjects(self) -> "a{oa{sa{sv}}}":
+        result = {}
+        for path, sensor, assoc, thresholds in self.entries:
+            interfaces = {
+                VALUE_IFACE: {
+                    "Value": Variant("d", sensor.value),
+                    "Unit": Variant("s", UNIT_DEGREES_C),
+                    "MaxValue": Variant("d", 127.0),
+                    "MinValue": Variant("d", -128.0),
+                },
+                ASSOC_IFACE: {"Associations": Variant("a(sss)", assoc.assoc)},
+            }
+            for obj, _, _ in thresholds:
+                interfaces[obj.interface_name] = obj.properties()
+            result[path] = interfaces
+        return result
 
 
 async def call(bus, destination, path, interface, member, signature="", body=None):
@@ -304,12 +357,25 @@ async def read_assoc(bus, service, path):
         return []
 
 
+async def find_board_assoc(bus):
+    """Chassis association of the board inventory item, the same endpoint the
+    other sensors of the board (dbus-sensors) are associated with."""
+    try:
+        body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetSubTreePaths", "sias",
+                          [INVENTORY_ROOT, 0, [BOARD_IFACE]])
+        paths = sorted(body[0], key=lambda p: (p.count("/"), p))
+        if paths:
+            return [("chassis", "all_sensors", paths[0])]
+    except Exception:
+        pass
+    return []
+
+
 async def find_default_assoc(bus):
     """Chassis associations of an ADC sensor of this board.
 
-    The maximum sensors have no source D-Bus sensor to copy the associations
-    from.  The ADC sensors belong to the same board, so their associations make
-    the maximum sensors visible to IPMI and Redfish at all times."""
+    Fallback of find_board_assoc.  The ADC sensors belong to the same board, so
+    their associations make the maximum sensors visible to IPMI and Redfish."""
     try:
         body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetSubTree", "sias",
                           [ADC_ROOT, 0, [ASSOC_IFACE]])
@@ -363,6 +429,11 @@ async def main():
         ]
         for obj, _, _ in thresholds[group]:
             bus.export(path, obj)
+    manager = SensorObjectManager()
+    for group, sensor in sensors.items():
+        manager.entries.append(("%s/%s" % (SENSOR_ROOT, sensor.sensor_name), sensor,
+                                assocs[group], [t[0] for t in thresholds[group]]))
+    bus.export(SENSOR_BASE, manager)
     await bus.request_name(BUS_NAME)
     LOG.info("started, publishing CPU_MAX_TEMP and DIMM_MAX_TEMP")
     sd_notify("READY=1")
@@ -403,7 +474,8 @@ async def main():
                                 real, obj.high)
             if not assocs[group].assoc:
                 if not default_assoc:
-                    default_assoc = await find_default_assoc(bus)
+                    default_assoc = (await find_board_assoc(bus)
+                                     or await find_default_assoc(bus))
                 if default_assoc:
                     assocs[group].update(default_assoc)
         await asyncio.sleep(POLL_SECONDS)

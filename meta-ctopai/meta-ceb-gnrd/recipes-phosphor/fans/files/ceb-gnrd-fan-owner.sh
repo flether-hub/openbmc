@@ -11,6 +11,23 @@ if [ "$#" -ne 2 ]; then
     exit 1
 fi
 
+# PWM file of fan channel N (1..6): pwmN next to the tach inputs (older
+# aspeed-pwm-tacho driver), or pwm1 of the pwm-fan(N-1) device (aspeed-g6-pwm-tach
+# registers its PWMs only as a pwmchip; the DTS adds pwm-fan0..5 for them).
+pwm_file() {
+    if [ -e "$1/pwm$2" ]; then
+        echo "$1/pwm$2"
+        return
+    fi
+    for h in /sys/class/hwmon/hwmon*; do
+        if [ "$(basename "$(readlink -f "$h/device")")" = "pwm-fan$(($2 - 1))" ] &&
+            [ -e "$h/pwm1" ]; then
+            echo "$h/pwm1"
+            return
+        fi
+    done
+}
+
 # Do not switch the CPLD mux until all six BMC PWM and tach channels exist.
 ready=0
 attempt=0
@@ -27,9 +44,9 @@ while [ "$attempt" -lt 60 ]; do
         channels_ready=1
         channel=1
         while [ "$channel" -le 6 ]; do
-            pwm="$hwmon/pwm$channel"
             tach="$hwmon/fan${channel}_input"
-            if [ ! -r "$pwm" ] || [ ! -w "$pwm" ] || [ ! -r "$tach" ]; then
+            pwm=$(pwm_file "$hwmon" "$channel")
+            if [ -z "$pwm" ] || [ ! -r "$pwm" ] || [ ! -w "$pwm" ] || [ ! -r "$tach" ]; then
                 channels_ready=0
                 break
             fi
