@@ -1,0 +1,27 @@
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Mon, 5 Oct 2026 00:00:00 +0000
+Subject: [PATCH] x86-power-control: do not share the Chassis.Buttons bus name
+
+x86-power-control and phosphor-buttons both request the bus name
+xyz.openbmc_project.Chassis.Buttons.  Whichever starts first owns it, and
+when x86-power-control wins phosphor-buttons' objects (the UID button) are
+never reachable, so phosphor-button-handler never sees the UID button and
+the identify LED does not follow it.  Give the buttons exported by
+x86-power-control a name of their own.
+
+Upstream-Status: Inappropriate [board specific: phosphor-buttons is used]
+---
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -117,7 +117,9 @@
+ static std::string hostDbusName = "xyz.openbmc_project.State.Host";
+ static std::string chassisDbusName = "xyz.openbmc_project.State.Chassis";
+ static std::string osDbusName = "xyz.openbmc_project.State.OperatingSystem";
+-static std::string buttonDbusName = "xyz.openbmc_project.Chassis.Buttons";
++// phosphor-buttons owns xyz.openbmc_project.Chassis.Buttons on this board; two
++// daemons cannot share the name, so the buttons exported here get their own.
++static std::string buttonDbusName = "com.ctopai.CebGnrd.PowerControl.Buttons";
+ static std::string nmiDbusName = "xyz.openbmc_project.Control.Host.NMI";
+ static std::string rstCauseDbusName =
+     "xyz.openbmc_project.Control.Host.RestartCause";

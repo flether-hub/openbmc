@@ -1,6 +1,6 @@
 # CEB-GNRD 变更报告（2026-10-05）
 
-最后更新：2026-10-05 13:10 UTC（北京时间 21:10）
+最后更新：2026-10-05 13:30 UTC（北京时间 21:30）
 
 本文件记录每次提交的内容，供 Claude 不可用时由其他 AI 接着做。规则：
 
@@ -122,6 +122,7 @@
 | `d37433c2d8` | `ceb-gnrd-alert-led.py`：入侵状态是完整枚举串，比较最后一段（否则每次启动都误记一条入侵 SEL） | 启动日志没有 "Chassis intrusion detected" |
 | `6e5868b21b` | `ceb-gnrd-alert-led.py`：`mapper_sensors()` 把结果变成元组又要求列表，找不到 sensor，电压告警从不点亮告警灯 | D3V0_BAT0 告警 → 告警灯红 |
 | `44c7124c6a` | UID 按键重启后不亮：`phosphor-button-handler` 只在启动时查一次 UID 按键对象，而 `buttons` 守护进程先占总线名、后导出对象，两者同时启动就竞争，handler 忽略 UID 键（手工重启两个服务后又能亮，和现象一致）。给 handler 加 systemd drop-in，先等 `Buttons/ID` 对象出现（`ceb-gnrd-wait-buttons.sh`，最多 60 s，不阻塞）。**未编译验证** | 重启 BMC 后 `journalctl -u phosphor-button-handler` 应有 "Registering ID button handler"；按 UID 键灯切换 |
+| _(本提交)_ | **UID 按键不亮的真正原因**：`x86-power-control` 和 `phosphor-buttons` 都请求总线名 `xyz.openbmc_project.Chassis.Buttons`，谁先起谁拥有；`x86-power-control` 抢到时 `phosphor-buttons` 的对象（含 `Buttons/ID`）根本不可达，handler 看不到 UID 键（`busctl tree …Chassis.Buttons` 里只有 state/control 对象；`gpioinfo` 里 `BMC_UID_BUTTON_N` 被 "sysfs" 占着；前一个 `44c7124c6a` 的等待脚本因此白等 60 s）。新增 x86-power-control 补丁 `0002-ceb-gnrd-own-bus-name-for-the-exported-buttons.patch`，把它导出的按键换成自己的总线名 `com.ctopai.CebGnrd.PowerControl.Buttons`。**未编译验证**（补丁已对固定版本源码做过 `patch --dry-run`） | 重编重启后 `busctl tree xyz.openbmc_project.Chassis.Buttons` 里有 `Chassis/Buttons/ID`；handler 日志有 "Registering ID button handler"；按 UID 键灯切换 |
 | `bb902c5133` | Entity-Manager ADC 的 `ScaleFactor` 写反了：dbus-sensors 是 `(raw/1000)/ScaleFactor`，即 ScaleFactor 是除数，分压比 10K/1K 应写 1/11（0.090909）、2:1 写 0.5；原来写 11 和 2，读数变成引脚电压再除以 11（12 V 轨显示 0.099 V，3.3 V 轨显示 0.824 V），所有分压通道都报 Critical。已把 11→0.090909、2→0.5。模拟器的 ÷N 分压没有问题。**真板同样受影响；未编译验证** | 设 12.1 V 后网页读 12.1 V；只剩 D3V0_BAT0 告警 |
 | _(本提交)_ | 面板「硬件连接」页下方大片空白：窗口高度改为 760，示意图只占自身高度（行距上限 34）。`ceb-gnrd-fan-owner.sh` 失败时打印缺哪一项（风扇 zone 是否出现、最后缺的是哪个 hwmon/pwm/tach），便于定位 override 线不拉高的原因。注意：脚本装在 `/usr/sbin/ceb-gnrd-fan-owner`，不是 `/usr/libexec/`。**未验证** | 面板下方不再空白；fan-owner 失败日志有 "fan-control zone found: …" 一行 |
 
