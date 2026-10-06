@@ -543,7 +543,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 | CPU 开关机 `BMC_CPU_POWER_BUTTON`（V2）、复位 `BMC_CPU_RESET`（V3） | 低脉冲，由 `x86-power-control` 输出（200 ms / 强制关机 8 s / 复位 500 ms；强制关机脉冲在 `power-config-host0.json` 的 `ForceOffPulseMs`，`bios-update.sh` 里的 `FORCE_OFF_PULSE_S` 要比它大 1 秒） |
 | `BMC_CPU_PWRGD`（V4） | 高有效输入，供状态机判断上电 |
 | 电源按键输入 `BMC_POWER_BUTTON_INPUT`（GPIOM2） | **只检测**：按下时写 SEL 和日志，不触发开关机，也不直通到 CPU 电源按键输出 |
-| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 内核 LED 名 `fault`，由 phosphor-led-manager 的标准组 `enclosure_fault` 驱动（`ceb-gnrd-alert-led` 只负责置位/清除该组的 `Asserted`，每 30 秒重发一次以防 led-manager 重启丢状态）。电压越限点亮，温度到达 UNR（不可恢复上限）点亮；**CPU_MAX_TEMP / DIMM_MAX_TEMP 到达 Upper Critical（98°C / 85°C）也点亮**，阈值告警解除且没有其他故障时熄灭；watchdog 超时、BIOS 启动超时（**600 秒**）锁存点亮，BMC 重启后清除 ⚠️ 没有验证 |
+| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 内核 LED 名 `fault`，由 phosphor-led-manager 的标准组 `enclosure_fault` 驱动（`ceb-gnrd-alert-led` 只负责置位/清除该组的 `Asserted`，每 30 秒重发一次以防 led-manager 重启丢状态）。电压越限点亮，温度到达 UNR（不可恢复上限）点亮；**CPU_MAX_TEMP / DIMM_MAX_TEMP 到达 Upper Critical（98°C / 85°C）也点亮**，阈值告警解除且没有其他故障时熄灭；BIOS 启动超时（**600 秒**）点亮，后续 POST complete 成功后清除；watchdog 超时锁存点亮，BMC 重启后清除 ⚠️ 没有验证 |
 | `BMC_FAN_BMC_OVERRIDE_N`（GPIOI6） | 风扇控制就绪后拉高，BMC 接管风扇；服务停止时拉低交还 CPLD。BMC 复位（看门狗或用户触发）期间 BMC 不能控制风扇，必须交还 CPLD，所以这根脚**不保持**：内核对用户态申请的线都会置位 reset tolerance，`ceb-gnrd-fan-owner` 在占住这根线后用 `devmem` 清掉 `0x1e7800ac` 的 bit6，复位时它回到输入态；清不掉就不接管风扇（留给 CPLD）。正常关机时服务停止，`ceb-gnrd-fan-release` 先把它拉低 ⚠️ 没有在板上验证（复位后这根脚悬空时 CPLD 是否接管风扇要确认） |
 | 复位保持（reset tolerance） | AST2600 的 GPIO 每个引脚有 reset tolerance 位，置位的引脚在看门狗 SoC 复位时保持方向和输出值；用户态（x86-power-control、`gpioset`）申请一根线时内核自动置位。`BMC_CPU_POWER_BUTTON`、`BMC_CPU_RESET`、`BMC_BIOS_FLASH_SELECT` 依赖这个行为，在用户触发的 BMC 复位和看门狗复位中保持状态；`BMC_BIOS_FLASH_SELECT` 只在 BIOS 升级时被改变，其他时间 BMC 不碰它 ⚠️ 没有在板上验证 |
 | `BMC_HBLED_N`（GPIOP7） | eSPI 驱动就绪后启用内核 heartbeat 触发器 |
@@ -612,7 +612,7 @@ ipmitool mc info                               # Manufacturer Name CTOPAI，Prod
 | PHY | U-Boot：`mdio list`；Linux：`dmesg \| grep -i -E "phy\|mdio"`、`ethtool -S eth0`、`iperf3` |
 | PSU | 插 1 个和 2 个模块各验证：`journalctl -u ceb-gnrd-psu-detect`；`ipmitool sdr` 里应有 PSUn_Temp，`ls /sys/class/hwmon/*/temp*_input` 核对 temp2 确实是电源温度 |
 | 电源按键 | `journalctl -u ceb-gnrd-power-button-log -f`；`ipmitool sel list \| tail -3` |
-| 告警灯 | 电压越限、温度到 UNR、CPU_MAX_TEMP / DIMM_MAX_TEMP 到 Upper Critical、watchdog 超时、BIOS 启动超过 600 秒各验证一次（四种共用一个灯，前两种恢复后灭，后两种重启 BMC 才灭）；`busctl get-property xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted` 应随告警翻转，`cat /sys/class/leds/fault/brightness` 对应亮灭 |
+| 告警灯 | 电压越限、温度到 UNR、CPU_MAX_TEMP / DIMM_MAX_TEMP 到 Upper Critical、watchdog 超时、BIOS 启动超过 600 秒各验证一次（共用一个灯，阈值告警恢复后清除，BIOS 超时在后续 POST complete 成功后清除，watchdog 超时重启 BMC 才清除；没有其他故障时熄灭）；`busctl get-property xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted` 应随告警翻转，`cat /sys/class/leds/fault/brightness` 对应亮灭 |
 | 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings`；OEM 命令：`ipmitool raw 0x30 0x01`、`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`（再读一次确认），失败时 `journalctl -u phosphor-ipmi-host` |
 | KCS | BMC：`ls /dev/ipmi-kcs3`、`journalctl -u phosphor-ipmi-kcs@ipmi-kcs3`；主机侧：`ipmitool -I open mc info` |
 | NC-SI | 主机上电后 `ip -br addr show eth1`、`journalctl -t ceb-gnrd-ncsi`（看有没有重试）；主机关机后接口应被关闭 |
@@ -1057,8 +1057,10 @@ should appear after flashing the updated image.
   upper non-recoverable (UNR) alarm go out when the alarm clears. CPU_MAX_TEMP
   and DIMM_MAX_TEMP also light the LED at Upper Critical (98 C / 85 C), clearing
   when below the threshold if no other fault remains; a host watchdog timeout and a BIOS boot failure (`BMC_BIOS_BOOT_OK`
-  not asserted within 600 s of power good) stay latched until the BMC is
-  rebooted. Any of them lights the LED.  The service reads no GPIO itself: the
+  not asserted within 600 s of power good) light the LED. The BIOS boot failure
+  clears when POST completes successfully, including after a host reset; only
+  the host watchdog timeout stays latched until the BMC is rebooted.
+  Any of them lights the LED. The service reads no GPIO itself: the
   host power state comes from `xyz.openbmc_project.State.Chassis`
   `CurrentPowerState` and BIOS boot OK from `OperatingSystemState`
   (`xyz.openbmc_project.State.OperatingSystem`, `/xyz/openbmc_project/state/host0`);

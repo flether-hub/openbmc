@@ -351,8 +351,8 @@ def main():
     watchdog_failed = os.path.exists(WATCHDOG_LATCH)
     # One shared system alert LED. Voltage, temperature upper non-recoverable,
     # and CPU / DIMM Upper Critical alarms follow the sensors. The LED goes out
-    # when all fault sources clear. The watchdog and BIOS
-    # boot failures are latched until the BMC is rebooted.
+    # when all fault sources clear. BIOS boot failure clears on a successful
+    # POST; host watchdog failure remains latched until the BMC is rebooted.
     voltage_alarm = False
     temperature_alarm = False
     led_state = None
@@ -372,9 +372,21 @@ def main():
             if not power_good:
                 boot_deadline = None
             elif boot_ok:
-                # BOOT_OK only suppresses this boot's timeout; it has no
-                # separate LED, SEL, or power-control action.
                 boot_deadline = None
+                # A successful POST proves recovery, including after a host
+                # reset following a timeout. Remove the latch as well so an
+                # alert service restart cannot restore the old fault.
+                if boot_failed:
+                    try:
+                        os.unlink(BOOT_LATCH)
+                    except FileNotFoundError:
+                        boot_failed = False
+                    except OSError as exc:
+                        LOG.warning("Unable to clear BIOS boot timeout latch: %s", exc)
+                    else:
+                        boot_failed = False
+                    if not boot_failed:
+                        LOG.info("BIOS POST complete: boot timeout fault cleared")
             else:
                 # POST_COMPLETE drops on a warm reset while chassis power
                 # stays on. A previous successful boot must not suppress
