@@ -11,6 +11,7 @@ SRC_URI:append = " \
         file://0003-peci-add-Granite-Rapids-CPU-and-DIMM-temperature.patch \
         file://0004-pmbus-ratelimit-optional-device-probe-message.patch \
         file://0005-usb-gadget-hid-classify-endpoint-shutdown.patch \
+        file://0006-ncsi-accept-initial-deselect-response.patch \
         "
 
 # The board device tree is a new file; the dtb is built through KERNEL_DEVICETREE.

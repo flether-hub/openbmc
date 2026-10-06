@@ -1,0 +1,29 @@
+Subject: [PATCH] ncsi: accept discovery deselect replies before package registration
+
+Discovery sends Deselect Package to all package IDs before Select Package
+creates their local objects. A valid successful deselect response therefore
+does not require a registered package during discovery. Keep reporting
+ENODEV for missing packages after discovery has completed.
+
+Upstream-Status: Pending
+
+--- a/net/ncsi/ncsi-rsp.c
++++ b/net/ncsi/ncsi-rsp.c
+@@ -145,8 +145,15 @@
+ 	rsp = (struct ncsi_rsp_pkt *)skb_network_header(nr->rsp);
+ 	ncsi_find_package_and_channel(ndp, rsp->rsp.common.channel,
+ 				      &np, NULL);
+-	if (!np)
+-		return -ENODEV;
++	if (!np) {
++		/* Initial discovery deselects every package before Select Package
++		 * responses have created the package objects. A successful reply
++		 * to that cleanup needs no local channel state update.
++		 */
++		if (!(ndp->flags & NCSI_DEV_PROBED))
++			return 0;
++		return -ENODEV;
++	}
+ 
+ 	/* Change state of all channels attached to the package */
+ 	NCSI_FOR_EACH_CHANNEL(np, nc) {
