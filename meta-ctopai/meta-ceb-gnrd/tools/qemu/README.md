@@ -108,7 +108,54 @@ sh /tmp/diagnose-web.sh bmc > /tmp/web-bmc.txt
 不能证明登录、传感器或所有 Redfish 功能均正常。
 bmcweb.socket 可以由 systemd 持有 443；只看 bmcweb 进程不足以判断可访问性。
 不要在采集日志前先重启。只读脚本不收集密码，不修改服务或网络。
-现有 `ceb-gnrd-check` 包含写风扇、清日志等功能检查，不适合替代故障现场采集。
+`ceb-gnrd-check` 默认只读；仍应先用上面的故障现场采集脚本保存时间线，
+再运行完整检查。完整检查会访问 IPMI、D-Bus、Redfish，可能需要几分钟。
+
+### 固件接口检查
+
+在 BMC 串口运行（参数 `0` 是当前模拟器，`1` 是实机）：
+
+```sh
+ceb-gnrd-check 0
+# 登录密码不是默认值时：
+BMC_PASSWORD='你的密码' ceb-gnrd-check 0
+```
+
+结果分为 `PASS`、`FAIL`、`SKIP`、`INFO`，失败时退出码为 1。
+`SKIP` 表示需要额外操作，不能当成接口通过。检查不再沿用“QEMU 没有
+风扇、PECI、RTC、FRU”的旧假设；按已安装的板级配置检查各路 ADC、温度、
+风扇和已绑定的 PSU，主机关机时跳过仅在开机时有效的读数。
+
+默认保留风扇参数、LED 状态、FRU、日志和主机/BMC 电源状态。
+只有显式设置 `CEB_CHECK_CLEAR_LOGS=1` 才执行事件日志 ClearLog（会删除日志）。
+旧的 `CEB_CHECK_KILL` 和风扇写入演练已取消。
+
+报告为 `/tmp/ceb-gnrd-check/report.txt`，诊断包为
+`/tmp/ceb-gnrd-check.tar.gz`。单个子命令默认 15 秒，传感器列表最多 40 秒；
+单份命令输出最多 256 KiB，报告约 2 MiB，诊断目录约 4 MiB，加上压缩包
+临时占用 `/tmp`，不会把检查报告写到 SPI Flash。密码不写入命令行/报告。
+重复运行覆盖上一份报告；并发运行由 `/run/ceb-gnrd-check.lock` 阻止。
+
+从 Linux 构建机取回报告：
+
+```sh
+scp -P 2222 root@127.0.0.1:/tmp/ceb-gnrd-check.tar.gz .
+```
+
+接口完整验证需要配合面板/浏览器操作：
+
+| 场景 | 操作与判定 |
+|---|---|
+| 虚拟媒体 | 在 BMC Web 挂载镜像并保持会话；再运行检查，验证 NBD 容量、客户端和 UDC 绑定；面板读取容量/首扇区，再弹出确认 gadget 清理 |
+| KVM/HID | Web KVM 输入键盘/鼠标，面板确认收到报告；切换内置 VGA 图，在 Web KVM 确认画面改变 |
+| SOL/eSPI | Web SOL 与面板 SOL 双向发送文本；不能只凭 tty/服务存在判定通信通过 |
+| 传感器/风扇 | 面板改变温度/电压/PSU 状态，观察 IPMI/Redfish/Web 新读数；改变风扇控制后观察 PWM/TACH，最后恢复原参数 |
+| GPIO/机箱 | 面板按 UID/电源/复位按钮，开合机箱，核对灯、主机状态和事件；检查脚本不自动按按钮 |
+| RTL8211/NC-SI | 面板注入链路断开/速度变化、NC-SI 通道切换，核对 carrier 和日志；注入故障时链路检查失败是预期结果 |
+| Power Restore | 三种策略分别在停止/启动 QEMU 的 AC 恢复中验证；软件/watchdog reset 保留原主机状态。脚本收集 power-on/warm 原因和策略日志，不自动复位 |
+| FRU/POST/容量 | 控制写 FRU 后分别重启 BMC/QEMU核对持久化；连续三轮 BIOS 启动后仅保留最新两轮 POST；检查剩余空间和日志预算 |
+
+这些检查仍需要在新固件中实际运行；接口元数据正常不等于所有数据路径已验证。
 
 针对“BMC reboot 后需要先 ping 网关，8443 才能恢复”的现象，可用
 `NETWORK_CAPTURE=1 sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh` 启动。
