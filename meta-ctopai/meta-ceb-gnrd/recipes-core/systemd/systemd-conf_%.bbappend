@@ -1,5 +1,16 @@
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 
+SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-clear-network-mac.sh file://20-ceb-gnrd-boot-mac.conf"
+FILES:${PN}:append:ceb-gnrd = " ${libexecdir}/ceb-gnrd-clear-network-mac.sh ${sysconfdir}/systemd/system/systemd-networkd.service.d/20-ceb-gnrd-boot-mac.conf"
+
+do_install:append:ceb-gnrd() {
+    install -Dm0755 ${UNPACKDIR}/ceb-gnrd-clear-network-mac.sh ${D}${libexecdir}/ceb-gnrd-clear-network-mac.sh
+    install -d ${D}${sysconfdir}/systemd/system/systemd-networkd.service.d
+    sed 's|/usr/libexec/|${libexecdir}/|g' ${UNPACKDIR}/20-ceb-gnrd-boot-mac.conf \
+        > ${D}${sysconfdir}/systemd/system/systemd-networkd.service.d/20-ceb-gnrd-boot-mac.conf
+    chmod 0644 ${D}${sysconfdir}/systemd/system/systemd-networkd.service.d/20-ceb-gnrd-boot-mac.conf
+}
+
 SRC_URI:append:ceb-gnrd = " file://10-ceb-gnrd-eth0.network file://20-ceb-gnrd-eth1-ncsi.network file://40-hardware-watchdog.conf file://50-ceb-gnrd-console.conf"
 FILES:${PN}:append:ceb-gnrd = " ${sysconfdir}/systemd/network/00-bmc-eth0.network ${sysconfdir}/systemd/network/10-bmc-eth1-ncsi.network ${sysconfdir}/systemd/system.conf.d/40-hardware-watchdog.conf ${sysconfdir}/sysctl.d/50-ceb-gnrd-console.conf"
 

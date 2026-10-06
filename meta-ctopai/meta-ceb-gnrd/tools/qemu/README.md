@@ -185,6 +185,19 @@ CEB-GNRD 的 `board_late_init()` 会在环境加载后、网卡初始化前补�
 本次启动仍使用补齐后的地址。此迁移需更新 U-Boot；旧启动程序可在 BMC 串口用
 `fw_setenv` 补齐这两个已确认缺失的变量后重启，不必清空整个环境。
 
+### MAC 地址的持久化来源
+
+CEB-GNRD 使用 U-Boot 的 `ethaddr` / `eth1addr` 配置启动 MAC。
+网络管理服务关闭 `persist-mac` 和 `sync-mac`，不再把当前 MAC 保存到 Linux
+网络配置，也不接受通过网络 D-Bus / Web / Redfish 修改 MAC。需要修改地址时，
+在 U-Boot 或通过 `fw_setenv` 配置环境变量后重启。
+
+`systemd-networkd` 启动前会清理板级 `00-bmc-eth0.network`、
+`00-bmc-eth1.network` 和 `10-bmc-eth1-ncsi.network` 中已有的 `[Link] MACAddress`。
+IP、DHCP、DNS 和静态邻居的 MAC 设置保留。升级保留 RWFS 时也执行此迁移，
+避免旧 Linux 配置覆盖清空 U-Boot 环境后恢复的默认 MAC。
+此规则只消除 Linux 配置覆盖；NC-SI 网卡自身提供的地址仍需单独核对。
+
 ### BMC Web 固件更新的分区选择
 
 在 Firmware 页面选择 BMC 的 `.static.mtd.tar` 分区更新包后，会显示：
