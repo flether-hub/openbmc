@@ -72,7 +72,7 @@ GPIO = "/machine/soc/gpio"
 # BMC outputs
 POWER_OUT = "gpioV2"      # BMC_CPU_POWER_BUTTON, active low
 RESET_OUT = "gpioV3"      # BMC_CPU_RESET, active low
-ALERT_LED = "gpioI5"      # BMC_SYS_ALERT_LED
+ALERT_LED = "gpioI5"      # BMC_SYS_ALERT_LED / Fault LED, active high
 UID_LED = "gpioV1"        # BMC_UID_LED
 FLASH_SEL = "gpioM1"      # BMC_BIOS_FLASH_SELECT, high = BMC owns the BIOS flash
 FAN_OVERRIDE = "gpioI6"   # BMC_FAN_BMC_OVERRIDE_N, high = BMC drives the fans
@@ -100,7 +100,7 @@ TEMPS = {
     "pcie": ("/machine/peripheral/temp-pcie", 40.0),
     "m2": ("/machine/peripheral/temp-m2", 38.0),
 }
-WATCHED = {ALERT_LED: "alert LED", UID_LED: "UID LED",
+WATCHED = {ALERT_LED: "Fault LED (GPIOI5, 1 = on)", UID_LED: "UID LED",
            FLASH_SEL: "BIOS flash select (1 = BMC)",
            FAN_OVERRIDE: "fan override (1 = BMC)"}
 PIN_SIGNALS = {
@@ -109,7 +109,7 @@ PIN_SIGNALS = {
     RESET_OUT: ("GPIOV3 BMC_CPU_RESET", "BMC→主机", True),
     FLASH_SEL: ("GPIOM1 BMC_BIOS_FLASH_SELECT", "BMC→主机", False),
     FAN_OVERRIDE: ("GPIOI6 BMC_FAN_BMC_OVERRIDE_N", "BMC→主机", False),
-    ALERT_LED: ("GPIOI5 BMC_SYS_ALERT_LED", "BMC→主机", False),
+    ALERT_LED: ("GPIOI5 BMC_SYS_ALERT_LED (Fault LED)", "BMC→主机", False),
     UID_LED: ("GPIOV1 BMC_UID_LED", "BMC→主机", False),
     PWRGD: ("GPIOV4 BMC_CPU_PWRGD", "主机→BMC", False),
     BOOT_OK: ("GPIOM7 BMC_BIOS_BOOT_OK", "主机→BMC", False),

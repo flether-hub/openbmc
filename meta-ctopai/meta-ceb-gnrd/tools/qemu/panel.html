@@ -343,7 +343,7 @@ const SIGS = [
   ['BMC_CPU_RESET', 'GPIOV3', 'gpioV3', 'b2h', true, '主机复位（低有效）'],
   ['BMC_BIOS_FLASH_SELECT', 'GPIOM1', 'gpioM1', 'b2h', false, '高 = BMC 占用 BIOS Flash'],
   ['BMC_FAN_BMC_OVERRIDE_N', 'GPIOI6', 'gpioI6', 'b2h', false, '高 = BMC 接管风扇'],
-  ['BMC_SYS_ALERT_LED', 'GPIOI5', 'gpioI5', 'b2h', false, '告警灯'],
+  ['BMC_SYS_ALERT_LED', 'GPIOI5', 'gpioI5', 'b2h', false, 'Fault 故障灯（高电平点亮）'],
   ['BMC_UID_LED', 'GPIOV1', 'gpioV1', 'b2h', false, 'UID 灯'],
   ['BMC_CPU_PWRGD', 'GPIOV4', 'gpioV4', 'h2b', false, '主机电源正常'],
   ['BMC_BIOS_BOOT_OK', 'GPIOM7', 'gpioM7', 'h2b', false, 'BIOS POST 完成'],
@@ -408,7 +408,7 @@ function buildDiagram() {
   h += lbl('gpioV3', '复位');
   h += lbl('gpioM1', 'BIOS Flash');
   h += lbl('gpioI6', '风扇控制');
-  h += lbl('gpioI5', '告警灯');
+  h += lbl('gpioI5', 'Fault 故障灯');
   h += lbl('gpioV1', 'UID 灯');
   h += lbl('gpioV4', '电源 PWRGD');
   h += lbl('gpioM7', 'BIOS BOOT_OK');
@@ -439,7 +439,10 @@ function drawDiagram() {
     const arrow = document.getElementById('arrow_' + key);
     if (arrow) arrow.setAttribute('class', 'wire' + (active ? ' act' : (v ? ' hi' : '')));
     let c = v ? 'var(--on)' : 'var(--off)';
-    if (key === 'gpioI5' && v) c = 'var(--bad)';
+    if (key === 'gpioI5') {
+      if (v) c = 'var(--bad)';
+      setText('hlbl_gpioI5', `Fault 灯：${v == null ? '未知' : v ? '亮' : '灭'}`);
+    }
     if (key === 'gpioV1' && v) c = 'var(--blue)';
     if (active && low) c = 'var(--warn)';
     setFill('ledb_' + key, c);

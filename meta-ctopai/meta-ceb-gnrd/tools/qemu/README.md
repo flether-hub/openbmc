@@ -47,6 +47,9 @@ sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 面板使用 Python 标准库，不需要 Tk 或 Pillow。左侧为操作分页，右侧固定显示
 硬件连接和事件日志。拖动中间分隔线可调整左右比例，浏览器会记住比例；
 双击分隔线恢复默认比例，也可聚焦分隔线后用左右方向键调整。
+信号图中的 Fault 故障灯读取 GPIOI5 / offset 69 / BMC_SYS_ALERT_LED：
+高电平点亮（红色），低电平熄灭；显示当前亮／灭状态，并记录电平变化。
+
 事件日志默认过滤 BMC_HBLED_N 心跳记录，勾选“显示 HB 日志”可查看；
 该开关仅过滤面板显示和复制内容，不影响 GPIO 采样、心跳图示及原始日志。
 
