@@ -410,7 +410,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product part or model number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "81-XXXXX-XX", text);
++					 "81-59380-A0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product version",
 +					 "text, printable ASCII, up to 63 characters, for example V1.0",

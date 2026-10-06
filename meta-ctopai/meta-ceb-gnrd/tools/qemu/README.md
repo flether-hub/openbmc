@@ -36,7 +36,7 @@ FRU EEPROM 使用四个 256 字节地址块（0x50～0x53），每块使用单�
 此配置需要 QEMU 补丁 0025；更新后须重新构建镜像及 native QEMU。
 
 `ipmitool fru gen` 默认 Chassis PN 为 `93-XXXXX-XX`、Board PN 为 `91-59380-A0`、
-Product PN 为 `81-XXXXX-XX`；名称为 CEB-GNR-D、制造商 CTOPAI，序列号默认为
+Product PN 为 `81-59380-A0`；名称为 CEB-GNR-D、制造商 CTOPAI，序列号默认为
 UTC 日期加 0001。交互生成时可以修改各字段。
 FruDevice 写入后会读回物理 EEPROM 并比对；成功日志 `FRU EEPROM write verified`
 包含设备路径、偏移及长度。读回不一致会记录 `write/readback mismatch` 并返回失败。
