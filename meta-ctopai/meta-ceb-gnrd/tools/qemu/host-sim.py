@@ -1166,8 +1166,17 @@ def main():
         video_available = qom(qmp, VIDEO, "signal") is not None
         log("VGA 模型：%s" % ("可用" if video_available else "不存在，请核对 QEMU 版本"))
         last_error = 0
+        capture_active = os.environ.get("NETWORK_CAPTURE") == "1"
+        next_capture_check = 0
         while True:
             try:
+                if capture_active and time.monotonic() >= next_capture_check:
+                    next_capture_check = time.monotonic() + 1
+                    capture = Path(args.state_dir) / "management.pcap"
+                    if capture.exists() and capture.stat().st_size >= 64 * 1024 * 1024:
+                        qmp.execute("object-del", id="ceb-net-capture")
+                        capture_active = False
+                        log("网络抓包达到 64 MiB，已停止抓包；仿真器继续运行")
                 GPIO_MONITOR.observe()
                 host.step()
                 key = (host.state, qmp.resets, SERVICES.video_generation)

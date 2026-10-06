@@ -358,3 +358,26 @@ VGA / USB 页提供“内置图片 1 · BIOS POST”和“内置图片 2 · OS �
 USB 页的“无端口错误”对应空的错误集合，不代表已经收到键盘报告。
 主机关机时模拟 USB 主机不枚举，提示等待上电；键盘输入须在 BMC Web KVM 中发送。
 原始 USB / VGA 寄存器计数放在折叠的诊断详情中，真正的枚举/传输错误仍直接显示并写入 panel.log。
+
+### 日志保留与容量预算
+
+| 内容 | 保留限制 |
+| --- | --- |
+| POST 历史 | 最近 2 轮 BIOS POST，每轮最多 512 条；升级时迁移最新两轮并删除旧档 |
+| Web POST 表格 | Created 默认倒序，同一秒内按 POST 接收顺序倒序 |
+| IPMI SEL 文件 | 15 KiB 轮转，保留当前文件和 1 份历史 |
+| Redfish 事件文件 | 64 KiB 轮转，保留当前文件和 1 份历史 |
+| systemd journal | 持久日志预算 4 MiB；运行时日志预算 8 MiB；最多 7 天 |
+| systemd core dump | 总预算 4 MiB，单份外部文件最多 4 MiB；过大的 core 不保留 |
+| BMC 诊断转储 | 总预算 1 MiB，单份预算 200 KiB |
+| D-Bus 事件条目 | 错误最多 200 条，信息最多 128 条 |
+| 模拟器 panel.log / qemu.log / host.log | 每类当前文件和 .1 各最多 8 MiB（合计最多 48 MiB） |
+| 可选 management.pcap | 默认关闭；达到 64 MiB 后停止抓包，仿真器继续运行 |
+
+SEL/Redfish 每分钟检查一次，突发写入可在检查前超过轮转阈值；
+journal/core 的预算是清理目标，活动文件或正在生成的转储可能短暂超出。
+抓包每秒检查，达到阈值时保留文件，大小可多出该检查间隔内的流量。
+这些限制不会影响固件镜像、BIOS Flash 或 FRU EEPROM 文件。
+
+POST 管理器将板级 SEC 起始码 0x01 识别为新一轮 POST，包括主机电源
+保持开启的 BIOS 热重启。若生产 BIOS 起始码发生变化，需同步更新该判定。

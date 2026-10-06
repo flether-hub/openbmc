@@ -1,5 +1,5 @@
 SUMMARY = "CEB-GNRD SEL rollover through logrotate"
-DESCRIPTION = "Keeps the IPMI SEL (/var/log/ipmi_sel written by rsyslog for phosphor-sel-logger) at about the newest 100 to 200 records: logrotate rotates it by size every 5 minutes and keeps one rotated copy, so the oldest records are deleted."
+DESCRIPTION = "Keeps the IPMI SEL (/var/log/ipmi_sel written by rsyslog for phosphor-sel-logger) at about the newest 100 to 200 records: logrotate rotates it by size every minute and keeps one rotated copy, so the oldest records are deleted."
 LICENSE = "Apache-2.0"
 LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 

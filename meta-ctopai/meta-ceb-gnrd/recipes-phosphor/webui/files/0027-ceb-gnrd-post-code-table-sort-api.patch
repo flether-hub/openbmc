@@ -1,0 +1,42 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] post codes: use current table sorting API
+
+Upstream-Status: Inappropriate [CEB-GNRD board policy]
+
+bootstrap-vue-next 0.40.8 takes sort descriptors with key/order, not
+legacy string keys and sort-desc. Sort Created descending, and provide
+pre-sorted rows so equal-second codes retain their precise backend order.
+
+--- a/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
++++ b/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
+@@ -65,9 +65,8 @@
+           hover
+           must-sort
+           thead-class="table-light"
+-          :sort-desc="[true]"
+           show-empty
+-          :sort-by="['id']"
++          :sort-by="[{ key: 'date', order: 'desc' }]"
+           :fields="fields"
+           :items="filteredLogs"
+           :empty-text="$t('global.table.emptyMessage')"
+@@ -245,6 +244,8 @@
+           key: 'date',
+           label: i18n.global.t('pagePostCodeLogs.table.created'),
+           sortable: true,
++          sortCompare: (a, b) =>
++            a.date.getTime() - b.date.getTime() || a.id - b.id,
+         },
+         {
+           key: 'timeStampOffset',
+--- a/src/store/modules/Logs/PostCodeLogsStore.js
++++ b/src/store/modules/Logs/PostCodeLogsStore.js
+@@ -43,7 +43,7 @@
+           newestFirst.forEach((log, position) => {
+             log.id = newestFirst.length - position;
+           });
+-          commit('setAllPostCodes', postCodeLogs);
++          commit('setAllPostCodes', newestFirst);
+         })
+         .catch((error) => {
+           console.log('POST Codes Log Data:', error);

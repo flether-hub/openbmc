@@ -148,7 +148,7 @@ if [ -n "$BOARD_QEMU" ]; then
     else
         echo "note: QEMU lacks patch 0018; rebuild for eSPI/USB/CHASI# testing" >&2
     fi
-    BOARD="$BOARD -trace bmc_host_sim_state -D $STATE/host.log"
+    BOARD="$BOARD -trace bmc_host_sim_state -D $STATE/host-log.pipe"
     BOARD="$BOARD -device nct3018y,bus=aspeed.i2c.bus.9,address=0x6f,id=rtc"
     BOARD="$BOARD -global driver=aspeed.peci,property=cpuid,value=$PECI_CPUID"
     ch=0
@@ -175,12 +175,30 @@ else
 fi
 
 # Control panel: waits for QEMU's QMP socket, stops when QEMU stops
+# FIFO readers own and rotate the output files; QEMU never holds a renamed log.
+LOG_PIDS=
+for name in host panel qemu; do
+    fifo="$STATE/$name-log.pipe"
+    rm -f "$fifo"
+    mkfifo "$fifo" || exit 1
+    python3 "$TOOLS/log-sink.py" "$STATE/$name.log" < "$fifo" &
+    LOG_PIDS="$LOG_PIDS $!"
+done
 PANEL_PID=
 cleanup_panel() {
     if [ -n "$PANEL_PID" ]; then
         kill "$PANEL_PID" 2>/dev/null || :
         wait "$PANEL_PID" 2>/dev/null || :
     fi
+    # Writers have stopped; give sinks a short interval to drain queued bytes
+    # before terminating any reader
+    # that was never connected (for example no host trace model).
+    sleep 0.2
+    for pid in $LOG_PIDS; do
+        kill "$pid" 2>/dev/null || :
+        wait "$pid" 2>/dev/null || :
+    done
+    rm -f "$STATE/host-log.pipe" "$STATE/panel-log.pipe" "$STATE/qemu-log.pipe"
 }
 trap cleanup_panel EXIT
 trap 'exit 130' INT
@@ -189,12 +207,12 @@ trap 'exit 129' HUP
 if [ -z "$NO_PANEL" ]; then
     python3 "$TOOLS/host-sim.py" --web --port "$PANEL_PORT" \
         --state-dir "$STATE" \
-        --qmp "$QMP" --uart "$UART_SOCK" > "$STATE/panel.log" 2>&1 &
+        --qmp "$QMP" --uart "$UART_SOCK" > "$STATE/panel-log.pipe" 2>&1 &
     echo "Control panel: http://localhost:$PANEL_PORT (log $STATE/panel.log)"
 else
     # Keep host USB, COM1 and VGA behaviour running without a visible panel.
     python3 "$TOOLS/host-sim.py" --headless --qmp "$QMP" --uart "$UART_SOCK" \
-        --state-dir "$STATE" > "$STATE/panel.log" 2>&1 &
+        --state-dir "$STATE" > "$STATE/panel-log.pipe" 2>&1 &
 fi
 PANEL_PID=$!
 echo "QEMU component diagnostics: $STATE/qemu.log (BMC UART remains on this terminal)"
@@ -228,6 +246,6 @@ fi
   $PSU \
   $FRU \
   $PCIE \
-  $BOARD $CAPTURE_ARGS 2>> "$STATE/qemu.log"
+  $BOARD $CAPTURE_ARGS 2> "$STATE/qemu-log.pipe"
 QEMU_STATUS=$?
 exit "$QEMU_STATUS"

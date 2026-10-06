@@ -1,0 +1,38 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] post codes: separate CEB-GNRD warm BIOS cycles
+
+Upstream-Status: Inappropriate [CEB-GNRD board policy]
+
+The board starts POST at code 01. Archive the preceding sequence before
+starting a new cycle, even when host DC power remains on.
+
+--- a/src/post_code.cpp
++++ b/src/post_code.cpp
+@@ -198,11 +198,27 @@
+ 
+ void PostCode::savePostCodes(postcode_t code)
+ {
++    const auto& primary = std::get<0>(code);
++    // The simulator clears port 80h to zero while the host is off/resetting;
++    // this is idle, not another BIOS boot cycle.
++    if (primary.size() == 1 && primary.front() == 0x00)
++    {
++        return;
++    }
+     if (!timer)
+     {
+         timer = std::make_unique<sdbusplus::Timer>(event.get(), [this]() {
+             serialize(postCodeListPath);
+         });
++    }
++
++    // The CEB-GNRD BIOS/simulator starts a new POST sequence at SEC code 01.
++    // A warm host restart need not transition CurrentHostState to Off.
++    if (primary.size() == 1 && primary.front() == 0x01 &&
++        !postCodes.empty() && std::get<0>(postCodes.rbegin()->second) != primary)
++    {
++        serialize(postCodeListPath);
++        postCodes.clear();
+     }
+ 
+     // steady_clock is a monotonic clock that is guaranteed to never be adjusted
