@@ -4,8 +4,9 @@ Date: Fri, 2 Oct 2026 00:00:00 +0000
 Subject: [PATCH] fru: add an interactive gen command
 
 'ipmitool fru gen [file]' asks, field by field, for the contents of the chassis,
-board and product info areas (each prompt shows the format and a placeholder
-default) and writes the FRU image (default fru.bin).
+board and product info areas (each prompt shows the format and a board
+default) and writes the FRU image (default fru.bin). Serial defaults share
+the generation date in UTC (YYMMDD) and the editable sequence 0001.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 ---
@@ -23,7 +24,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  } /* ipmi_fru_help() */
  
  /* ipmi_fru_read_internal_use -  print internal use are in hex or file
-@@ -4576,6 +4576,492 @@
+@@ -4576,6 +4576,504 @@
  	return 0;
  }
  
@@ -32,6 +33,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +#include <stdio.h>
 +#include <unistd.h>
 +#include <termios.h>
++#include <time.h>
 +
 +/* worst case: product area, 3 + 7 fields of 64 bytes + end marker + padding */
 +#define FRU_GEN_AREA_MAX    512
@@ -330,7 +332,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +}
 +
 +static size_t
-+fru_gen_chassis_area(uint8_t *area)
++fru_gen_chassis_area(uint8_t *area, const char *serial)
 +{
 +	char text[FRU_GEN_FIELD_MAX + 1];
 +	size_t used = 0;
@@ -341,17 +343,17 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	area[used++] = fru_gen_ask_chassis_type();
 +	fru_gen_ask_text("Chassis part number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "51-XXXX-XX", text);
++					 "81-39380-A0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Chassis serial number",
-+					 "text, printable ASCII, up to 63 characters",
-+					 "SN-XXX", text);
++					 "YYMMDD####; UTC date plus editable sequence (default 0001)",
++					 serial, text);
 +	used = fru_gen_add_field(area, used, text);
 +	return fru_gen_end_area(area, used);
 +}
 +
 +static size_t
-+fru_gen_board_area(uint8_t *area)
++fru_gen_board_area(uint8_t *area, const char *serial)
 +{
 +	char text[FRU_GEN_FIELD_MAX + 1];
 +	uint32_t date;
@@ -374,12 +376,12 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +					 "CEB-GNR-D", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board serial number",
-+					 "text, printable ASCII, up to 63 characters",
-+					 "SN-XXX", text);
++					 "YYMMDD####; UTC date plus editable sequence (default 0001)",
++					 serial, text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board part number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "91-XXXX-XX", text);
++					 "81-39380-A0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board FRU file ID",
 +					 "text, printable ASCII, up to 63 characters",
@@ -389,7 +391,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +}
 +
 +static size_t
-+fru_gen_product_area(uint8_t *area)
++fru_gen_product_area(uint8_t *area, const char *serial)
 +{
 +	char text[FRU_GEN_FIELD_MAX + 1];
 +	size_t used = 0;
@@ -408,15 +410,15 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product part or model number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "93-XXXX-XX", text);
++					 "81-39380-A0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product version",
 +					 "text, printable ASCII, up to 63 characters, for example V1.0",
 +					 "v1.0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product serial number",
-+					 "text, printable ASCII, up to 63 characters",
-+					 "SN-XXX", text);
++					 "YYMMDD####; UTC date plus editable sequence (default 0001)",
++					 serial, text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Product asset tag",
 +					 "text, printable ASCII, up to 63 characters",
@@ -464,14 +466,25 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	size_t total;
 +	size_t i;
 +	FILE *fp;
++	char serial[11];
++	time_t now;
++	struct tm *utc;
++
++	/* One date per image: all three areas use the same editable serial. */
++	now = time(NULL);
++	utc = now == (time_t)-1 ? NULL : gmtime(&now);
++	if (utc == NULL || strftime(serial, sizeof(serial), "%y%m%d0001", utc) == 0) {
++		lprintf(LOG_ERR, "Cannot determine UTC date for default FRU serial");
++		return -1;
++	}
 +
 +	printf("Creating FRU image %s.\n"
 +		   "The default of each field is in the input line: edit it with\n"
 +		   "Backspace and type, or press Enter to keep it.\n",
 +		   filename);
-+	clen = fru_gen_chassis_area(chassis);
-+	blen = fru_gen_board_area(board);
-+	plen = fru_gen_product_area(product);
++	clen = fru_gen_chassis_area(chassis, serial);
++	blen = fru_gen_board_area(board, serial);
++	plen = fru_gen_product_area(product, serial);
 +
 +	memset(hdr, 0, sizeof(hdr));
 +	hdr[0] = 0x01;                                  /* format version */
@@ -516,7 +529,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
  int
  ipmi_fru_main(struct ipmi_intf * intf, int argc, char ** argv)
  {
-@@ -4801,6 +5287,13 @@
+@@ -4801,6 +5299,13 @@
  			rc = ipmi_fru_get_multirec(intf, fru_id, argc, argv);
  		}
  	}

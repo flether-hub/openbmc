@@ -1,7 +1,7 @@
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 # 'ipmitool fru gen [file]': interactive generator for a FRU image with chassis,
-# board and product info areas (placeholder defaults, format hints per field).
+# board and product info areas (CEB-GNR-D defaults, format hints per field).
 # The product name shown by "mc info" comes from a built-in table: add CEB-GNR-D.
 SRC_URI:append = " \
     file://0001-ipmitool-fru-add-gen-command.patch \
