@@ -38,9 +38,9 @@ THRESHOLD_INTERFACES = (
     # private interface of ceb-gnrd-temp-max (upper non-recoverable temperature)
     "com.ctopai.CebGnrd.Threshold.NonRecoverable",
 )
-# A temperature only lights the LED when the upper non-recoverable threshold is
-# reached (the private interface of ceb-gnrd-temp-max); warning, critical and low
-# alarms do not.
+# CPU / DIMM maximum temperatures also light the LED at Upper Critical.
+# Other temperatures retain the upper non-recoverable policy.
+TEMPERATURE_CRITICAL_SENSORS = {"CPU_MAX_TEMP", "DIMM_MAX_TEMP"}
 TEMPERATURE_ALARM_PROPERTIES = ("NonRecoverableAlarmHigh",)
 WATCHDOG_MATCH = (
     "type='signal',interface='xyz.openbmc_project.Watchdog',"
@@ -156,7 +156,7 @@ def as_bool(value):
 
 def any_alarm(root, property_filter):
     """True if any sensor under root has an asserted alarm accepted by
-    property_filter(name); None when the state cannot be determined."""
+    property_filter(path, name); None when the state cannot be determined."""
     try:
         sensors = mapper_sensors(root)
         if not sensors:
@@ -168,7 +168,7 @@ def any_alarm(root, property_filter):
                     continue
                 props = property_map(get_all_properties(service, path, interface))
                 for name, value in props.items():
-                    if property_filter(name) and as_bool(value):
+                    if property_filter(path, name) and as_bool(value):
                         return True
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError) as exc:
         LOG.warning("Unable to read threshold alarms under %s: %s", root, exc)
@@ -176,12 +176,15 @@ def any_alarm(root, property_filter):
     return False
 
 
-def voltage_alarm_property(name):
+def voltage_alarm_property(path, name):
     return name.endswith("AlarmHigh") or name.endswith("AlarmLow")
 
 
-def temperature_alarm_property(name):
-    return name in TEMPERATURE_ALARM_PROPERTIES
+def temperature_alarm_property(path, name):
+    return name in TEMPERATURE_ALARM_PROPERTIES or (
+        path.rsplit("/", 1)[-1] in TEMPERATURE_CRITICAL_SENSORS
+        and name == "CriticalAlarmHigh"
+    )
 
 
 def sel_add(message, path, data=(0x00, 0xFF, 0xFF)):
@@ -346,9 +349,9 @@ def main():
     boot_deadline = None
     boot_failed = os.path.exists(BOOT_LATCH)
     watchdog_failed = os.path.exists(WATCHDOG_LATCH)
-    # One shared system alert LED.  A voltage alarm and a temperature upper
-    # non-recoverable alarm follow the sensors: the LED goes out once they are
-    # de-asserted.  The watchdog and BIOS
+    # One shared system alert LED. Voltage, temperature upper non-recoverable,
+    # and CPU / DIMM Upper Critical alarms follow the sensors. The LED goes out
+    # when all fault sources clear. The watchdog and BIOS
     # boot failures are latched until the BMC is rebooted.
     voltage_alarm = False
     temperature_alarm = False
@@ -410,6 +413,8 @@ def main():
             voltage_alarm = voltage_state
         temperature_state = any_alarm(TEMPERATURE_ROOT, temperature_alarm_property)
         if temperature_state is not None:
+            if temperature_state != temperature_alarm:
+                LOG.info("Temperature fault alarm %s", "asserted" if temperature_state else "cleared")
             temperature_alarm = temperature_state
         alert = voltage_alarm or temperature_alarm or boot_failed or watchdog_failed
         # Assert again every LED_REASSERT_SECONDS while alerting: the group is lost
