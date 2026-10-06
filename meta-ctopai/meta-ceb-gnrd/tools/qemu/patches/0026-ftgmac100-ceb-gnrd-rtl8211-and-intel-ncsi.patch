@@ -137,8 +137,8 @@ diff --git a/hw/net/ftgmac100.c b/hw/net/ftgmac100.c
 +        if (reg == 31) { return s->phy_page; }
 +        if (reg >= 16 && s->phy_page) {
 +            if (s->phy_page == 0xa43 && reg == 0x12) {
-+                return ceb_phy_speed(s) == 1000 ? 0x20 :
-+                       ceb_phy_speed(s) == 100 ? 0x10 : 0;
++                return 0x08 | (ceb_phy_speed(s) == 1000 ? 0x20 :
++                              ceb_phy_speed(s) == 100 ? 0x10 : 0);
 +            }
 +            if (s->phy_page == 0xa43 && reg == 0x1d) {
 +                val = s->phy_int ? 0x10 : 0;

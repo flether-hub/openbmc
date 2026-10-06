@@ -114,6 +114,28 @@ def read(path):
         return ''
 
 
+def find_net_phy(interface):
+    net = Path('/sys/class/net', interface)
+    for path in (net / 'phydev', net / 'device/phydev'):
+        if path.exists():
+            return path.resolve()
+    try:
+        handle = (net / 'device/of_node/phy-handle').read_bytes()
+    except OSError:
+        handle = b''
+    for phy in Path('/sys/bus/mdio_bus/devices').glob('*'):
+        attached = phy / 'attached_dev'
+        if attached.exists() and attached.resolve() == net.resolve():
+            return phy
+        for name in ('phandle', 'linux,phandle'):
+            try:
+                if len(handle) == 4 and (phy / 'of_node' / name).read_bytes() == handle:
+                    return phy
+            except OSError:
+                pass
+    return None
+
+
 def prop(service, path, interface, key):
     return run(['busctl', 'get-property', service, path, interface, key])
 
@@ -181,7 +203,7 @@ def system():
         'phosphor-pid-control', 'ceb-gnrd-fan-settings',
         'ceb-gnrd-fan-owner', 'ceb-gnrd-temp-max', 'ceb-gnrd-alert-led', 'ceb-gnrd-rtc-sync',
         'ceb-gnrd-ncsi', 'ceb-gnrd-boot-progress', 'ceb-gnrd-psu-detect', 'xyz.openbmc_project.Logging.IPMI',
-        'rsyslog', 'phosphor-led-manager', 'xyz.openbmc_project.LED.GroupManager',
+        'rsyslog', 'phosphor-ledcontroller', 'xyz.openbmc_project.LED.GroupManager',
         'xyz.openbmc_project.intrusionsensor', 'ceb-gnrd-sel-logrotate.timer'):
         unit(name)
     rc, state = prop('xyz.openbmc_project.State.BMC', '/xyz/openbmc_project/state/bmc0',
@@ -323,6 +345,17 @@ def ipmi_sensors_fans():
          '[ -f "$f" ] && echo "$f=$(cat "$f")"; done; done'])
     if HOST == 'on':
         require('PECI devices enumerated', bool(list(Path('/sys/bus/peci/devices').glob('*-*'))))
+        for prefix in ('peci_cputemp', 'peci_dimmtemp'):
+            inputs = [p for h in hwmons if read(h / 'name').startswith(prefix)
+                      for p in h.glob('temp*_input')]
+            readable = []
+            for path in inputs:
+                value = read(path)
+                record(f'{path}={value}')
+                if re.fullmatch(r'-?\d+', value):
+                    readable.append(path)
+            require(prefix + ' live temperature source', bool(readable),
+                    'aggregate CPU/DIMM values can be failsafe defaults; require a readable PECI source')
     else:
         result('SKIP', 'PECI live enumeration', 'host off/unknown')
 
@@ -358,8 +391,11 @@ def peripherals_network():
     require('vHub UDCs available', len(udcs) >= 2, f'count={len(udcs)}')
     hid = Path('/sys/kernel/config/usb_gadget/obmc_hid')
     require('HID gadget configured', hid.is_dir() and bool(list((hid / 'functions').glob('hid.*'))))
-    if HOST == 'on':
-        require('HID gadget bound to UDC', bool(read(hid / 'UDC')))
+    hid_udc = read(hid / 'UDC')
+    if hid_udc:
+        require('HID gadget bound to available UDC', Path('/sys/class/udc', hid_udc).exists(), hid_udc)
+    else:
+        result('SKIP', 'HID gadget binding', 'HID binds during an active KVM session; open KVM to check input end-to-end')
     for g in Path('/sys/kernel/config/usb_gadget').glob('*'):
         record(f'gadget={g.name} UDC={read(g / "UDC")}')
     record('UDC state: ' + ', '.join(f'{u.name}={read(u / "state")}' for u in udcs))
@@ -382,11 +418,14 @@ def peripherals_network():
          '[ -f "$f" ] && echo "$f=$(cat "$f")"; done; done'], 'usb-nbd.log')
     info('network addresses', ['ip', '-br', 'addr'], 'network.log')
     check('eth0 IPv4', ['ip', '-4', '-o', 'addr', 'show', 'eth0'], r'inet \d')
-    require('RTL8211 PHY attached', Path('/sys/class/net/eth0/phydev').exists())
-    require('RTL8211FS PHY identity', read('/sys/class/net/eth0/phydev/phy_id').lower() == '0x001cc916')
+    phy = find_net_phy('eth0')
+    require('RTL8211 PHY attached', phy is not None, str(phy or 'no PHY associated with eth0 found'))
+    require('RTL8211FS PHY identity', phy is not None and read(phy / 'phy_id').lower() == '0x001cc916',
+            read(phy / 'phy_id') if phy else 'unavailable')
     require('eth0 carrier', read('/sys/class/net/eth0/carrier') == '1')
     info('RTL8211 PHY registers/identity', ['sh', '-c',
-         'cat /sys/class/net/eth0/phydev/phy_id /sys/class/net/eth0/phydev/uevent; '
+         'for p in /sys/bus/mdio_bus/devices/*; do echo "$p"; cat "$p/phy_id" "$p/uevent"; '
+         'readlink -f "$p/attached_dev"; done; '
          'cat /sys/class/net/eth0/speed /sys/class/net/eth0/duplex'])
     require('NC-SI eth1 exists', Path('/sys/class/net/eth1').exists())
     if HOST == 'on':
