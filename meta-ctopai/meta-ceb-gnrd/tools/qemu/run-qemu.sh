@@ -169,6 +169,17 @@ else
 fi
 
 # Control panel: waits for QEMU's QMP socket, stops when QEMU stops
+PANEL_PID=
+cleanup_panel() {
+    if [ -n "$PANEL_PID" ]; then
+        kill "$PANEL_PID" 2>/dev/null || :
+        wait "$PANEL_PID" 2>/dev/null || :
+    fi
+}
+trap cleanup_panel EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 if [ -z "$NO_PANEL" ]; then
     python3 "$TOOLS/host-sim.py" --web --port "$PANEL_PORT" \
         --state-dir "$STATE" \
@@ -179,6 +190,7 @@ else
     python3 "$TOOLS/host-sim.py" --headless --qmp "$QMP" --uart "$UART_SOCK" \
         --state-dir "$STATE" > "$STATE/panel.log" 2>&1 &
 fi
+PANEL_PID=$!
 echo "QEMU component diagnostics: $STATE/qemu.log (BMC UART remains on this terminal)"
 
 # Optional capture of the existing management NIC; no generated ping or ARP.
@@ -193,7 +205,7 @@ fi
 # Serial ports: the first is UART5 (BMC debug console, this terminal), then
 # UART1, UART2, UART3.
 # shellcheck disable=SC2086
-exec "$QEMU" -M ast2600-evb -m 1G -nographic -monitor none \
+"$QEMU" -M ast2600-evb -m 1G -nographic -monitor none \
   -qmp "unix:$QMP,server=on,wait=off" \
   $VUART \
   -serial stdio -serial null -serial null -serial "$UART3" \
@@ -211,3 +223,5 @@ exec "$QEMU" -M ast2600-evb -m 1G -nographic -monitor none \
   $FRU \
   $PCIE \
   $BOARD $CAPTURE_ARGS 2>> "$STATE/qemu.log"
+QEMU_STATUS=$?
+exit "$QEMU_STATUS"

@@ -165,7 +165,11 @@ class Qmp:
         self.execute("qmp_capabilities")
 
     def _read(self):
-        line = self.file.readline()
+        try:
+            line = self.file.readline()
+        except OSError as exc:
+            print("QMP connection lost; stopping panel: %s" % exc, flush=True)
+            os._exit(1)
         if not line:
             print("QEMU closed the QMP connection", flush=True)
             os._exit(0)
@@ -176,8 +180,14 @@ class Qmp:
             msg = {"execute": command}
             if arguments:
                 msg["arguments"] = arguments
-            self.file.write(json.dumps(msg).encode() + b"\n")
-            self.file.flush()
+            try:
+                self.file.write(json.dumps(msg).encode() + b"\n")
+                self.file.flush()
+            except OSError as exc:
+                # All worker and HTTP threads belong to this QEMU connection.
+                # Do not leave an HTTP listener serving a dead emulator.
+                print("QMP connection lost; stopping panel: %s" % exc, flush=True)
+                os._exit(1)
             while True:
                 reply = self._read()
                 if "return" in reply:
