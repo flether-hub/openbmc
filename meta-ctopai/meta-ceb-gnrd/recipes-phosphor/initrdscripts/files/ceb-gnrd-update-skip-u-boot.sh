@@ -38,9 +38,15 @@ then
 			case "$selected" in
 			*" $partition "*) echoerr "Duplicate BMC partition: $partition"; exit 1 ;;
 			esac
-			if test ! -s "${image}${partition}" || test -L "${image}${partition}"
+			if test ! -f "${image}${partition}" || test -L "${image}${partition}"
 			then
 				echoerr "Missing staged BMC partition: $partition"
+				exit 1
+			fi
+			# An empty JFFS2 rwfs is valid and is skipped by the generic updater.
+			if test "$partition" != rwfs && test ! -s "${image}${partition}"
+			then
+				echoerr "Empty staged BMC partition: $partition"
 				exit 1
 			fi
 			selected="$selected$partition "

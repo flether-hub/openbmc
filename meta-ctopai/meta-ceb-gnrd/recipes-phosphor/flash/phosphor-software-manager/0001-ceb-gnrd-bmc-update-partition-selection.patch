@@ -15,7 +15,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +#include <string>
  #include <system_error>
  
-@@ -52,17 +57,209 @@
+@@ -52,17 +57,225 @@
      fs::path toPath(PATH_INITRAMFS);
  
 -    for (const auto& bmcImage : parent.imageUpdateList)
@@ -47,7 +47,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +        fs::remove(toPath / "update-u-boot", ec);
 +        return ok && !ec;
 +    };
-+    const auto fail = [&]() {
++    const auto fail = [&](const std::string& reason) {
          std::error_code ec;
 -        fs::copy_file(uploadDir / versionId / optionalImaage,
 -                      toPath / optionalImaage,
@@ -58,8 +58,8 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +        {
 +            fs::remove(toPath / "ceb-gnrd-update-incomplete", ec);
 +        }
-+        error("BMC update {ID}: partition staging failed; no flash writes scheduled",
-+              "ID", versionId);
++        error("BMC update {ID}: partition staging failed: {REASON}; no flash writes scheduled",
++              "ID", versionId, "REASON", reason);
 +        Activation::activation(sdbusplus::server::xyz::openbmc_project::software::
 +                                   Activation::Activations::Failed);
 +    };
@@ -72,14 +72,14 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +        if (ec || !fs::is_regular_file(status) ||
 +            fs::file_size(selectionFile, ec) > 128 || ec)
 +        {
-+            fail();
++            fail("invalid partition selection file");
 +            return;
 +        }
 +        std::ifstream input(selectionFile);
 +        std::string line;
 +        if (!std::getline(input, line) || line != "version=1")
 +        {
-+            fail();
++            fail("invalid partition plan version");
 +            return;
 +        }
 +        selected.clear();
@@ -88,20 +88,20 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +            if (std::find(partitions.begin(), partitions.end(), line) ==
 +                    partitions.end() || !selected.insert(line).second)
 +            {
-+                fail();
++                fail("unknown or duplicate partition in plan");
 +                return;
 +            }
 +        }
 +        if (!input.eof() || !selected.contains("kernel") ||
 +            !selected.contains("rofs"))
 +        {
-+            fail();
++            fail("incomplete partition plan");
 +            return;
 +        }
 +    }
 +    else if (ec && ec != std::errc::no_such_file_or_directory)
 +    {
-+        fail();
++        fail("cannot inspect partition plan");
 +        return;
 +    }
 +    // A full-flash package would overwrite unselected partitions and settings.
@@ -109,14 +109,14 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +    if (fs::exists(source / "image-bmc", ec) || ec)
 +    {
 +        error("BMC update requires a partitioned .static.mtd.tar package");
-+        fail();
++        fail("full-flash image present or cannot inspect it");
 +        return;
 +    }
 +    ec.clear();
 +    fs::remove_all(staging, ec);
 +    if (ec || !fs::create_directory(staging, ec) || ec)
 +    {
-+        fail();
++        fail("cannot create staging directory");
 +        return;
 +    }
 +    // If the updater dies during publication, shutdown must not flash a
@@ -127,7 +127,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +        incomplete.close();
 +        if (!incomplete)
 +        {
-+            fail();
++            fail("cannot write incomplete marker");
 +            return;
 +        }
 +    }
@@ -145,7 +145,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +            output.close();
 +            if (!output)
 +            {
-+                fail();
++                fail("cannot stage U-Boot environment reset");
 +                return;
 +            }
 +        }
@@ -159,16 +159,32 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +                partition == "rwfs" ? 10 * 1024 * 1024 : 896 * 1024;
 +            if (ec || !fs::is_regular_file(fileStatus))
 +            {
-+                fail();
++                fail("invalid partition image " + file.string() + ": " + ec.message());
 +                return;
 +            }
 +            const auto size = fs::file_size(file, ec);
-+            if (ec || size == 0 || size > limit ||
-+                !fs::copy_file(file, dest, fs::copy_options::none, ec) || ec)
++            if (ec || (size == 0 && partition != "rwfs") || size > limit)
 +            {
-+                fail();
++                fail("invalid image size for " + file.string() +
++                     ": bytes=" + std::to_string(size) +
++                     " limit=" + std::to_string(limit) + ": " + ec.message());
 +                return;
 +            }
++            // Yocto's empty JFFS2 overlay is a zero-byte image. The generic
++            // initramfs updater skips it, preserving the existing rwfs.
++            if (partition == "rwfs" && size == 0)
++            {
++                info("BMC update {ID}: empty rwfs image; preserving existing rwfs",
++                     "ID", versionId);
++            }
++            if (!fs::copy_file(file, dest, fs::copy_options::none, ec) || ec)
++            {
++                fail("cannot copy " + file.string() + " to " + dest.string() +
++                     ": " + ec.message());
++                return;
++            }
++            info("BMC update {ID}: staged {PARTITION}, bytes={SIZE}",
++                 "ID", versionId, "PARTITION", partition, "SIZE", size);
 +        }
 +        info("BMC update {ID}: selected partition {PARTITION}",
 +             "ID", versionId, "PARTITION", partition);
@@ -183,13 +199,13 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +        plan.close();
 +        if (!plan)
 +        {
-+            fail();
++            fail("cannot write partition plan");
 +            return;
 +        }
 +    }
 +    if (!clearPublished())
 +    {
-+        fail();
++        fail("cannot clear previously staged images");
 +        return;
 +    }
 +    for (const auto& partition : selected)
@@ -199,7 +215,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +                   toPath / ("image-" + partition), ec);
 +        if (ec)
 +        {
-+            fail();
++            fail("cannot publish partition image");
 +            return;
 +        }
 +    }
@@ -212,7 +228,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +        marker.close();
 +        if (!marker)
 +        {
-+            fail();
++            fail("cannot write U-Boot opt-in marker");
 +            return;
 +        }
 +    }
@@ -220,7 +236,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +    fs::rename(staging / "bmc-partitions.txt", toPath / "bmc-partitions.txt", ec);
 +    if (ec)
 +    {
-+        fail();
++        fail("cannot publish partition plan");
 +        return;
 +    }
 +    fs::remove(staging, ec);
@@ -228,7 +244,7 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +    fs::remove(toPath / "ceb-gnrd-update-incomplete", ec);
 +    if (ec)
 +    {
-+        fail();
++        fail("cannot remove incomplete marker");
 +        return;
 +    }
 +    info("BMC update {ID}: partitions staged, U-Boot={BOOT}, environment reset={ENV}",
