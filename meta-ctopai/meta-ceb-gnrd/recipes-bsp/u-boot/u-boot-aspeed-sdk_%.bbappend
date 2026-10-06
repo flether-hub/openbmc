@@ -5,6 +5,7 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 # tree and the environment header are new files, installed below.
 SRC_URI:append:ceb-gnrd = " \
 	file://0001-ceb-gnrd-board-device-tree-network-and-environment.patch \
+	file://0002-ceb-gnrd-pass-boot-reset-cause-to-linux.patch \
 	file://ast2600-ceb-gnrd.dts \
 	file://ceb-gnrd-env.h \
 	"

@@ -209,6 +209,32 @@ QMP 对象包括 /machine/soc/espi、/machine/soc/usb-vhub、
 
 ## 日志与核对状态
 
+### AC 恢复与 BMC 重启
+
+0024 补丁为 AST2600 提供 SCU074/078 复位事件日志：新建 QEMU 进程表示
+AC 上电，产生 POR；同一进程内的 BMC 软件重启、watchdog 和 QMP reset
+均为 warm reset。watchdog 记录对应编号和模式；事件日志支持 W1C 清除，
+未清除的标志在 warm reset 后保留。
+
+板级 U-Boot 在清除日志前保存原值，通过内核设备树 `/chosen` 传递
+`aspeed,reset-log`、`aspeed,reset-log3` 和 `aspeed,boot-reason`。
+只有确认 POR 且没有其他复位来源才使用 `power-on`；其他来源为 `warm`，
+没有有效原因则为 `unknown`。不会用持久化环境变量或清洁关机标记推断 AC。
+
+Always Off、Restore、Always On 都只在 `power-on` 时应用。BMC warm reset
+不重新执行策略，主机已有状态保持；同一内核启动中每个主机只消费一次 AC
+事件，电源服务重启也不能重复执行。原因缺失或无法创建消费标记时跳过策略。
+因此必须同时更新 U-Boot、BMC 固件和 QEMU；仅升级 rootfs 或继续使用旧
+U-Boot 会显示 unknown，AC 恢复策略也会跳过。源码修改尚待 Linux 构建与运行验证。
+
+串口查看原因与策略日志：
+
+```sh
+tr -d '\000' </sys/firmware/devicetree/base/chosen/aspeed,boot-reason
+echo
+journalctl -b --no-pager | grep -E 'AC boot|Skipping power restore|Invoking Power Restore'
+```
+
 - panel.log：主机辅助线程及操作日志。
 - host.log：QEMU 原生主机电源/POST 状态 trace。
 - qemu.log：QEMU 组件 stderr；BMC UART 留在启动终端。

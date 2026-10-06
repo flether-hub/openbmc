@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Tue, 6 Oct 2026 00:00:00 +0000
+Subject: [PATCH] power-control: apply restore policies only on AC boot
+
+Gate all three policies on the bootloader-provided power-on reason.
+Warm/watchdog/unknown boots leave the observed host state untouched.
+Consume the event once per host and kernel boot, including when the host
+is already on, so daemon restarts cannot reapply an AlwaysOn policy.
+
+Upstream-Status: Inappropriate [CEB-GNRD reset and AC restore integration]
+---
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -16,6 +16,10 @@
+ #include "power_control.hpp"
+ 
+ #include <sys/sysinfo.h>
++#include <sys/stat.h>
++
++#include <cerrno>
++#include <cstring>
+ #include <systemd/sd-journal.h>
+ 
+ #include <boost/asio/io_context.hpp>
+@@ -2714,6 +2718,41 @@
+ }
+ } // namespace power_control
+ 
++// The board bootloader snapshots SCU reset flags before clearing them.
++// Never infer AC restoration from daemon startup or the host's power state.
++static bool consumeACRestoreBoot(const std::string& host)
++{
++    std::ifstream input("/sys/firmware/devicetree/base/chosen/aspeed,boot-reason",
++                        std::ios::binary);
++    std::string reason;
++    if (!input || !std::getline(input, reason, '\0') || reason != "power-on")
++    {
++        lg2::info("Skipping power restore: BMC boot reason {REASON}", "REASON",
++                  reason.empty() ? "unknown" : reason);
++        return false;
++    }
++
++    // /run is cleared at each kernel boot, but survives a daemon restart.
++    // Claim the AC event even if the host is already on at initialization.
++    const std::string marker = "/run/ceb-gnrd-power-restore-host" + host;
++    if (::mkdir(marker.c_str(), 0700) != 0)
++    {
++        const int error = errno;
++        if (error == EEXIST)
++        {
++            lg2::info("Skipping power restore: AC boot already consumed");
++        }
++        else
++        {
++            lg2::error("Cannot claim AC power restore boot: {ERROR}", "ERROR",
++                       std::strerror(error));
++        }
++        return false;
++    }
++    lg2::info("AC boot confirmed; evaluating power restore policy once");
++    return true;
++}
++
+ int main(int argc, char* argv[])
+ {
+     using namespace power_control;
+@@ -3019,8 +3058,9 @@
+             powerState = PowerState::on;
+         }
+     }
+-    // Check if we need to start the Power Restore policy
+-    if (powerState != PowerState::on)
++    // All restore policies apply only to a newly observed AC boot.
++    const bool acRestoreBoot = consumeACRestoreBoot(node);
++    if (acRestoreBoot && powerState != PowerState::on)
+     {
+         powerRestore.run();
+     }

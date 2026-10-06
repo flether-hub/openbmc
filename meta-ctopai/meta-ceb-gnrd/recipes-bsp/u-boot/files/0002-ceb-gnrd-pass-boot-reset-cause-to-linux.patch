@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CEB-GNRD board layer <bmc@localhost>
+Date: Tue, 6 Oct 2026 00:00:00 +0000
+Subject: [PATCH] aspeed: pass the original reset cause to Linux
+
+Snapshot SCU074/078 before U-Boot clears their W1C flags and hand the
+snapshot and classified boot reason to Linux in /chosen. Do not save
+the reason in the persistent environment, where it could become stale.
+
+Upstream-Status: Inappropriate [CEB-GNRD reset and AC restore integration]
+---
+diff --git a/arch/arm/mach-aspeed/ast2600/scu_info.c b/arch/arm/mach-aspeed/ast2600/scu_info.c
+--- a/arch/arm/mach-aspeed/ast2600/scu_info.c
++++ b/arch/arm/mach-aspeed/ast2600/scu_info.c
+@@ -8,6 +8,9 @@
+ #include <errno.h>
+ #include <asm/io.h>
+ #include <asm/arch/aspeed_scu_info.h>
++#include <asm/global_data.h>
++
++DECLARE_GLOBAL_DATA_PTR;
+ 
+ /* SoC mapping Table */
+ #define SOC_ID(str, rev) { .name = str, .rev_id = rev, }
+@@ -213,10 +216,21 @@
+ 	} \
+ 	(void)(x)
+ 
++/* Global data survives relocation; ordinary BSS does not. */
++void aspeed_get_boot_reset_log(u32 *reset, u32 *reset3)
++{
++	*reset = gd->arch.boot_reset_log[0];
++	*reset3 = gd->arch.boot_reset_log[1];
++}
++
+ void aspeed_print_sysrst_info(void)
+ {
+ 	u32 rest = readl(ASPEED_SYS_RESET_CTRL);
+ 	u32 rest3 = readl(ASPEED_SYS_RESET_CTRL3);
++
++	/* Preserve the flags before the existing diagnostic clears them. */
++	gd->arch.boot_reset_log[0] = rest;
++	gd->arch.boot_reset_log[1] = rest3;
+ 
+ 	if (rest & SYS_PWR_RESET_FLAG) {
+ 		printf("RST: Power On \n");
+diff --git a/arch/arm/include/asm/global_data.h b/arch/arm/include/asm/global_data.h
+--- a/arch/arm/include/asm/global_data.h
++++ b/arch/arm/include/asm/global_data.h
+@@ -9,6 +9,9 @@
+ 
+ /* Architecture-specific global data */
+ struct arch_global_data {
++#ifdef CONFIG_ASPEED_AST2600
++	u32 boot_reset_log[2];
++#endif
+ #if defined(CONFIG_FSL_ESDHC)
+ 	u32 sdhc_clk;
+ #endif
+diff --git a/arch/arm/include/asm/arch-aspeed/aspeed_scu_info.h b/arch/arm/include/asm/arch-aspeed/aspeed_scu_info.h
+--- a/arch/arm/include/asm/arch-aspeed/aspeed_scu_info.h
++++ b/arch/arm/include/asm/arch-aspeed/aspeed_scu_info.h
+@@ -10,6 +10,7 @@
+ void aspeed_print_soc_id(void);
+ void aspeed_print_security_info(void);
+ void aspeed_print_sysrst_info(void);
++void aspeed_get_boot_reset_log(u32 *reset, u32 *reset3);
+ void aspeed_print_dram_initializer(void);
+ void aspeed_print_2nd_wdt_mode(void);
+ void aspeed_print_spi_strap_mode(void);
+diff --git a/board/aspeed/evb_ast2600/evb_ast2600.c b/board/aspeed/evb_ast2600/evb_ast2600.c
+--- a/board/aspeed/evb_ast2600/evb_ast2600.c
++++ b/board/aspeed/evb_ast2600/evb_ast2600.c
+@@ -4,6 +4,8 @@
+  */
+ #include <common.h>
+ #include <asm/io.h>
++#include <asm/arch/aspeed_scu_info.h>
++#include <fdt_support.h>
+ 
+ #define SCU_BASE	0x1e6e2000
+ #define ESPI_BASE	0x1e6ee000
+@@ -131,3 +133,33 @@
+ 	espi_init();
+ 	return 0;
+ }
++
++#if defined(CONFIG_OF_BOARD_SETUP) && !defined(CONFIG_SPL_BUILD)
++int ft_board_setup(void *blob, bd_t *bd)
++{
++	u32 reset, reset3;
++	int chosen, ret;
++	const char *reason = "unknown";
++
++	aspeed_get_boot_reset_log(&reset, &reset3);
++	/* POR must be present without any warm-reset source. Unknown fails closed. */
++	if ((reset & BIT(0)) && !(reset & 0xffff007e) && !(reset3 & 0xffff))
++		reason = "power-on";
++	else if ((reset & 0xffff007e) || (reset3 & 0xffff))
++		reason = "warm";
++
++	chosen = fdt_path_offset(blob, "/chosen");
++	if (chosen < 0)
++		return chosen;
++	ret = fdt_setprop_u32(blob, chosen, "aspeed,reset-log", reset);
++	if (ret)
++		return ret;
++	ret = fdt_setprop_u32(blob, chosen, "aspeed,reset-log3", reset3);
++	if (ret)
++		return ret;
++	ret = fdt_setprop_string(blob, chosen, "aspeed,boot-reason", reason);
++	printf("BMC boot reason: %s (SCU074=%08x SCU078=%08x)\n",
++	       reason, reset, reset3);
++	return ret;
++}
++#endif
+diff --git a/configs/ast2600_openbmc_spl_defconfig b/configs/ast2600_openbmc_spl_defconfig
+--- a/configs/ast2600_openbmc_spl_defconfig
++++ b/configs/ast2600_openbmc_spl_defconfig
+@@ -35,6 +35,7 @@
+ CONFIG_DISPLAY_BOARDINFO_LATE=y
+ CONFIG_ARCH_EARLY_INIT_R=y
+ CONFIG_BOARD_EARLY_INIT_F=y
++CONFIG_OF_BOARD_SETUP=y
+ CONFIG_SPL_BOARD_INIT=y
+ # CONFIG_SPL_LEGACY_IMAGE_SUPPORT is not set
+ CONFIG_SPL_SYS_MALLOC_SIMPLE=y

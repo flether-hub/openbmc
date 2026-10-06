@@ -32,4 +32,5 @@ SRC_URI += " \
     file://0021-aspeed-fix-video-detection-and-usb-ep0-handshakes.patch \
     file://0022-aspeed-remove-unrealized-legacy-vuart.patch \
     file://0023-bmc-host-sim-add-board-reset-button.patch \
+    file://0024-aspeed-preserve-power-on-and-watchdog-reset-causes.patch \
     "
