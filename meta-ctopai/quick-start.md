@@ -161,6 +161,7 @@ qemu-system-arm -M ast2600-evb -m 1G -nographic -monitor none \
 ```
 
 * 串口控制台就是调试口 UART5（`ttyS4`），日志直接显示在当前终端；退出 QEMU：先按 `Ctrl-A`，再按 `X`。
+* `ttyS4` 的登录提示等待 `multi-user.target` 和 `obmc-led-group-start@bmc_booted.service` 启动任务结束后显示。服务任务失败也不会禁止登录；不等待所有服务健康。启动任务卡住可能延迟登录，登录后后台日志仍可能输出。该实例移除了 `Before=getty.target` 并关闭隐式目标排序，显式保留系统初始化和关机依赖，避免启动顺序循环。
 * 想后台运行可放进 `tmux`：`Ctrl-B` 再按 `D` 暂离，`tmux attach` 回来。
 * 把命令保存成脚本更方便：`~/run-bmc.sh`。
 
