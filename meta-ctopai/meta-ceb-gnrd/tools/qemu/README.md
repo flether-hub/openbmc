@@ -16,19 +16,20 @@ KVM 服务和虚拟媒体挂载仍由 BMC 固件处理。
 # 在 OpenBMC 构建环境中：构建固件和对应 native QEMU。
 bitbake obmc-phosphor-image
 
-# 或单独重建带本目录所有补丁的 QEMU。
-sh meta-ctopai/meta-ceb-gnrd/tools/qemu/build-qemu.sh
-
 # 启动镜像。
 sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 ```
 
-补丁目标为项目固定的 QEMU 11.0.2。独立构建安装到
-`~/qemu-ceb-gnrd/qemu/bin/qemu-system-arm`。启动脚本优先读取镜像
-qemuboot.conf 中的 native QEMU，找不到时使用独立构建版本，再回退 PATH。
-因此完成 `bitbake obmc-phosphor-image` 后直接运行 `./run-qemu.sh` 即可，
-无需再执行独立 QEMU 构建，也无需手动设置 QEMU 路径。
-可以用 `QEMU=/absolute/path/qemu-system-arm` 明确指定；启动时会打印选用的程序。
+补丁目标为项目固定的 QEMU 11.0.2。启动脚本固定使用镜像 qemuboot.conf
+中 `staging_bindir_native` 指向的 BitBake native QEMU；配置或程序缺失会报错退出。
+不会使用独立安装目录、PATH 中的 QEMU 或环境变量 `QEMU`。
+完成 `bitbake obmc-phosphor-image` 后直接运行 `./run-qemu.sh` 即可。
+
+旧的独立构建安装目录为 `~/qemu-ceb-gnrd/qemu`，源码和构建目录为
+`~/qemu-ceb-gnrd/src`（构建输出在 `src/build`）。停止模拟器后可以删除这两个目录。
+请保留 `~/qemu-ceb-gnrd` 本身，其余文件包括 FRU、日志和面板上传图片仍供模拟器使用。
+`build-qemu.sh` 保留为独立构建工具，不用于本启动脚本。
+
 只有旧补丁的 QEMU 会提示缺少 0018，不能用于新增 eSPI/USB/CHASI# 检查。
 
 | 环境变量 | 默认值 / 用途 |

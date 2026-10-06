@@ -13,7 +13,7 @@
 #   I2C1-6  (Linux i2c-0..5) 0x50     one 256-byte EEPROM per PCIe slot bus
 #   QMP     control socket used by the panel (host power, buttons, sensors)
 #
-# With the ceb-gnrd QEMU (built with OpenBMC, or by build-qemu.sh) also:
+# With the ceb-gnrd QEMU built by BitBake also:
 #   host    the host power sequence (power button, reset, PWRGD, BIOS boot OK,
 #           POST codes on port 80h, the CPU on PECI) runs inside QEMU
 #           (bmc-host-sim, state changes in ~/qemu-ceb-gnrd/host.log)
@@ -31,8 +31,7 @@
 # Usage:  run-qemu.sh
 # Environment: DEPLOY (image directory), STATE (directory for the FRU EEPROM files
 # and the sockets, default ~/qemu-ceb-gnrd), BIOS_FLASH (default ~/qemu-bios.bin),
-# QEMU (default: native QEMU found through the image qemuboot.conf; else
-# $STATE/qemu/bin/qemu-system-arm from build-qemu.sh; else PATH),
+# QEMU is always selected from the image qemuboot.conf (BitBake native build).
 # PANEL_PORT (default 8800), NO_PANEL=1 (headless host I/O),
 # NETWORK_CAPTURE=1 (Ethernet packets in $STATE/management.pcap),
 # PECI_CPU (gnrd by default, spr for the previous Sapphire Rapids model).
@@ -53,15 +52,19 @@ QEMUBOOT=$DEPLOY/obmc-phosphor-image-ceb-gnrd.qemuboot.conf
 QMP=$STATE/qmp.sock
 UART_SOCK=$STATE/host-uart.sock
 
-if [ -z "$QEMU" ] && [ -f "$QEMUBOOT" ]; then
-    # the qemu-system-native that OpenBMC built (with the ceb-gnrd patches)
-    bindir=$(sed -n 's/^staging_bindir_native *= *//p' "$QEMUBOOT" | head -n 1)
-    [ -n "$bindir" ] && [ -x "$bindir/qemu-system-arm" ] && QEMU=$bindir/qemu-system-arm
+# Always use the emulator built with this image, even if QEMU is exported.
+if [ ! -f "$QEMUBOOT" ]; then
+    echo "QEMU configuration not found: $QEMUBOOT" >&2
+    echo "Build the image first: bitbake obmc-phosphor-image" >&2
+    exit 1
 fi
-if [ -z "$QEMU" ] && [ -x "$STATE/qemu/bin/qemu-system-arm" ]; then
-    QEMU=$STATE/qemu/bin/qemu-system-arm
+bindir=$(sed -n 's/^staging_bindir_native *= *//p' "$QEMUBOOT" | head -n 1)
+if [ -z "$bindir" ] || [ ! -x "$bindir/qemu-system-arm" ]; then
+    echo "BitBake QEMU not found: ${bindir:-<missing staging_bindir_native>}/qemu-system-arm" >&2
+    echo "Rebuild the image: bitbake obmc-phosphor-image" >&2
+    exit 1
 fi
-QEMU=${QEMU:-qemu-system-arm}
+QEMU=$bindir/qemu-system-arm
 echo "QEMU: $QEMU"
 
 if [ ! -f "$IMAGE" ]; then
@@ -85,7 +88,7 @@ if echo "$DEVICES" | grep -q bmc-host-sim; then
 else
     BOARD_QEMU=
     echo "note: this QEMU has no ceb-gnrd models (fans read 0 RPM, no VUART, no PECI);" >&2
-    echo "      build OpenBMC again or run build-qemu.sh to get them" >&2
+    echo "      rebuild OpenBMC to get them" >&2
 fi
 
 # FRU EEPROM: the FM24C08 answers at 0x50-0x53, 256 bytes each, 1-byte offsets.
