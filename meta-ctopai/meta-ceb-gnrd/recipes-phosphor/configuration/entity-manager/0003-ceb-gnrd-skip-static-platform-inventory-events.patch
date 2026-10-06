@@ -1,0 +1,40 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] inventory: skip unidentified static CEB-GNRD platform events
+
+Upstream-Status: Inappropriate [CEB-GNRD platform configuration]
+
+CEB-GNRD is an unconditional Board configuration for sensors, without
+Asset Model or SerialNumber. Its discovery is not board installation.
+Suppress only this unidentified platform's add/remove messages; identified
+boards and other devices continue to produce inventory events.
+
+--- a/src/entity_manager/log_device_inventory.cpp
++++ b/src/entity_manager/log_device_inventory.cpp
+@@ -59,6 +59,13 @@
+     }
+ 
+     const InvAddRemoveInfo info = queryInvInfo(record);
++    // The unconditional platform configuration is not a hotplugged board.
++    // It has no FRU Asset fields, so reporting it produces Unknown/Unknown.
++    if (info.name == "CEB-GNRD" && info.type == "Board" &&
++        info.model == "Unknown" && info.sn == "Unknown")
++    {
++        return;
++    }
+ 
+     sd_journal_send(
+         "MESSAGE=Inventory Added: %s", info.name.c_str(), "PRIORITY=%i",
+@@ -70,6 +77,13 @@
+ void logDeviceRemoved(const nlohmann::json& record)
+ {
+     const InvAddRemoveInfo info = queryInvInfo(record);
++    // The unconditional platform configuration is not a hotplugged board.
++    // It has no FRU Asset fields, so reporting it produces Unknown/Unknown.
++    if (info.name == "CEB-GNRD" && info.type == "Board" &&
++        info.model == "Unknown" && info.sn == "Unknown")
++    {
++        return;
++    }
+ 
+     sd_journal_send(
+         "MESSAGE=Inventory Removed: %s", info.name.c_str(), "PRIORITY=%i",

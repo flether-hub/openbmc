@@ -5,6 +5,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://ceb-gnrd.json \
     file://0001-ceb-gnrd-fru-device-allow-eeprom-sized-write.patch \
     file://0002-ceb-gnrd-verify-fru-eeprom-write.patch \
+    file://0003-ceb-gnrd-skip-static-platform-inventory-events.patch \
     "
 
 do_install:append:ceb-gnrd() {
