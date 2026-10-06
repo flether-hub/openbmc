@@ -9,7 +9,8 @@
  * ethernet0 (MAC2/RGMII) and ethernet1 (MAC3/NC-SI). Provision unique MACs
  * per physical board or concurrent simulator instance in the saved
  * environment. A valid saved environment takes precedence over defaults;
- * adding these defaults does not migrate an existing saved environment.
+ * board_late_init fills missing MAC variables in an existing environment and
+ * saves the migration once. Existing nonempty variables are preserved.
  *
  * netupdate: fetch the kernel FIT and the read-only root filesystem from the
  * TFTP server and write them to the SPI flash.  U-Boot itself, its environment
@@ -22,9 +23,12 @@
  * The files are taken from ${serverip}; names are in netupdate_kernel and
  * netupdate_rofs.
  */
+#define CEB_GNRD_DEFAULT_MAC0 "02:26:00:00:00:01"
+#define CEB_GNRD_DEFAULT_MAC1 "02:26:00:00:00:02"
+
 #define CEB_GNRD_ENV	\
-	"ethaddr=02:26:00:00:00:01\0"	\
-	"eth1addr=02:26:00:00:00:02\0"	\
+	"ethaddr=" CEB_GNRD_DEFAULT_MAC0 "\0"	\
+	"eth1addr=" CEB_GNRD_DEFAULT_MAC1 "\0"	\
 	"netupdate_kernel=image-kernel\0"	\
 	"netupdate_rofs=image-rofs\0"	\
 	"netupdate="	\

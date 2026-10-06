@@ -1,0 +1,57 @@
+Subject: [PATCH] ceb-gnrd: migrate missing MAC defaults before NIC probe
+
+Upstream-Status: Inappropriate [CEB-GNRD environment migration]
+
+--- a/board/aspeed/evb_ast2600/evb_ast2600.c
++++ b/board/aspeed/evb_ast2600/evb_ast2600.c
+@@ -3,6 +3,7 @@
+  * Copyright (C) ASPEED Technology Inc.
+  */
+ #include <common.h>
++#include <environment.h>
+ #include <asm/io.h>
+ 
+ #define SCU_BASE	0x1e6e2000
+@@ -131,3 +132,42 @@
+ 	espi_init();
+ 	return 0;
+ }
++
++#if defined(CEB_GNRD_ENV) && !defined(CONFIG_SPL_BUILD)
++/* A valid saved environment replaces the whole compiled default environment.
++ * Migrate only missing MAC variables before eth_initialize() probes the NICs.
++ * Keep provisioned addresses and every other environment variable unchanged.
++ */
++int board_late_init(void)
++{
++	static const struct {
++		const char *name;
++		const char *address;
++	} defaults[] = {
++		{ "ethaddr", CEB_GNRD_DEFAULT_MAC0 },
++		{ "eth1addr", CEB_GNRD_DEFAULT_MAC1 },
++	};
++	bool changed = false;
++	bool save_ok = true;
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(defaults); ++i) {
++		const char *value = env_get(defaults[i].name);
++
++		if (value && *value)
++			continue;
++		if (env_set(defaults[i].name, defaults[i].address)) {
++			printf("CEB-GNRD: cannot set missing %s\n", defaults[i].name);
++			save_ok = false;
++			continue;
++		}
++		changed = true;
++		printf("CEB-GNRD: filled missing %s=%s\n",
++		       defaults[i].name, defaults[i].address);
++	}
++	if (changed && save_ok && env_save())
++		printf("CEB-GNRD: MAC defaults active, but environment save failed\n");
++
++	return 0;
++}
++#endif
