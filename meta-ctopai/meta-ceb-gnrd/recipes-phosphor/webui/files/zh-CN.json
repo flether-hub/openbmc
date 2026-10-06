@@ -422,6 +422,7 @@
       "stageBmcWaitReboot": "镜像已就绪，等待 BMC 重启",
       "stageBmcRebooting": "BMC 正在写入新固件并重启，恢复后页面会自动刷新",
       "stageBmcBack": "BMC 已恢复，正在刷新页面",
+      "bmcBack": "BMC 更新重启已完成，请核对当前运行固件版本。",
       "remaining": "预计还需 {time}",
       "biosDone": "BIOS 升级完成，服务器已开机。",
       "failedAt": "固件升级失败，失败的步骤：{stage}"

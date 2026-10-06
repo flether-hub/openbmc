@@ -206,6 +206,67 @@ BIOS 更新沿用自己的分区选择，不受 BMC 选项影响。
 再通过新页面上传分区包并确认 U-Boot 更新。Power Restore 的复位原因逻辑
 需要新版 U-Boot；只更新 kernel/rofs 不会升级旧 U-Boot。
 本功能尚未进行 Linux 构建和模拟器/实板刷写验证。
+
+升级完成检测每 3 秒查询 Redfish 服务根节点。bmcweb 返回
+`X-CEB-GNRD-Boot-ID`，页面比较升级前后的内核启动标识，即使漏掉断线窗口，
+也能发现 BMC 已重启；仅重启 bmcweb 不会被当作 BMC 重启。
+恢复后立即显示 100% 和重启完成通知，通知保留到刷新/重新登录后的固件页面。
+未确认重启时只提示核实状态，不显示绿色成功；无法访问时保留失败/超时提示。
+启动标识证明重启完成，不代替核对当前运行固件版本。
+
+### BMC DDR4 配置（H5AN8G6NDJR-XNC）
+
+硬件为单颗 SK hynix H5AN8G6NDJR-XNC，8 Gbit、512M x16、96-ball FBGA，
+容量为 1 GiB，而不是 8 GiB。Linux 和 U-Boot 板级设备树均明确声明
+`0x80000000 + 0x40000000`；Linux 原来继承 EVB 的 2 GiB 声明，现已修正。
+U-Boot SPL 实际探测容量并扣除硬件 VGA/SSP 保留内存，然后传递可用范围给 Linux。
+
+| 项目 | 板级配置 / 当前源代码值 |
+| --- | --- |
+| 初始化阶段 | U-Boot SPL，`CONFIG_SPL_RAM=y`、`CONFIG_SPL_RAM_DEVICE=y` |
+| 内存芯片 / 通道 | DDR4，单颗 x16，单片选，`CONFIG_ASPEED_DDR4_DUALX8` 关闭 |
+| 数据率 | `CONFIG_ASPEED_DDR4_1600=y`，1600 MT/s；3200 是芯片等级，AST2600 不支持 3200 MT/s |
+| 时钟 | 外部 DDR CK 800 MHz；驱动内部 MPLL 400 MHz，设备树 `clock-frequency=400000000` |
+| MPLL | SCU220=`0x0008405f`、SCU224 配置=`0x0000002f`；驱动另外控制复位/锁定状态位 |
+| 物理容量 / 基址 | 1024 MiB / `0x80000000`；容量探测范围 256/512/1024/2048 MiB |
+| DRAM bank | `CONFIG_NR_DRAM_BANKS=1`（U-Boot 地址区间数量，不是颗粒内部 bank 数） |
+| 读 / 写延迟 | CL/RL=12，CWL/WL=9，AL=0、PL=0 |
+| MR0..MR6 初始化值 | `0x0314`、`0x0501`、`0x0000`、`0x0000`、`0x0000`、`0x0540`、`0x0400`；PHY 训练会调整 Vref 等参数 |
+| 控制器 AC 模板 | `0x040e0307`、`0x0f4711f1`、`0x0e060304`、`0x00001240`；驱动再更新 CL/WL 和容量对应的 tRFC 字段 |
+| tRFC 参数 | DDR4-1600 容量表 `0x467299f1`；1024 MiB 对应字段 `0x99`；PHY 训练 tRFC=`0x0c30` |
+| 刷新 | 正常温度档，tREFI 7.8 us 目标、带余量，MCR0C 周期字段=`0x5f`；不是可在 Web 设置的选项 |
+| PHY ODT / 输出阻抗 | 80 ohm / 34 ohm（上拉和下拉） |
+| DRAM ODT / 输出阻抗 | RTT_NOM=48 ohm、RTT_PARK=48 ohm、RTT_WR 关闭、RON=34 ohm |
+| 写数据眼偏移 | `CONFIG_ASPEED_DDR4_WR_DATA_EYE_TRAINING_RESULT_OFFSET=0x10` |
+| 训练 / 自检 | PHY 自动训练、失败重训；初始化自检开启，`CONFIG_ASPEED_BYPASS_SELFTEST` 关闭 |
+| ECC | 未启用 `aspeed,ecc-enabled`，当前无 inline ECC 预留；x16 不表示一定无法启用 AST2600 inline ECC |
+| SSP 保留 | `CONFIG_ASPEED_SSP_RERV_MEM=0x0` |
+| 硬件 VGA 保留 | 由 SCU500[14:13] strap 决定；0/1 对应 16 MiB、2 对应 32 MiB、3 对应 64 MiB；VGA fuse 禁用时为 0 |
+| 视频引擎 DMA 池 | Linux `video_engine_memory`：64 MiB，16 MiB 对齐，reusable shared-dma-pool |
+| framebuffer DMA 池 | Linux `gfx_memory`：16 MiB，16 MiB 对齐，reusable shared-dma-pool；与硬件 VGA 保留不是同一项 |
+| Linux 内存模型 | ARM32、`CONFIG_VMSPLIT_2G=y`、`CONFIG_HIGHMEM=y`、SMP 两核；Swap 关闭 |
+| U-Boot 分配 / FIT 解压上限 | `CONFIG_SYS_MALLOC_LEN`=32 MiB；`CONFIG_SYS_BOOTM_LEN`=16 MiB；BOOTMAP=256 MiB |
+| U-Boot FIT 加载地址 | `0x83000000` |
+| SPL BSS / 重定位栈 | BSS=`0x90000000`，上限 1 MiB；栈=`0x90300000`；SPL 初始 SRAM 栈=`0x10016000` |
+| QEMU | `-m 1G`；不验证 DDR 电压、时序裕量、PCB 信号完整性或真实 PHY 训练 |
+| 日志占用 | Journal 运行时预算 8 MiB、持久预算 1 MiB；不保存 core 二进制 |
+
+板级 DDR 选项位于 `recipes-bsp/u-boot/files/ceb-gnrd-ddr4.cfg`，沿用当前
+ASPEED 频率和阻抗默认值，并显式固定单颗 x16 与初始化自检。
+驱动来自 U-Boot `2523223163c176efe0e5415c67b3cc227f6b2677`：
+`drivers/ram/aspeed/{Kconfig,sdram_ast2600.c,sdram_phy_ast2600.h}`。
+最终参数以 BitBake 生成的 U-Boot `.config`、启动串口容量输出和训练寄存器为准。
+DDR 初始化变化必须更新 U-Boot/SPL，仅更新 kernel/rofs 不会修改已有启动代码。
+
+供电由电路决定：VDD/VDDQ=1.2 V（1.14..1.26 V），VPP=2.5 V
+（2.375..2.75 V），VREFCA 约 0.6 V；软件不能调整这些固定电源。
+图中 ZQ 240 ohm、VREFCA 的 1K/1K 分压与所给规格相符；阻抗/训练裕量仍需实板确认。
+0..85°C 应按芯片壳温 TCASE 理解，不能用 BMC CPU 温度替代，也不能靠提高刷新率允许超规格使用。
+
+参考：
+[ASPEED AST2600 DDR4-1600 x16 能力](https://www.aspeedtech.com/server_ast2600/)、
+[SK hynix 8Gb DDR4 NDJR Rev.1.4 数据手册（镜像）](https://14469692.s21i.faiusr.com/61/ABUIABA9GAAgnvPMqgYo5Pm33AY.pdf)。
+
 在当前模拟 BMC 中可直接补齐缺失变量，无需重刷整个 Flash：
 
 ```sh

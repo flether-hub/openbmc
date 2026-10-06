@@ -17,6 +17,12 @@
     model = "CEB-GNRD Xeon 6 BMC";
     compatible = "ctopai,ceb-gnrd", "aspeed,ast2600";
 
+    /* One SK hynix H5AN8G6NDJR-XNC, 8 Gbit x16 = 1 GiB.
+     * U-Boot narrows this range to exclude hardware-reserved VGA memory. */
+    memory@80000000 {
+        reg = <0x80000000 0x40000000>;
+    };
+
     aliases {
         ethernet0 = &mac1;
         ethernet1 = &mac2;

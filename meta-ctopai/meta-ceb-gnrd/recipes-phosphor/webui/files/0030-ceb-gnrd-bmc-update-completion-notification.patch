@@ -1,0 +1,229 @@
+Subject: [PATCH] firmware: recognize BMC reboot and retain completion notification
+
+Upstream-Status: Inappropriate [CEB-GNRD update monitoring]
+
+--- a/src/views/Operations/Firmware/FirmwareFormUpdate.vue
++++ b/src/views/Operations/Firmware/FirmwareFormUpdate.vue
+@@ -218,7 +218,7 @@
+ // (reboot, writing kernel/rofs/rwfs to flash, boot), the check interval, how
+ // long to wait for the BMC to go down, and when to give up.
+ const BMC_REBOOT_ESTIMATE_S = 600;
+-const BMC_CHECK_MS = 5000;
++const BMC_CHECK_MS = 3000;
+ const BMC_WAIT_DOWN_S = 180;
+ const BMC_REBOOT_LIMIT_S = 900;
+ // Redfish TaskState values that end a task without success
+@@ -415,6 +415,8 @@
+       },
+       pollTimer: null,
+       pollErrors: 0,
++      pollingTask: false,
++      updateBootId: null,
+       // BMC reboot after a BMC update: { timer, start, seenDown, checking }
+       reboot: null,
+       // set when the page was left: late answers must not start timers
+@@ -481,7 +483,19 @@
+         title: i18n.global.t('pageFirmware.toast.updateStarted'),
+         timestamp: true,
+       });
+-      this.dispatchWorkstationUpload(image);
++      this.updateBootId = null;
++      if (this.filePurpose === 'BMC') {
++        try {
++          const response = await Axios.get('/redfish/v1/', {
++            timeout: 2500,
++            params: { t: Date.now() },
++          });
++          this.updateBootId = response.headers['x-ceb-gnrd-boot-id'] || null;
++        } catch (error) {
++          // Older firmware can still use outage/recovery monitoring.
++        }
++      }
++      if (!this.unmounted) this.dispatchWorkstationUpload(image);
+     },
+     dispatchWorkstationUpload(image) {
+       this.$store
+@@ -503,6 +517,7 @@
+           if (taskUri) {
+             saveResume({
+               phase: 'task',
++              bootId: this.updateBootId,
+               purpose: this.progress.purpose,
+               taskUri,
+             });
+@@ -576,35 +591,44 @@
+       this.pollTimer = null;
+     },
+     async pollTask(taskUri) {
+-      let task;
++      if (this.pollingTask || this.unmounted || !this.pollTimer) return;
++      const timer = this.pollTimer;
++      this.pollingTask = true;
+       try {
+-        ({ data: task } = await api.get(taskUri, { cache: false }));
+-        this.pollErrors = 0;
+-      } catch (error) {
+-        if (this.progress.purpose === 'Host') {
+-          if (++this.pollErrors >= 3) this.finish(false);
+-        } else {
+-          // A BMC update reboots the BMC: from then on nothing answers.
+-          this.stopPolling();
+-          this.startRebootMonitor(true);
++        let task;
++        try {
++          ({ data: task } = await api.get(taskUri, { cache: false, timeout: 4500 }));
++          if (this.unmounted || this.pollTimer !== timer) return;
++          this.pollErrors = 0;
++        } catch (error) {
++          if (this.unmounted || this.pollTimer !== timer) return;
++          if (this.progress.purpose === 'Host') {
++            if (++this.pollErrors >= 3) this.finish(false);
++          } else {
++            // A BMC update reboots the BMC: from then on nothing answers.
++            this.stopPolling();
++            this.startRebootMonitor(true);
++          }
++          return;
+         }
+-        return;
+-      }
+-      const percent = Number(task?.PercentComplete ?? this.progress.percent);
+-      this.progress.percent = Math.max(0, Math.min(100, percent));
+-      this.progress.stage = this.stageOf(this.progress.percent);
+-      if (task?.TaskState === 'Completed') {
+-        if (this.progress.purpose === 'Host') {
+-          this.progress.percent = 100;
+-          this.progress.stage = this.stageOf(100);
+-          this.finish(true);
+-        } else {
+-          // the image is staged; the BMC now reboots and writes it to flash
+-          this.stopPolling();
+-          this.startRebootMonitor(false);
++        const percent = Number(task?.PercentComplete ?? this.progress.percent);
++        this.progress.percent = Math.max(0, Math.min(100, percent));
++        this.progress.stage = this.stageOf(this.progress.percent);
++        if (task?.TaskState === 'Completed') {
++          if (this.progress.purpose === 'Host') {
++            this.progress.percent = 100;
++            this.progress.stage = this.stageOf(100);
++            this.finish(true);
++          } else {
++            // the image is staged; the BMC now reboots and writes it to flash
++            this.stopPolling();
++            this.startRebootMonitor(false);
++          }
++        } else if (TASK_FAILED.includes(task?.TaskState)) {
++          this.finish(false);
+         }
+-      } else if (TASK_FAILED.includes(task?.TaskState)) {
+-        this.finish(false);
++      } finally {
++        this.pollingTask = false;
+       }
+     },
+     stageOf(percent) {
+@@ -627,6 +651,7 @@
+         timer: null,
+         start,
+         seenDown: alreadyDown,
++        bootId: this.updateBootId,
+         checking: false,
+       };
+       saveResume({
+@@ -634,12 +659,14 @@
+         purpose: this.progress.purpose,
+         start,
+         seenDown: alreadyDown,
++        bootId: this.updateBootId,
+       });
+       this.progress.percent = 0;
+       this.progress.stage = alreadyDown
+         ? 'stageBmcRebooting'
+         : 'stageBmcWaitReboot';
+       this.reboot.timer = setInterval(() => this.checkBmc(), BMC_CHECK_MS);
++      this.checkBmc();
+     },
+     stopRebootMonitor() {
+       if (this.reboot?.timer) clearInterval(this.reboot.timer);
+@@ -664,18 +691,20 @@
+       }
+       reboot.checking = true;
+       let up = false;
++      let bootId = null;
+       try {
+         // the service root needs no login; skip the page's own interceptors
+-        await Axios.get('/redfish/v1', {
++        const response = await Axios.get('/redfish/v1/', {
+           timeout: BMC_CHECK_MS - 500,
+           params: { t: Date.now() },
+         });
+-        up = true;
++        up = response.data?.['@odata.id'] === '/redfish/v1';
++        bootId = response.headers['x-ceb-gnrd-boot-id'] || null;
+       } catch (error) {
+         up = false;
+       }
+       reboot.checking = false;
+-      if (!reboot.timer) return;
++      if (this.unmounted || this.reboot !== reboot || !reboot.timer) return;
+       if (!up) {
+         reboot.seenDown = true;
+         saveResume({
+@@ -683,23 +712,31 @@
+           purpose: this.progress.purpose,
+           start: reboot.start,
+           seenDown: true,
++          bootId: reboot.bootId,
+         });
+         this.progress.stage = 'stageBmcRebooting';
+-      } else if (reboot.seenDown) {
++      } else if (
++        (reboot.bootId && bootId && bootId !== reboot.bootId) ||
++        (!reboot.bootId && reboot.seenDown)
++      ) {
+         this.stopRebootMonitor();
+         this.progress.percent = 100;
+         this.progress.remaining = '';
+         this.progress.stage = 'stageBmcBack';
+         this.progress.state = 'done';
+-        clearResume();
++        // Keep the completion notification across the reload/login redirect.
++        saveResume({ phase: 'completed', purpose: 'BMC' });
+         this.endLoader();
+-        setTimeout(() => window.location.reload(), 3000);
++        this.successToast(this.$t('pageFirmware.progress.bmcBack'));
++        setTimeout(() => {
++          if (!this.unmounted) window.location.reload();
++        }, 3000);
+       } else if (elapsed > BMC_WAIT_DOWN_S) {
+         // still answering long after the image was staged: no reboot happened
+         this.stopRebootMonitor();
+         this.progress.percent = 100;
+         this.progress.remaining = '';
+-        this.progress.state = 'done';
++        this.progress.state = 'unverified';
+         clearResume();
+         this.endLoader();
+         this.infoToast(
+@@ -714,6 +751,16 @@
+     // The page was left and opened again while an update is running: show the
+     // progress bar again and continue where the saved state says.
+     resumeUpdate(resume) {
++      this.updateBootId = resume.bootId || null;
++      if (resume.phase === 'completed') {
++        clearResume();
++        this.progress = {
++          visible: true, purpose: 'BMC', percent: 100,
++          stage: 'stageBmcBack', state: 'done', remaining: '',
++        };
++        this.successToast(this.$t('pageFirmware.progress.bmcBack'));
++        return;
++      }
+       this.startLoader();
+       this.progress = {
+         visible: true,
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -1 +1,2 @@
+             "stageBmcBack": "The BMC is back, reloading the page",
++            "bmcBack": "BMC update reboot completed. Verify the running firmware version.",

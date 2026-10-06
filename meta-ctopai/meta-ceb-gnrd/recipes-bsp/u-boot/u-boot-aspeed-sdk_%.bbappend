@@ -8,6 +8,7 @@ SRC_URI:append:ceb-gnrd = " \
 	file://0002-ceb-gnrd-pass-boot-reset-cause-to-linux.patch \
 	file://ast2600-ceb-gnrd.dts \
 	file://ceb-gnrd-env.h \
+	file://ceb-gnrd-ddr4.cfg \
 	"
 
 do_configure:append:ceb-gnrd() {

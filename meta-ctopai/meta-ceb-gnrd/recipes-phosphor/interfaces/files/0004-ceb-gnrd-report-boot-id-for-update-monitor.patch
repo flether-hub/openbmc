@@ -1,0 +1,36 @@
+Subject: [PATCH] service root: report BMC boot ID for update monitoring
+
+Upstream-Status: Inappropriate [CEB-GNRD update monitoring]
+
+--- a/redfish-core/lib/service_root.hpp
++++ b/redfish-core/lib/service_root.hpp
+@@ -18,6 +18,7 @@
+ #include <boost/url/format.hpp>
+ #include <nlohmann/json.hpp>
+ 
++#include <fstream>
+ #include <functional>
+ #include <memory>
+ #include <string>
+@@ -45,6 +46,21 @@
+     asyncResp->res.addHeader(
+         boost::beast::http::field::link,
+         "</redfish/v1/JsonSchemas/ServiceRoot/ServiceRoot.json>; rel=describedby");
++
++    // Allow the update page to detect a reboot even if it missed the outage.
++    // This identifier contains no credentials and survives bmcweb restarts.
++    static const std::string bootId = []() {
++        std::ifstream input("/proc/sys/kernel/random/boot_id");
++        std::string value;
++        std::getline(input, value);
++        return value;
++    }();
++    if (!bootId.empty())
++    {
++        asyncResp->res.addHeader("X-CEB-GNRD-Boot-ID", bootId);
++    }
++    asyncResp->res.addHeader(boost::beast::http::field::cache_control,
++                             "no-store");
+ 
+     std::string uuid = persistent_data::getConfig().systemUuid;
+     asyncResp->res.jsonValue["@odata.type"] =

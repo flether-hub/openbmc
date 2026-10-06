@@ -7,6 +7,11 @@
 	model = "CEB-GNRD AST2600 BMC";
 	compatible = "ctopai,ceb-gnrd", "aspeed,ast2600";
 
+	/* Single 8-Gbit x16 DDR4; actual usable size is detected by SPL. */
+	memory {
+		reg = <0x80000000 0x40000000>;
+	};
+
 	chosen {
 		stdout-path = &uart5;
 	};
@@ -15,6 +20,14 @@
 		ethernet0 = &mac1;
 		ethernet1 = &mac2;
 	};
+};
+
+&sdrammc {
+	/* ASPEED internal MPLL clock; DDR4-1600 has an 800-MHz CK pair.
+	 * The pinned driver programs MPLL from CONFIG_ASPEED_DDR4_1600. */
+	clock-frequency = <400000000>;
+	/delete-property/ aspeed,ecc-enabled;
+	/delete-property/ aspeed,ecc-size-mb;
 };
 
 /* Keep UART5 available from SPL through U-Boot for board bring-up logs. */
