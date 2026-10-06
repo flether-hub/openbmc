@@ -1,0 +1,69 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] event logs: default to newest first with current table API
+
+Upstream-Status: Inappropriate [CEB-GNRD Web UI policy]
+
+Use bootstrap-vue-next sort descriptors instead of ignored legacy sort-desc
+and string keys. Default to Created descending, with numeric entry ID as an
+equal-second tie-breaker. Pre-order mapped rows without mutating Vuex data.
+Bind the sort model so polling/deletion refresh preserves the user's sort.
+
+--- a/src/views/Logs/EventLogs/EventLogs.vue
++++ b/src/views/Logs/EventLogs/EventLogs.vue
+@@ -76,9 +76,8 @@
+           hover
+           must-sort
+           thead-class="table-light"
+-          :sort-desc="[true]"
+           show-empty
+-          :sort-by="['id']"
++          v-model:sort-by="sortBy"
+           :fields="fields"
+           :items="filteredLogs"
+           :empty-text="$t('global.table.emptyMessage')"
+@@ -268,6 +267,20 @@
+ } from '@/components/Mixins/SearchFilterMixin';
+ import i18n from '@/i18n';
+ import { useModal } from 'bootstrap-vue-next';
++
++// Compare timestamps first, then numeric IDs/suffixes for equal-second events.
++function compareEventLogDate(a, b) {
++  const timestamp = (event) => {
++    const value = event.date?.getTime();
++    return Number.isFinite(value) ? value : 0;
++  };
++  return (
++    timestamp(a) - timestamp(b) ||
++    String(a.id ?? '').localeCompare(String(b.id ?? ''), 'en', {
++      numeric: true,
++    })
++  );
++}
+ 
+ export default {
+   components: {
+@@ -311,6 +324,7 @@
+   data() {
+     return {
+       isBusy: true,
++      sortBy: [{ key: 'date', order: 'desc' }],
+       fields: [
+         {
+           key: 'expandRow',
+@@ -336,6 +350,7 @@
+           key: 'date',
+           label: i18n.global.t('pageEventLogs.table.date'),
+           sortable: true,
++          sortCompare: compareEventLogDate,
+           tdClass: 'text-nowrap',
+         },
+         {
+@@ -415,7 +430,7 @@
+                 },
+               ],
+         };
+-      });
++      }).sort((a, b) => compareEventLogDate(b, a));
+     },
+     batchExportData() {
+       return this.selectedRows.map((row) => omit(row, 'actions'));
