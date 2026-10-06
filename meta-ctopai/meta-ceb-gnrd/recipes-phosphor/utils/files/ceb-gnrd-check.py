@@ -344,7 +344,11 @@ def ipmi_sensors_fans():
          'for f in "$h"/in*_label "$h"/power*_label "$h"/temp*_label; do '
          '[ -f "$f" ] && echo "$f=$(cat "$f")"; done; done'])
     if HOST == 'on':
-        require('PECI devices enumerated', bool(list(Path('/sys/bus/peci/devices').glob('*-*'))))
+        cpu_devices = [p for p in Path('/sys/bus/peci/devices').glob('*')
+                       if re.fullmatch(r'\d+-[0-9a-fA-F]{2}', p.name)]
+        require('PECI CPU devices enumerated', bool(cpu_devices), ', '.join(p.name for p in cpu_devices))
+        for path in cpu_devices:
+            require('PECI CPU driver bound ' + path.name, (path / 'driver').exists(), read(path / 'uevent'))
         for prefix in ('peci_cputemp', 'peci_dimmtemp'):
             inputs = [p for h in hwmons if read(h / 'name').startswith(prefix)
                       for p in h.glob('temp*_input')]

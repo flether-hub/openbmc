@@ -42,6 +42,7 @@ import os
 import re
 import socket
 import sys
+import time
 
 from dbus_fast import BusType, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
@@ -77,6 +78,9 @@ TEMP_INPUT_RE = re.compile(r"temp(\d+)_input$")
 EXCLUDE_RE = re.compile(r"dts|tcontrol|tthrottle|tjmax|margin", re.IGNORECASE)
 
 POLL_SECONDS = 2
+PECI_RESCAN_SECONDS = 30
+PECI_DEVICE_ROOT = "/sys/bus/peci/devices"
+PECI_RESCAN = "/sys/bus/peci/rescan"
 
 # Published while the host is on but no temperature can be read: 70 degC, the
 # point where both fan curves give 60 % (keep them in sync with ceb-gnrd.json)
@@ -324,6 +328,24 @@ def read_text(path):
         return None
 
 
+def peci_cpu_present():
+    try:
+        return any(re.fullmatch(r"\d+-[0-9a-fA-F]{2}", name)
+                   for name in os.listdir(PECI_DEVICE_ROOT))
+    except OSError:
+        return False
+
+
+def rescan_peci():
+    """Discover CPUs that did not answer during the controller's boot scan."""
+    try:
+        with open(PECI_RESCAN, "w") as stream:
+            stream.write("1\n")
+        LOG.info("PECI rescan complete; CPU device present=%s", peci_cpu_present())
+    except OSError as exc:
+        LOG.warning("PECI rescan failed: %s", exc)
+
+
 def scan_sources():
     """Return {temp*_input path: (group, "device label")} of the PECI hwmon devices."""
     found = {}
@@ -462,7 +484,20 @@ async def main():
 
     known = None
     default_assoc = []
+    was_on = False
+    last_rescan = -PECI_RESCAN_SECONDS
+    missing_groups = None
     while True:
+        on = await host_is_on(bus)
+        now = time.monotonic()
+        # The kernel's initial scan often runs while the host is off. Retry
+        # discovery while on, but do not continuously scan a healthy bus.
+        if on and (not was_on or
+                   (not await asyncio.to_thread(peci_cpu_present)
+                    and now - last_rescan >= PECI_RESCAN_SECONDS)):
+            last_rescan = now
+            await asyncio.to_thread(rescan_peci)
+        was_on = on
         # sysfs reads are PECI transactions: keep them off the event loop
         sources = await asyncio.to_thread(scan_sources)
         names = {label: group for group, label in sources.values()}
@@ -475,7 +510,16 @@ async def main():
                 LOG.info("  %-4s %s", names[name], name)
         readings = await asyncio.to_thread(read_values, list(sources))
 
-        on = await host_is_on(bus)
+        missing = tuple(group for group in sensors if on and not any(
+            g == group and path in readings and math.isfinite(readings[path])
+            for path, (g, _) in sources.items()))
+        if missing != missing_groups:
+            if missing:
+                LOG.warning("No readable PECI temperature for %s; using %.1f C fan failsafe",
+                            ", ".join(missing), FAILSAFE_TEMP)
+            elif missing_groups:
+                LOG.info("PECI temperature sources recovered or host powered off")
+            missing_groups = missing
         for group, sensor in sensors.items():
             values = [readings[path] for path, (g, _) in sources.items()
                       if g == group and path in readings
