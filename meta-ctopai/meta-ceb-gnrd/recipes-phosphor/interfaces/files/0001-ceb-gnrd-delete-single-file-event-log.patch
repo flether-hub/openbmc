@@ -15,7 +15,7 @@ diff --git a/redfish-core/include/utils/eventlog_utils.hpp b/redfish-core/includ
  
  #include <boost/beast/http/status.hpp>
  #include <boost/url/format.hpp>
-@@ -190,6 +192,91 @@
+@@ -190,6 +192,92 @@
      std::ranges::sort(redfishLogFiles);
  
      return !redfishLogFiles.empty();
@@ -54,7 +54,8 @@ diff --git a/redfish-core/include/utils/eventlog_utils.hpp b/redfish-core/includ
 +            messages::internalError(asyncResp->res);
 +            return;
 +        }
-+        std::unique_ptr<FILE, decltype(&fclose)> stream(raw, &fclose);
++        auto closeFile = [](FILE* file) { static_cast<void>(fclose(file)); };
++        std::unique_ptr<FILE, decltype(closeFile)> stream(raw, closeFile);
 +        while (true)
 +        {
 +            off_t offset = ftello(raw);
@@ -107,7 +108,7 @@ diff --git a/redfish-core/include/utils/eventlog_utils.hpp b/redfish-core/includ
  }
  
  enum class LogParseError
-@@ -360,6 +447,11 @@
+@@ -360,6 +448,11 @@
                  continue;
              }
  
@@ -119,7 +120,7 @@ diff --git a/redfish-core/include/utils/eventlog_utils.hpp b/redfish-core/includ
              nlohmann::json::object_t bmcLogEntry;
              LogParseError status = fillEventLogEntryJson(
                  idStr, logEntry, bmcLogEntry, collectionStr, memberId,
-@@ -440,7 +532,7 @@
+@@ -440,7 +533,7 @@
                  continue;
              }
  

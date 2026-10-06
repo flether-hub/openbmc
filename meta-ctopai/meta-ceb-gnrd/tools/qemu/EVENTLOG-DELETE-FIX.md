@@ -19,3 +19,7 @@
 补丁：recipes-phosphor/interfaces/files/0001-ceb-gnrd-delete-single-file-event-log.patch。
 需要重新构建 bmcweb 和 webui-vue 并更新固件；不是模拟器修改。
 未编译、未运行测试。用户需验证删除、刷新、同秒多记录、分页、重启、轮转和权限。
+
+用户构建发现 fclose 函数指针作为 unique_ptr 模板参数触发
+-Werror=ignored-attributes。已改为 lambda deleter，保留自动 fclose，
+不关闭编译警告。更新补丁应用检查通过；修正后的编译仍由用户执行。

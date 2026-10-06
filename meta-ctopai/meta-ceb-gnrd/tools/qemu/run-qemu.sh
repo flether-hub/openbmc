@@ -1,8 +1,8 @@
 #!/bin/sh
 # Run the ceb-gnrd BMC image in QEMU (ast2600-evb) with the parts of the board
 # that QEMU can emulate attached at their real addresses, and open the control
-# panel (host-sim.py --gui: a window when there is a display, otherwise the web
-# panel on http://localhost:8800):
+# panel (browser panel on http://localhost:8800 by default; PANEL_WEB=0 selects
+# a desktop window when there is a display, otherwise the browser panel):
 #
 #   flash   BMC flash (the built image) on FMC, a 64 MiB BIOS flash on SPI1
 #   network MAC2 = eth0, the RJ45 port (192.168.185.200, port forwards below)
@@ -34,7 +34,8 @@
 # and the sockets, default ~/qemu-ceb-gnrd), BIOS_FLASH (default ~/qemu-bios.bin),
 # QEMU (default: $STATE/qemu/bin/qemu-system-arm from build-qemu.sh; else the
 # native QEMU found through qemuboot.conf; else qemu-system-arm from PATH),
-# PANEL_PORT (default 8800), NO_PANEL=1 (headless host I/O), PANEL_WEB=1 (web GUI),
+# PANEL_PORT (default 8800), NO_PANEL=1 (headless host I/O), PANEL_WEB (default 1;
+# set 0 for the desktop GUI when a display is available),
 # NETWORK_CAPTURE=1 (Ethernet packets in $STATE/management.pcap),
 # PECI_CPU (gnrd by default, spr for the previous Sapphire Rapids model).
 
@@ -44,6 +45,11 @@ DEPLOY=${DEPLOY:-$HOME/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd}
 STATE=${STATE:-$HOME/qemu-ceb-gnrd}
 BIOS_FLASH=${BIOS_FLASH:-$HOME/qemu-bios.bin}
 PANEL_PORT=${PANEL_PORT:-8800}
+case "${PANEL_WEB:-1}" in
+    1) PANEL_WEB=1 ;;
+    0) PANEL_WEB= ;;
+    *) echo "PANEL_WEB must be 1 (browser) or 0 (desktop when available)" >&2; exit 1 ;;
+esac
 case "${PECI_CPU:-gnrd}" in
     gnrd) PECI_CPUID=0x000a06e0 ;;
     spr) PECI_CPUID=0x000806f8 ;;

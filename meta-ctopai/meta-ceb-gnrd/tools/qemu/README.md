@@ -35,7 +35,7 @@ sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 | STATE | ~/qemu-ceb-gnrd；QMP、FRU 文件、运行日志及面板上传的 VGA 图片 |
 | BIOS_FLASH | ~/qemu-bios.bin，64 MiB BIOS 模拟 Flash |
 | PANEL_PORT | 8800，模拟控制面板 HTTP 端口 |
-| PANEL_WEB=1 | 强制使用浏览器控制面板 |
+| PANEL_WEB | 默认 1，使用浏览器控制面板；设为 0 时，有桌面显示环境则使用 Tk GUI |
 | NO_PANEL=1 | 隐藏面板，仍运行主机 COM1、USB、VGA 辅助线程 |
 | NETWORK_CAPTURE=1 | 抓取管理网卡 Ethernet 包到 STATE/management.pcap，贯穿 BMC reboot |
 | PECI_CPU=gnrd / spr | 默认 GNR-D 温度模型；spr 保留上一代 SPR 模型用于比较 |
