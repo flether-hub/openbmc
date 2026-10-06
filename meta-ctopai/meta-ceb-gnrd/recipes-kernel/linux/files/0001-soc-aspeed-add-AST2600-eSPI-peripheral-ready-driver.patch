@@ -8,12 +8,15 @@ slave boot done / status system events after every eSPI reset, so the host
 (Intel PCH) finds the Virtual Wire channel usable. OOB and Flash are not
 initialized.
 
+Initialize and release the Peripheral queues during probe too: when the host
+is already running, Linux may never see the original eSPI reset edge.
+
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
  drivers/soc/aspeed/Kconfig                    |   8 +++
  drivers/soc/aspeed/Makefile                   |   1 +
- drivers/soc/aspeed/aspeed-espi-peripheral.c | 307 ++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 316 insertions(+)
+ drivers/soc/aspeed/aspeed-espi-peripheral.c | 309 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 318 insertions(+)
  create mode 100644 drivers/soc/aspeed/aspeed-espi-peripheral.c
 
 diff --git a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
@@ -46,7 +49,7 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/soc/aspeed/aspeed-espi-peripheral.c
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,309 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * AST2600 eSPI Peripheral and Virtual Wire channel initialization.
@@ -333,6 +336,8 @@ index 000000000000..111111111111
 +		return dev_err_probe(dev, ret, "failed to request IRQ %d\n", irq);
 +
 +	/* Arm reset recovery before allowing the host to use the channel. */
++	/* The host may already be on, so do not depend on a future reset IRQ. */
++	aspeed_espi_peripheral_sw_reset(espi);
 +	aspeed_espi_peripheral_ready(espi);
 +	return 0;
 +}
