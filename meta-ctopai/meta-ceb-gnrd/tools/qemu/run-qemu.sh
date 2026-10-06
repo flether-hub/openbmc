@@ -31,8 +31,8 @@
 # Usage:  run-qemu.sh
 # Environment: DEPLOY (image directory), STATE (directory for the FRU EEPROM files
 # and the sockets, default ~/qemu-ceb-gnrd), BIOS_FLASH (default ~/qemu-bios.bin),
-# QEMU (default: $STATE/qemu/bin/qemu-system-arm from build-qemu.sh; else the
-# native QEMU found through qemuboot.conf; else qemu-system-arm from PATH),
+# QEMU (default: native QEMU found through the image qemuboot.conf; else
+# $STATE/qemu/bin/qemu-system-arm from build-qemu.sh; else PATH),
 # PANEL_PORT (default 8800), NO_PANEL=1 (headless host I/O),
 # NETWORK_CAPTURE=1 (Ethernet packets in $STATE/management.pcap),
 # PECI_CPU (gnrd by default, spr for the previous Sapphire Rapids model).
@@ -53,13 +53,10 @@ QEMUBOOT=$DEPLOY/obmc-phosphor-image-ceb-gnrd.qemuboot.conf
 QMP=$STATE/qmp.sock
 UART_SOCK=$STATE/host-uart.sock
 
-if [ -z "$QEMU" ] && [ -x "$STATE/qemu/bin/qemu-system-arm" ]; then
-    QEMU=$STATE/qemu/bin/qemu-system-arm
-fi
 if [ -z "$QEMU" ] && [ -f "$QEMUBOOT" ]; then
     # the qemu-system-native that OpenBMC built (with the ceb-gnrd patches)
     bindir=$(sed -n 's/^staging_bindir_native *= *//p' "$QEMUBOOT" | head -n 1)
-    [ -x "$bindir/qemu-system-arm" ] && QEMU=$bindir/qemu-system-arm
+    [ -n "$bindir" ] && [ -x "$bindir/qemu-system-arm" ] && QEMU=$bindir/qemu-system-arm
 fi
 if [ -z "$QEMU" ] && [ -x "$STATE/qemu/bin/qemu-system-arm" ]; then
     QEMU=$STATE/qemu/bin/qemu-system-arm

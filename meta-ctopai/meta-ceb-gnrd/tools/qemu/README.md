@@ -24,8 +24,10 @@ sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 ```
 
 补丁目标为项目固定的 QEMU 11.0.2。独立构建安装到
-`~/qemu-ceb-gnrd/qemu/bin/qemu-system-arm`，启动脚本优先选择它，
-其次读取镜像 qemuboot.conf 中的 native QEMU，再回退 PATH。
+`~/qemu-ceb-gnrd/qemu/bin/qemu-system-arm`。启动脚本优先读取镜像
+qemuboot.conf 中的 native QEMU，找不到时使用独立构建版本，再回退 PATH。
+因此完成 `bitbake obmc-phosphor-image` 后直接运行 `./run-qemu.sh` 即可，
+无需再执行独立 QEMU 构建，也无需手动设置 QEMU 路径。
 可以用 `QEMU=/absolute/path/qemu-system-arm` 明确指定；启动时会打印选用的程序。
 只有旧补丁的 QEMU 会提示缺少 0018，不能用于新增 eSPI/USB/CHASI# 检查。
 
