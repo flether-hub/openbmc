@@ -35,14 +35,16 @@ sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 | STATE | ~/qemu-ceb-gnrd；QMP、FRU 文件、运行日志及面板上传的 VGA 图片 |
 | BIOS_FLASH | ~/qemu-bios.bin，64 MiB BIOS 模拟 Flash |
 | PANEL_PORT | 8800，模拟控制面板 HTTP 端口 |
-| PANEL_WEB | 默认 1，使用浏览器控制面板；设为 0 时，有桌面显示环境则使用 Tk GUI |
 | NO_PANEL=1 | 隐藏面板，仍运行主机 COM1、USB、VGA 辅助线程 |
 | NETWORK_CAPTURE=1 | 抓取管理网卡 Ethernet 包到 STATE/management.pcap，贯穿 BMC reboot |
 | PECI_CPU=gnrd / spr | 默认 GNR-D 温度模型；spr 保留上一代 SPR 模型用于比较 |
 
-Tk 面板需要 python3-tk；Tk 内嵌 JPEG 预览可安装 python3-pil.imagetk。
-Web 面板使用 Python 标准库，不需要 Pillow。面板按功能分页，连接图独占页面，
-不再把连接图和全部操作堆在同一竖向页面；小屏幕仍可能需要滚动。
+仅保留 Web 面板，运行脚本后访问 http://127.0.0.1:8800，无需设置 PANEL_WEB。
+面板使用 Python 标准库，不需要 Tk 或 Pillow。左侧为操作分页，右侧固定显示
+硬件连接和事件日志。拖动中间分隔线可调整左右比例，浏览器会记住比例；
+双击分隔线恢复默认比例，也可聚焦分隔线后用左右方向键调整。
+事件日志默认过滤 BMC_HBLED_N 心跳记录，勾选“显示 HB 日志”可查看；
+该开关仅过滤面板显示和复制内容，不影响 GPIO 采样、心跳图示及原始日志。
 
 ## BMC Web 和模拟面板的访问
 

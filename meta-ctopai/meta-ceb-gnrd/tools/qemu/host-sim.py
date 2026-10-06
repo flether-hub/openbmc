@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Simulated host for the ceb-gnrd BMC running in QEMU (run-qemu.sh).
 
---gui opens the control panel (run-qemu.sh starts it): a Tk window
-(panel_tk.py) when there is a display, else a web page (panel.html,
-http://localhost:8800; --web forces it).  It shows a drawing of the signals between the BMC and the host with their
+--web opens the browser control panel (run-qemu.sh starts it), at
+http://localhost:8800. --gui remains a compatibility alias for the web panel.
+It shows a drawing of the signals between the BMC and the host with their
 LEDs and buttons, the fans, PSUs, temperatures, ADC inputs, POST codes and the
-host serial console.  Without --gui it reads the commands below from stdin.
+host serial console. Without --web or --gui it reads commands from stdin.
 
 With the QEMU from build-qemu.sh the host lives inside QEMU (the bmc-host-sim
 device, /machine/peripheral/host) and runs without this script; the script is
@@ -1092,9 +1092,9 @@ def main():
     parser.add_argument("--post", type=float, default=20, help="POST time in s")
     parser.add_argument("--shutdown", type=float, default=10, help="OS shutdown time in s")
     parser.add_argument("--gui", action="store_true",
-                        help="control panel: a window when there is a display, else the web panel")
+                        help="compatibility alias for --web")
     parser.add_argument("--web", action="store_true",
-                        help="with --gui: always the web panel (http://localhost:PORT)")
+                        help="browser control panel (http://localhost:PORT)")
     parser.add_argument("--port", type=int, default=8800, help="control panel port")
     parser.add_argument("--state-dir", default=os.path.expanduser("~/qemu-ceb-gnrd"))
     parser.add_argument("--headless", action="store_true", help="host I/O worker without a panel or stdin")
@@ -1144,7 +1144,7 @@ def main():
         log("USB vHub 模型可用；主机上电后枚举真实 BMC gadget")
     else:
         log("USB vHub 模型不存在：请重建并选择包含 0018/0021 的 QEMU")
-    if args.gui:
+    if args.gui or args.web:
         log("simulated host ready (%s)" % host.state)
     else:
         log("simulated host ready (%s). Type 'help' for commands." % host.state)
@@ -1201,19 +1201,7 @@ def main():
         threading.Event().wait()
         return
 
-    if args.gui:
-        if not args.web and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-            try:
-                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-                import panel_tk
-                window = panel_tk.PanelWindow(
-                    panel, lambda text: run_command(host, qmp, shlex.split(text)), SERVICES)
-            except Exception as exc:      # no Tk (python3-tk) or no display
-                log("no panel window (%s), serving the web panel instead" % exc)
-            else:
-                log("control panel window open")
-                window.mainloop()
-                return
+    if args.gui or args.web:
         serve_panel(panel, args.port, host, qmp)
         return
 

@@ -1,0 +1,102 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Event logs: remove unsupported status columns and avoid empty fields
+
+Keep explicit table fields, deletion and export actions. File-backed logs
+do not provide a writable Resolved property.
+
+diff --git a/src/views/Logs/EventLogs/EventLogs.vue b/src/views/Logs/EventLogs/EventLogs.vue
+--- a/src/views/Logs/EventLogs/EventLogs.vue
++++ b/src/views/Logs/EventLogs/EventLogs.vue
+@@ -175,26 +175,6 @@
+             <p class="mb-0">{{ $filters.formatTime(value) }}</p>
+           </template>
+ 
+-          <!-- Status column -->
+-          <template #cell(status)="row">
+-            <b-form-checkbox
+-              v-model="row.item.status"
+-              name="switch"
+-              switch
+-              @change="changelogStatus(row.item)"
+-            >
+-              <span v-if="row.item.status">
+-                {{ $t('pageEventLogs.resolved') }}
+-              </span>
+-              <span v-else>
+-                {{ $t('pageEventLogs.unresolved') }}
+-              </span>
+-            </b-form-checkbox>
+-          </template>
+-          <template #cell(filterByStatus)="{ value }">
+-            {{ value }}
+-          </template>
+-
+           <!-- Actions column -->
+           <template #cell(actions)="row">
+             <table-row-action
+@@ -361,12 +341,6 @@
+           label: i18n.global.t('pageEventLogs.table.description'),
+           tdClass: 'text-break',
+         },
+-        import.meta.env.VITE_EVENT_LOGS_TOGGLE_BUTTON_DISABLED === 'true'
+-          ? {}
+-          : {
+-              key: 'status',
+-              label: i18n.global.t('pageEventLogs.table.status'),
+-            },
+         {
+           key: 'actions',
+           sortable: false,
+@@ -374,27 +348,13 @@
+           tdClass: 'text-end text-nowrap',
+         },
+       ],
+-      tableFilters:
+-        import.meta.env.VITE_EVENT_LOGS_TOGGLE_BUTTON_DISABLED === 'true'
+-          ? [
+-              {
+-                key: 'severity',
+-                label: i18n.global.t('pageEventLogs.table.severity'),
+-                values: ['OK', 'Warning', 'Critical'],
+-              },
+-            ]
+-          : [
+-              {
+-                key: 'severity',
+-                label: i18n.global.t('pageEventLogs.table.severity'),
+-                values: ['OK', 'Warning', 'Critical'],
+-              },
+-              {
+-                key: 'filterByStatus',
+-                label: i18n.global.t('pageEventLogs.table.status'),
+-                values: ['Resolved', 'Unresolved'],
+-              },
+-            ],
++      tableFilters: [
++        {
++          key: 'severity',
++          label: i18n.global.t('pageEventLogs.table.severity'),
++          values: ['OK', 'Warning', 'Critical'],
++        },
++      ],
+       expandRowLabel,
+       activeFilters: [],
+       batchActions:
+@@ -491,17 +451,6 @@
+           link.download = filename;
+           link.click();
+           URL.revokeObjectURL(link.href);
+-        })
+-        .catch(({ message }) => this.errorToast(message));
+-    },
+-    changelogStatus(row) {
+-      this.$store
+-        .dispatch('eventLog/updateEventLogStatus', {
+-          uri: row.uri,
+-          status: row.status,
+-        })
+-        .then((success) => {
+-          this.successToast(success);
+         })
+         .catch(({ message }) => this.errorToast(message));
+     },

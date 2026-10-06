@@ -67,9 +67,9 @@ svg .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
 svg .wire { stroke: var(--wire); stroke-width: 2; fill: none; }
 svg .wire.hi { stroke: var(--on); }
 svg .wire.act { stroke: var(--warn); stroke-width: 3; }
-svg .lbl { font-size: 12px; }
-svg .pin { font-size: 11px; fill: var(--muted); font-family: var(--mono); }
-svg .title { font-size: 15px; font-weight: 700; }
+svg .lbl { font-size: 14px; }
+svg .pin { font-size: 12px; fill: var(--muted); font-family: var(--mono); }
+svg .title { font-size: 17px; font-weight: 700; }
 svg .click { cursor: pointer; }
 svg .btn { fill: var(--card); stroke: var(--accent); stroke-width: 1.5; }
 svg .click:hover .btn { fill: var(--accent); }
@@ -89,6 +89,9 @@ pre.log { font-family: var(--mono); font-size: 12px; height: 200px; overflow: au
           margin: 0; background: var(--bg); padding: 8px; border-radius: 6px; }
 input.termin { width: 100%; font-family: var(--mono); padding: 6px 8px; margin-top: 6px;
                border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.sol-input { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.sol-input input.termin { flex: 1; min-width: 0; margin: 0; padding: 10px; background: var(--card); }
+#term { cursor: text; }
 .hidden { display: none !important; }
 #err { color: var(--bad); font-size: 13px; }
 body { background: radial-gradient(ellipse at top left, #dceaff55, transparent 55%), var(--bg); }
@@ -124,7 +127,11 @@ main { flex: 1; width: 100%; min-height: 0; align-content: start; overflow: auto
 .card:has(#adc) { max-width: 1100px; width: 100%; justify-self: center; }
 /* Operations stay on the left; GPIO and logs remain visible on the right. */
 body { min-width: 1080px; overflow: hidden; }
-main { max-width: none; overflow: hidden; grid-template-columns: minmax(460px, 44fr) minmax(540px, 56fr); gap: 12px; padding: 12px; align-content: stretch; }
+main { max-width: none; overflow: hidden; grid-template-columns: minmax(0, var(--left-width, 44fr)) 12px minmax(0, 1fr); gap: 0; padding: 12px; align-content: stretch; }
+.column-divider { cursor: col-resize; touch-action: none; position: relative; border: 0; padding: 0; background: transparent; border-radius: 5px; }
+.column-divider::after { content: ''; position: absolute; top: 35%; bottom: 35%; left: 4px; width: 4px; border-radius: 4px; background: var(--line); }
+.column-divider:hover::after, .column-divider:focus-visible::after { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
 .workbench { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .workbench .navigation { padding: 0 0 8px; background: transparent; }
 .workbench .navigation button { padding: 6px 9px; font-size: 12px; }
@@ -154,7 +161,6 @@ main { max-width: none; overflow: hidden; grid-template-columns: minmax(460px, 4
 
 <section class="card wide">
   <h2>BMC 与主机之间的信号 <small>线亮 = 高电平；橙色 = 有效（低有效信号拉低）；点击主机侧按钮操作</small></h2>
-  <div class="summary"><span id="sum-post">POST --</span><span id="sum-espi">eSPI --</span><span id="sum-usb">USB --</span><span id="sum-chassis">CHASI# --</span></div>
   <div class="diagram-scroll"><svg id="diagram" viewBox="0 0 1000 560" width="100%" role="img" aria-label="BMC 与主机信号图"></svg></div>
 </section>
 
@@ -257,13 +263,18 @@ main { max-width: none; overflow: hidden; grid-template-columns: minmax(460px, 4
 </section>
 <section class="card wide">
   <h2>主机串口（SOL） <small>面板扮演主机 COM1：BMC 的 SOL 输入显示在这里，在下框输入的内容由主机发给 BMC</small></h2>
-  <pre class="term" id="term"></pre>
-  <input class="termin" id="termin" placeholder="主机输出：输入文字后回车发送给 BMC（SOL 上可见）">
+  <pre class="term" id="term" tabindex="0" aria-label="串口记录；点击或开始打字以聚焦下方输入框"></pre>
+  <label for="termin" class="caption">主机 → BMC：在下方输入，回车或点击发送（BMC SOL 中可见）</label>
+  <form class="sol-input" id="sol-form">
+    <input class="termin" id="termin" autocomplete="off" placeholder="在这里输入文字…">
+    <button type="submit" id="sol-send" class="primary">发送</button>
+  </form>
+  <p class="caption" id="sol-status" role="status">点击黑色区域也可聚焦输入框；该区域显示串口记录。</p>
 </section>
 
 <section class="card wide">
   <h2>事件日志</h2>
-  <div class="row"><button onclick="copyLog()">复制日志</button><button onclick="clearLog()">清除日志</button><span class="muted" id="log-status">只清除面板记录，保留终端与 BMC 日志。</span></div>
+  <div class="row"><button onclick="copyLog()">复制日志</button><button onclick="clearLog()">清除日志</button><label><input type="checkbox" id="show-hb-log" onchange="drawLog()"> 显示 HB 日志</label><span class="muted" id="log-status">只清除面板记录，保留终端与 BMC 日志。</span></div>
   <pre class="log" id="log"></pre>
 </section>
 
@@ -348,17 +359,21 @@ const BUSES = [
 
 function buildDiagram() {
   const svg = document.getElementById('diagram');
-  const BX = 30, BW = 230, HX = 740, HW = 230;
-  const top = 70, step = 42;
+  const top = 64, step = 34;
   const nSig = SIGS.length, nBus = BUSES.length;
   const bottom = top + (nSig + nBus) * step + 20;
+  const viewport = svg.parentElement;
+  // Match the diagram to its available space instead of centering a narrow image.
+  const width = Math.max(1000, (bottom + 20) * viewport.clientWidth / Math.max(1, viewport.clientHeight));
+  const BX = 10, BW = 190, HW = 230, HX = width - HW - 10;
+  const center = (BX + BW + HX) / 2;
   let h = '';
   h += `<rect class="box" x="${BX}" y="10" width="${BW}" height="${bottom}" rx="10"/>`;
   h += `<text class="title" x="${BX + 14}" y="34">AST2600 BMC</text><text class="pin" x="${BX + 14}" y="54">GPIO / 外设控制器</text>`;
   h += `<rect class="box" x="${HX}" y="10" width="${HW}" height="${bottom}" rx="10"/>`;
   h += `<text class="title" x="${HX + 14}" y="34">GNR-D / CPLD</text><text class="pin" x="${HX + 14}" y="54">主机输入与输出</text>`;
-  h += `<text class="pin" x="500" y="32" text-anchor="middle">灯色 = 当前电平；橙色外圈 = 最近 2 秒有变化</text>`;
-  h += `<text class="pin" x="500" y="52" text-anchor="middle" id="gpio-age"></text>`;
+  h += `<text class="pin" x="${center}" y="32" text-anchor="middle">灯色 = 当前电平；橙色外圈 = 最近 2 秒有变化</text>`;
+  h += `<text class="pin" x="${center}" y="52" text-anchor="middle" id="gpio-age"></text>`;
   SIGS.forEach((s, i) => {
     const y = top + i * step + 14;
     const [name, gpio, key, dir, low, note] = s;
@@ -395,6 +410,7 @@ function buildDiagram() {
   h += lbl('gpioV1', 'UID 灯');
   h += lbl('gpioV4', '电源 PWRGD');
   h += lbl('gpioM7', 'BIOS BOOT_OK');
+  h += lbl('gpioP7', 'BMC 心跳');
   BUSES.forEach((b, j) => {
     const y = top + (nSig + j) * step + 24;
     h += `<line class="wire" id="bus_${b[2]}" x1="${BX + BW}" y1="${y}" x2="${HX}" y2="${y}" stroke-dasharray="6 4"/>`;
@@ -402,7 +418,7 @@ function buildDiagram() {
     h += `<text class="pin" id="bustxt_${b[2]}" x="${(BX + BW + HX) / 2}" y="${y + 13}" text-anchor="middle">${b[1]}</text>`;
     h += `<text class="pin" x="${HX + 14}" y="${y + 4}" id="busval_${b[2]}"></text>`;
   });
-  svg.setAttribute('viewBox', `0 0 1000 ${bottom + 20}`);
+  svg.setAttribute('viewBox', `0 0 ${width} ${bottom + 20}`);
   svg.innerHTML = h;
 }
 
@@ -570,9 +586,14 @@ function drawMisc() {
   document.getElementById('rtccard').classList.toggle('hidden', rb == null);
   document.getElementById('rtcbat').className = 'led ' + (rb ? 'g' : 'r');
   setText('rtcbattxt', rb ? '正常' : '没电');
+  drawLog();
+}
+
+function drawLog() {
   const log = document.getElementById('log');
   const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-  log.textContent = (S.log || []).join('\n');
+  const showHb = document.getElementById('show-hb-log').checked;
+  log.textContent = (S.log || []).filter(line => showHb || !/\bBMC_HBLED_N\b/.test(line)).join('\n');
   if (atEnd) log.scrollTop = log.scrollHeight;
 }
 
@@ -591,10 +612,6 @@ async function poll() {
 function drawHardware() {
   const e = S.espi || {}, c = S.chassis || {}, u = S.usb || {}, v = S.video || {};
   const flag = x => x == null ? '未实现' : (x ? '是' : '否');
-  setText('sum-post', 'POST ' + (S.post == null ? '--' : '0x' + hex(S.post)));
-  setText('sum-espi', 'Peripheral ' + (e['peripheral-ready'] ? 'READY' : '未就绪'));
-  setText('sum-usb', 'USB ' + (u.devices || []).length + ' 个设备');
-  setText('sum-chassis', 'CHASI# ' + (c.open == null ? '未实现' : c.open ? '开盖' : '合盖'));
   document.getElementById('interfaces').innerHTML = [
     'Peripheral 就绪：' + flag(e['peripheral-ready']), 'VW 就绪：' + flag(e['vw-ready']),
     'Boot 就绪：' + flag(e['boot-ready']), 'RESET# 断言：' + flag(e['host-reset']),
@@ -640,12 +657,35 @@ async function pollConsole() {
   } catch (e) {}
 }
 
-document.getElementById('termin').addEventListener('keydown', async e => {
-  if (e.key !== 'Enter') return;
-  const text = e.target.value + '\n';
-  e.target.value = '';
-  await fetch('/api/console', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                               body: JSON.stringify({text})});
+const solInput = document.getElementById('termin');
+const solTerm = document.getElementById('term');
+solTerm.addEventListener('click', () => {
+  if (!window.getSelection().toString()) solInput.focus();
+});
+solTerm.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.key === 'Tab') return;
+  if (e.key.length === 1) { e.preventDefault(); solInput.focus(); solInput.value += e.key; }
+  else if (e.key === 'Enter') { e.preventDefault(); solInput.focus(); }
+});
+solInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.isComposing) e.preventDefault();
+});
+document.getElementById('sol-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const button = document.getElementById('sol-send');
+  if (button.disabled) return;
+  const text = solInput.value;
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/console', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: text + '\n'})});
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    if (solInput.value === text) solInput.value = '';
+    setText('sol-status', '已发送到模拟主机串口输出；可在 BMC SOL 查看。');
+  } catch (error) {
+    setText('sol-status', '发送失败：' + error.message + '（已保留输入内容）');
+  } finally { button.disabled = false; solInput.focus(); }
 });
 
 function buildNavigation() {
@@ -659,7 +699,45 @@ function buildNavigation() {
   const status = document.createElement('aside'); status.className = 'status-column';
   workbench.append(nav, content);
   cards.forEach((card, index) => (index === 0 || index === 12 ? status : content).appendChild(card));
-  document.querySelector('main').replaceChildren(workbench, status);
+  const divider = document.createElement('div'); divider.className = 'column-divider';
+  divider.tabIndex = 0; divider.setAttribute('role', 'separator');
+  divider.setAttribute('aria-orientation', 'vertical'); divider.setAttribute('aria-label', '调整左右栏比例');
+  divider.title = '拖动调整左右栏；方向键微调；双击恢复默认比例';
+  const main = document.querySelector('main');
+  main.replaceChildren(workbench, divider, status);
+  let fraction = 0.44;
+  function resizeColumns(value) {
+    const available = main.clientWidth - 24 - 12;
+    const min = Math.min(320 / available, 0.4), max = 1 - Math.min(400 / available, 0.4);
+    fraction = Math.max(min, Math.min(max, value));
+    main.style.setProperty('--left-width', `${fraction * available}px`);
+    divider.setAttribute('aria-valuemin', Math.round(min * 100));
+    divider.setAttribute('aria-valuemax', Math.round(max * 100));
+    divider.setAttribute('aria-valuenow', Math.round(fraction * 100));
+  }
+  divider.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    divider.setPointerCapture(e.pointerId); document.body.classList.add('resizing');
+  });
+  divider.addEventListener('pointermove', e => {
+    if (!divider.hasPointerCapture(e.pointerId)) return;
+    const rect = main.getBoundingClientRect();
+    resizeColumns((e.clientX - rect.left - 12 - 6) / (main.clientWidth - 36));
+  });
+  const endResize = () => {
+    document.body.classList.remove('resizing');
+    try { localStorage.setItem('ceb-panel-left-fraction', String(fraction)); } catch (_) {}
+  };
+  divider.addEventListener('pointerup', e => { divider.releasePointerCapture(e.pointerId); });
+  divider.addEventListener('lostpointercapture', endResize);
+  divider.addEventListener('keydown', e => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(e.key)) return;
+    e.preventDefault(); resizeColumns(e.key === 'Home' ? 0.44 : fraction + (e.key === 'ArrowLeft' ? -0.02 : 0.02)); endResize();
+  });
+  divider.addEventListener('dblclick', () => { resizeColumns(0.44); endResize(); });
+  try { const saved = Number(localStorage.getItem('ceb-panel-left-fraction')); if (saved > 0 && saved < 1) fraction = saved; } catch (_) {}
+  new ResizeObserver(() => resizeColumns(fraction)).observe(main);
+  resizeColumns(fraction);
   const buttons = pages.map(([title, indices], selected) => {
     const button = document.createElement('button'); button.textContent = title;
     button.onclick = () => {
@@ -674,6 +752,7 @@ function buildNavigation() {
 
 buildNavigation();
 buildDiagram();
+new ResizeObserver(() => { buildDiagram(); drawDiagram(); }).observe(document.querySelector('.diagram-scroll'));
 poll();
 setInterval(poll, 500);
 setInterval(pollConsole, 300);

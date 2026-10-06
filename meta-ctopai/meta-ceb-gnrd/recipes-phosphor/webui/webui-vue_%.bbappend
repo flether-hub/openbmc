@@ -21,6 +21,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0019-ceb-gnrd-factory-reset-bmc-wording.patch \
     file://0020-ceb-gnrd-overview-firmware-card.patch \
     file://0021-ceb-gnrd-refresh-server-power-operation-state.patch \
+    file://0022-ceb-gnrd-event-log-explicit-columns.patch \
     file://zh-CN.json \
 "
 
