@@ -343,7 +343,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	area[used++] = fru_gen_ask_chassis_type();
 +	fru_gen_ask_text("Chassis part number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "81-39380-A0", text);
++					 "93-39380-A0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Chassis serial number",
 +					 "YYMMDD####; UTC date plus editable sequence (default 0001)",
@@ -381,7 +381,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific helper]
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board part number",
 +					 "text, printable ASCII, up to 63 characters",
-+					 "81-39380-A0", text);
++					 "91-39380-A0", text);
 +	used = fru_gen_add_field(area, used, text);
 +	fru_gen_ask_text("Board FRU file ID",
 +					 "text, printable ASCII, up to 63 characters",
