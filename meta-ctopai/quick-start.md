@@ -569,7 +569,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 
 ### 4. IPMI
 
-* `mc info`：Device ID 32，Device Revision 2，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。
+* `mc info`：Device ID 0，Device Revision 1，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。
 * 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常；温度读不到（主机已开机）时风扇 60%（temp-max 发布 70 ℃，两条曲线在 70 ℃ 都是 60%），风扇读到几个都不影响（FailSafePercent=30）。
 * 主机侧 IPMI 走 KCS3（见上）；LAN 通道 1 是 eth0（RMCP+ 只绑 eth0），通道 2 是 NC-SI 的 eth1。
 * SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-logrotate`（logrotate 按大小轮转）保持 rollover，sel-logger 加了补丁，把“不可恢复”事件也记成 SEL（CPU/DIMM 最高温的 UNR 放在我们自己的接口上，不用 HardShutdown，所以不会触发任何自动关机）；告警灯的四种告警都有 SEL 记录。
@@ -1099,7 +1099,7 @@ should appear after flashing the updated image.
 
 #### IPMI
 
-* `mc info`: Device ID 32, Device Revision 2, Product ID 3346 (0x0D12),
+* `mc info`: Device ID 0, Device Revision 1, Product ID 3346 (0x0D12),
   Manufacturer ID 6659 (0x1A03), shown as `CTOPAI` / `CEB-GNR-D` by the
   on-BMC ipmitool. The board revision is the fourth AUX firmware revision byte.
   Firmware revision comes from `DISTRO_VERSION`, set in the vendor distro `meta-ctopai/conf/distro/ctopai-openbmc.conf` (`DISTRO = "ctopai-openbmc"` in `local.conf`; 2.0.0; the firmware version starts at 2.0, shown as 2.00 by `ipmitool mc info`).
