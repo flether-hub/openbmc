@@ -203,7 +203,7 @@ def system():
         'phosphor-pid-control', 'ceb-gnrd-fan-settings',
         'ceb-gnrd-fan-owner', 'ceb-gnrd-temp-max', 'ceb-gnrd-alert-led', 'ceb-gnrd-rtc-sync',
         'ceb-gnrd-ncsi', 'ceb-gnrd-boot-progress', 'ceb-gnrd-psu-detect', 'xyz.openbmc_project.Logging.IPMI',
-        'rsyslog', 'phosphor-ledcontroller', 'xyz.openbmc_project.LED.GroupManager',
+        'rsyslog', 'phosphor-ledcontroller', 'xyz.openbmc_project.LED.GroupManager', 'phosphor-watchdog',
         'xyz.openbmc_project.intrusionsensor', 'ceb-gnrd-sel-logrotate.timer'):
         unit(name)
     rc, state = prop('xyz.openbmc_project.State.BMC', '/xyz/openbmc_project/state/bmc0',
@@ -236,6 +236,7 @@ def ipmi_sensors_fans():
     check('chassis status', ['ipmitool', 'chassis', 'status'], 'System Power')
     check('SEL information', ['ipmitool', 'sel', 'info'], 'Version')
     check('SOL configuration', ['ipmitool', 'sol', 'info', '1'], 'Enabled')
+    check('IPMI host watchdog readable', ['ipmitool', 'mc', 'watchdog', 'get'], 'Watchdog Timer')
     info('LAN/users', ['sh', '-c', 'ipmitool lan print 1; ipmitool user list 1'])
     rc, addr = run(['ip', '-4', '-o', 'addr', 'show', 'eth0'])
     match = re.search(r'\binet (\d+\.\d+\.\d+\.\d+)/', addr)

@@ -1,0 +1,6 @@
+[Unit]
+Description=IPMI watchdog host power cycle
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/busctl set-property xyz.openbmc_project.State.Chassis /xyz/openbmc_project/state/chassis0 xyz.openbmc_project.State.Chassis RequestedPowerTransition s xyz.openbmc_project.State.Chassis.Transition.PowerCycle

@@ -344,7 +344,6 @@ def main():
     threading.Thread(target=watchdog_monitor, daemon=True).start()
 
     boot_deadline = None
-    boot_succeeded = False
     boot_failed = os.path.exists(BOOT_LATCH)
     watchdog_failed = os.path.exists(WATCHDOG_LATCH)
     # One shared system alert LED.  A voltage alarm and a temperature upper
@@ -369,15 +368,17 @@ def main():
             now = time.monotonic()
             if not power_good:
                 boot_deadline = None
-                boot_succeeded = False
             elif boot_ok:
                 # BOOT_OK only suppresses this boot's timeout; it has no
                 # separate LED, SEL, or power-control action.
                 boot_deadline = None
-                boot_succeeded = True
-            elif not boot_succeeded and boot_deadline is None and not boot_failed:
-                boot_deadline = now + BOOT_TIMEOUT_SECONDS
-                LOG.info("BIOS boot watchdog started (%d seconds)", BOOT_TIMEOUT_SECONDS)
+            else:
+                # POST_COMPLETE drops on a warm reset while chassis power
+                # stays on. A previous successful boot must not suppress
+                # monitoring of the new BIOS boot.
+                if boot_deadline is None and not boot_failed:
+                    boot_deadline = now + BOOT_TIMEOUT_SECONDS
+                    LOG.info("BIOS boot watchdog started (%d seconds)", BOOT_TIMEOUT_SECONDS)
 
             if boot_deadline is not None and now >= boot_deadline:
                 with open(BOOT_LATCH, "w", encoding="ascii") as latch:
