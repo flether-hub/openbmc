@@ -1,0 +1,30 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] nbd-proxy: specify the default export for NBD 3.27
+
+Upstream-Status: Pending
+
+NBD 3.27 rejects a non-netlink (-L) connection without an explicit export
+name before connecting. Pass -N with an empty argument for the default
+export, and -g to negotiate EXPORT_NAME directly with the browser server.
+Keep the session read-only and log the actual client arguments to stderr.
+
+diff --git a/nbd-proxy.c b/nbd-proxy.c
+--- a/nbd-proxy.c
++++ b/nbd-proxy.c
+@@ -157,8 +157,15 @@
+         dup2(fd, STDOUT_FILENO);
+         close(fd);
+ 
++        /* With -L, NBD 3.27 requires an explicit export name, including
++         * the empty default export. The browser supports EXPORT_NAME, not GO.
++         */
++        fprintf(stderr, "virtual-media[%s,pid=%ld]: exec nbd-client -u %s -n -L -t %s -N <empty> -g -R %s\n",
++                ctx->config->name, (long)getpid(), ctx->sock_path,
++                timeout_str, ctx->config->nbd_device);
+         execlp("nbd-client", "nbd-client", "-u", ctx->sock_path, "-n", "-L",
+-               "-t", timeout_str, ctx->config->nbd_device, NULL);
++               "-t", timeout_str, "-N", "", "-g", "-R",
++               ctx->config->nbd_device, NULL);
+         err(EXIT_FAILURE, "can't start ndb client");
+     }
+ 

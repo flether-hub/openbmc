@@ -319,3 +319,11 @@ BMC 的 `journalctl -b -u bmcweb.service --no-pager` 中，`virtual-media[配置
 模拟器 `~/qemu-ceb-gnrd/panel.log` 记录 USB 枚举、SCSI CDB/CSW、sense 错误、NAK 超时，
 以及媒体检查的 INQUIRY、容量、LBA0 SHA256、失败阶段和耗时。这些读盘日志在点击“读取容量和首扇区”时产生。
 故障后在 BMC 执行 `sh diagnose-virtual-media.sh` 收集状态，并保留相同时段的 panel.log。
+
+#### NBD 3.27 启动参数兼容性
+
+如果日志出现 `not enough information specified, and argument didn't look like an nbd device`，
+且 NBD size=0、pid 不存在，说明 nbd-client 在参数检查时退出，尚未建立后端或绑定 USB gadget。
+代理必须显式指定默认导出名（`-N ""`）。本平台同时指定 `-g`，直接使用浏览器实现支持的
+EXPORT_NAME 协商，并以 `-R` 保持只读。启动日志包含完整参数（空导出名显示为 `<empty>`）。
+修复需重建并运行新 BMC 固件，QEMU 模型无需因此重新编译。
