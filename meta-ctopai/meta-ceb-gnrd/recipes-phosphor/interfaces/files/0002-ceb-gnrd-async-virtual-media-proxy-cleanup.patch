@@ -35,7 +35,7 @@ proxy stderr in the journal so mounting failures are diagnosable.
          proxy(ios, "/usr/bin/nbd-proxy", {media},
                boost::process::v2::process_stdio{
 -                  .in = pipeIn, .out = pipeOut, .err = nullptr})
-+                  .in = pipeIn, .out = pipeOut})
++                  .in = pipeIn, .out = pipeOut, .err = {}})
      {}
  
      ~Handler() = default;
