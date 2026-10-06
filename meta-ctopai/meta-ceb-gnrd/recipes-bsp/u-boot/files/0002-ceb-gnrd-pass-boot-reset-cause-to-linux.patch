@@ -3,7 +3,7 @@ From: CEB-GNRD board layer <bmc@localhost>
 Date: Tue, 6 Oct 2026 00:00:00 +0000
 Subject: [PATCH] aspeed: pass the original reset cause to Linux
 
-Snapshot SCU074/078 before U-Boot clears their W1C flags and hand the
+Snapshot SCU064/06C before U-Boot clears their W1C flags and hand the
 snapshot and classified boot reason to Linux in /chosen. Do not save
 the reason in the persistent environment, where it could become stale.
 
@@ -109,7 +109,7 @@ diff --git a/board/aspeed/evb_ast2600/evb_ast2600.c b/board/aspeed/evb_ast2600/e
 +	if (ret)
 +		return ret;
 +	ret = fdt_setprop_string(blob, chosen, "aspeed,boot-reason", reason);
-+	printf("BMC boot reason: %s (SCU074=%08x SCU078=%08x)\n",
++	printf("BMC boot reason: %s (SCU064=%08x SCU06C=%08x)\n",
 +	       reason, reset, reset3);
 +	return ret;
 +}

@@ -4,7 +4,7 @@ Date: Tue, 6 Oct 2026 00:00:00 +0000
 Subject: [PATCH] aspeed: model power-on and watchdog reset event logs
 
 Generate POR only when the AST2600 machine is created. Preserve sticky
-SCU074/078 event flags across warm reset, honor W1C, and record the
+SCU064/06C event flags across warm reset, honor W1C, and record the
 watchdog number/mode before requesting a reset. QMP reset is external
 warm reset. This lets the same bootloader classify hardware and QEMU.
 
@@ -49,21 +49,21 @@ diff --git a/hw/misc/aspeed_scu.c b/hw/misc/aspeed_scu.c
      trace_aspeed_scu_write(offset, size, data);
  
      switch (reg) {
-+    case TO_REG(0x74):
-+    case TO_REG(0x78):
++    case TO_REG(0x64):
++    case TO_REG(0x6c):
 +        /* SCU reset event logs are sticky, write-one-to-clear. */
 +        s->regs[reg] &= ~data;
 +        return;
      case AST2600_PROT_KEY:
          /*
           * Writing a value to SCU000 will modify both protection
-@@ -825,8 +835,19 @@
+@@ -825,8 +835,21 @@
  {
      AspeedSCUState *s = ASPEED_SCU(dev);
      AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(dev);
 -
-+    uint32_t reset = s->regs[TO_REG(0x74)];
-+    uint32_t reset3 = s->regs[TO_REG(0x78)];
++    uint32_t reset = s->regs[TO_REG(0x64)];
++    uint32_t reset3 = s->regs[TO_REG(0x6c)];
 +
 +    if (!s->pending_reset_log[0] && !s->pending_reset_log[1]) {
 +        /* QMP/system_reset has no watchdog source: external warm reset. */
@@ -73,8 +73,10 @@ diff --git a/hw/misc/aspeed_scu.c b/hw/misc/aspeed_scu.c
 +    reset3 |= s->pending_reset_log[1];
 +    s->pending_reset_log[0] = s->pending_reset_log[1] = 0;
      memcpy(s->regs, asc->resets, asc->nr_regs * 4);
-+    s->regs[TO_REG(0x74)] = reset;
-+    s->regs[TO_REG(0x78)] = reset3;
++    s->regs[TO_REG(0x64)] = reset;
++    s->regs[TO_REG(0x6c)] = reset3;
++    fprintf(stderr, "CEB-GNRD SCU reset: SCU064=%08x SCU06C=%08x\n",
++            reset, reset3);
  
      /*
       * A0 reports A0 in _REV, but subsequent revisions report A1 regardless

@@ -247,7 +247,7 @@ size 正常但未绑定 UDC 时检查 hook；已绑定而未枚举时检查 USB 
 
 ### AC 恢复与 BMC 重启
 
-0024 补丁为 AST2600 提供 SCU074/078 复位事件日志：新建 QEMU 进程表示
+0024 补丁为 AST2600 提供 SCU064/06C 复位事件日志：新建 QEMU 进程表示
 AC 上电，产生 POR；同一进程内的 BMC 软件重启、watchdog 和 QMP reset
 均为 warm reset。watchdog 记录对应编号和模式；事件日志支持 W1C 清除，
 未清除的标志在 warm reset 后保留。
@@ -327,3 +327,8 @@ BMC 的 `journalctl -b -u bmcweb.service --no-pager` 中，`virtual-media[配置
 代理必须显式指定默认导出名（`-N ""`）。本平台同时指定 `-g`，直接使用浏览器实现支持的
 EXPORT_NAME 协商，并以 `-R` 保持只读。启动日志包含完整参数（空导出名显示为 `<empty>`）。
 修复需重建并运行新 BMC 固件，QEMU 模型无需因此重新编译。
+
+复位事件寄存器地址与固定 U-Boot 的 `platform.h` 一致：SCU064（0x1e6e2064）及
+SCU06C（0x1e6e206c）。旧版 0024 模型误写 SCU074/078，导致传给 Linux 的快照为零、
+boot-reason=unknown，AC 策略被跳过。修正后每次 SoC reset 在 qemu.log 输出两项标志，
+可与 U-Boot 串口的 `BMC boot reason` 及 Linux chosen 属性对照。
