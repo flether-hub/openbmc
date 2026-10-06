@@ -1,0 +1,178 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] nbd-proxy: handle ECHILD and finish setup before teardown
+
+Upstream-Status: Pending
+
+Avoid an infinite waitpid loop after the last child exits and treat
+closed stdio pipes as EPIPE rather than a fatal SIGPIPE that skips cleanup.
+Ensure the asynchronous start hook finishes before teardown touches ConfigFS.
+
+diff --git a/nbd-proxy.c b/nbd-proxy.c
+--- a/nbd-proxy.c
++++ b/nbd-proxy.c
+@@ -162,6 +162,9 @@
+         err(EXIT_FAILURE, "can't start ndb client");
+     }
+ 
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: nbd-client pid=%ld device=%s timeout=%d socket=%s\n",
++            ctx->config->name, (long)getpid(), (long)pid,
++            ctx->config->nbd_device, ctx->nbd_timeout, ctx->sock_path);
+     ctx->nbd_client_pid = pid;
+     return 0;
+ }
+@@ -267,6 +270,11 @@
+     sigaction(SIGTERM, &sa, NULL);
+     sigaction(SIGCHLD, &sa, NULL);
+ 
++    // A closed WebSocket closes the stdio pipes. Return EPIPE through copy_fd
++    // so teardown runs instead of being killed before removing the gadget.
++    sa.sa_handler = SIG_IGN;
++    sigaction(SIGPIPE, &sa, NULL);
++
+     return 0;
+ }
+ 
+@@ -279,6 +287,7 @@
+     sigaction(SIGINT, &sa, NULL);
+     sigaction(SIGTERM, &sa, NULL);
+     sigaction(SIGCHLD, &sa, NULL);
++    sigaction(SIGPIPE, &sa, NULL);
+ 
+     close(ctx->signal_pipe[0]);
+     close(ctx->signal_pipe[1]);
+@@ -294,6 +303,18 @@
+         pid = waitpid(-1, &status, WNOHANG);
+         if (pid == 0)
+             break;
++        if (pid < 0)
++        {
++            if (errno == EINTR)
++                continue;
++            if (errno != ECHILD)
++            {
++                warn("waitpid");
++                *exit = true;
++            }
++            /* No children left is terminal, not another child to reap. */
++            break;
++        }
+ 
+         if (pid == ctx->nbd_client_pid)
+         {
+@@ -424,6 +445,8 @@
+         exit(EXIT_FAILURE);
+     }
+ 
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: hook=%s child=%ld wait=%d\n",
++            ctx->config->name, (long)getpid(), action, (long)pid, (int)wait);
+     if (!wait)
+     {
+         ctx->state_hook_pid = pid;
+@@ -528,6 +551,8 @@
+     ctx->monitor = NULL;
+     ctx->udev = NULL;
+ 
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: NBD block change received; starting USB gadget setup\n",
++            ctx->config->name, (long)getpid());
+     rc = run_state_hook(ctx, "start", false);
+ 
+     return rc;
+@@ -538,6 +563,7 @@
+     struct pollfd pollfds[4];
+     bool exit = false;
+     int rc, n_fd;
++    unsigned long long to_browser = 0, to_client = 0;
+ 
+     /* main proxy: forward data between stdio & socket */
+     pollfds[0].fd = ctx->sock_client;
+@@ -567,14 +593,32 @@
+         {
+             rc = copy_fd(ctx, ctx->sock_client, STDOUT_FILENO);
+             if (rc <= 0)
++            {
++                fprintf(stderr, "virtual-media[%s,pid=%ld]: NBD->browser closed/error rc=%d errno=%d revents=%x\n",
++                        ctx->config->name, (long)getpid(), rc, errno,
++                        (unsigned)pollfds[0].revents);
+                 break;
++            }
++            if (to_browser == 0)
++                fprintf(stderr, "virtual-media[%s,pid=%ld]: first NBD->browser transfer bytes=%d\n",
++                        ctx->config->name, (long)getpid(), rc);
++            to_browser += (unsigned)rc;
+         }
+ 
+         if (pollfds[1].revents)
+         {
+             rc = copy_fd(ctx, STDIN_FILENO, ctx->sock_client);
+             if (rc <= 0)
++            {
++                fprintf(stderr, "virtual-media[%s,pid=%ld]: browser->NBD closed/error rc=%d errno=%d revents=%x\n",
++                        ctx->config->name, (long)getpid(), rc, errno,
++                        (unsigned)pollfds[1].revents);
+                 break;
++            }
++            if (to_client == 0)
++                fprintf(stderr, "virtual-media[%s,pid=%ld]: first browser->NBD transfer bytes=%d\n",
++                        ctx->config->name, (long)getpid(), rc);
++            to_client += (unsigned)rc;
+         }
+ 
+         if (pollfds[2].revents)
+@@ -601,6 +645,8 @@
+         }
+     }
+ 
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: stream totals browser->NBD=%llu NBD->browser=%llu bytes\n",
++            ctx->config->name, (long)getpid(), to_client, to_browser);
+     return rc ? -1 : 0;
+ }
+ 
+@@ -882,6 +928,7 @@
+     if (rc)
+         goto out_free;
+ 
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: session start device=%s timeout=%d\n", ctx->config->name, (long)getpid(), ctx->config->nbd_device, ctx->nbd_timeout);
+     rc = open_nbd_socket(ctx);
+     if (rc)
+         goto out_free;
+@@ -894,6 +941,7 @@
+     if (rc)
+         goto out_stop_client;
+ 
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: waiting for nbd-client connection\n", ctx->config->name, (long)getpid());
+     rc = wait_for_nbd_client(ctx);
+     if (rc)
+         goto out_stop_client;
+@@ -902,10 +950,32 @@
+     if (rc)
+         goto out_stop_client;
+ 
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: client connected; forwarding browser/NBD stream\n",
++            ctx->config->name, (long)getpid());
+     rc = run_proxy(ctx);
++    fprintf(stderr, "virtual-media[%s,pid=%ld]: forwarding ended rc=%d; beginning cleanup\n",
++            ctx->config->name, (long)getpid(), rc);
+ 
+     if (ctx->udev)
+         udev_free(ctx);
++
++    /* The start hook is asynchronous and may still be configuring the
++     * gadget when the browser disconnects. Finish it before starting teardown,
++     * otherwise start/stop can race on ConfigFS and leave a bound gadget.
++     * NBD I/O is bounded by the configured client timeout; bmcweb reaps this
++     * process asynchronously rather than blocking its event loop.
++     */
++    if (ctx->state_hook_pid)
++    {
++        pid_t pid;
++        do
++        {
++            pid = waitpid(ctx->state_hook_pid, NULL, 0);
++        } while (pid < 0 && errno == EINTR);
++        if (pid < 0 && errno != ECHILD)
++            warn("waiting for start hook");
++        ctx->state_hook_pid = 0;
++    }
+ 
+     run_state_hook(ctx, "stop", true);
+ 

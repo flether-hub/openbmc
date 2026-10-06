@@ -150,7 +150,7 @@ class USBHost:
             if result != "nak":
                 raise RuntimeError("USB %s port%d ep%d: %s" % (op, port, ep, result))
             if time.monotonic() >= deadline:
-                raise TimeoutError("USB port%d ep%d NAK" % (port, ep))
+                raise TimeoutError("USB port%d ep%d %s NAK timeout=%.1fs requested=%d" % (port, ep, op, timeout, maximum if op == "in" else len(data)))
             time.sleep(0.005)
 
     def control(self, port, kind, request, value=0, index=0, length=0, data=b""):
@@ -441,14 +441,25 @@ class USBHost:
         if not 1 <= port <= 7:
             raise ValueError("请选择 USB 存储端口 1..7")
         with self.lock:
+            started = time.monotonic()
+            stage = "INQUIRY"
+            self.log("USB 媒体检查开始 port%d" % port)
             try:
                 inquiry = self.scsi_ready(port, bytes([0x12, 0, 0, 0, 36, 0]), 36)
+                self.log("USB 媒体 port%d vendor=%r product=%r revision=%r" % (
+                    port, inquiry[8:16].decode("ascii", "replace").strip(),
+                    inquiry[16:32].decode("ascii", "replace").strip(),
+                    inquiry[32:36].decode("ascii", "replace").strip()))
+                stage = "READ CAPACITY(10)"
                 capacity = self.scsi_ready(port, bytes([0x25]) + bytes(9), 8)
                 last, block = struct.unpack(">II", capacity)
                 if not 1 <= block <= 65535:
                     raise RuntimeError("unsupported SCSI block size")
                 if last == 0xffffffff:
                     raise RuntimeError("media requires READ CAPACITY(16); not supported by this probe")
+                self.log("USB 媒体 port%d blocks=%d block_size=%d capacity_bytes=%d" % (
+                    port, last + 1, block, (last + 1) * block))
+                stage = "READ(10) LBA0"
                 cdb = struct.pack(">BBIBHB", 0x28, 0, 0, 0, 1, 0)
                 first = self.scsi_ready(port, cdb, block)
                 result = {"port": port, "read_ok": True, "inquiry": inquiry.hex(),
@@ -457,7 +468,8 @@ class USBHost:
                           "lba0_sha256": hashlib.sha256(first).hexdigest()}
             except (RuntimeError, OSError, ValueError, KeyError, StopIteration, struct.error) as exc:
                 message = str(exc) or "该 USB 端口没有 Bulk-Only SCSI 接口"
-                self.log("USB 媒体检查失败 port%d：%s" % (port, message))
+                self.log("USB 媒体检查失败 port%d stage=%s elapsed=%.3fs type=%s：%s" % (
+                    port, stage, time.monotonic() - started, type(exc).__name__, message))
                 if isinstance(exc, TimeoutError):
                     try:
                         self.reset_bot(port)
@@ -468,6 +480,8 @@ class USBHost:
                                      "error": message}
                 self.state = dict(self.state, media_result=self.media_result)
                 raise RuntimeError(self.media_result["error"]) from None
+            self.log("USB 媒体检查成功 port%d elapsed=%.3fs LBA0_bytes=%d SHA256=%s" % (
+                port, time.monotonic() - started, len(first), result["lba0_sha256"]))
             self.media_result = result
             result["checked_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             self.state = dict(self.state, media_result=result)

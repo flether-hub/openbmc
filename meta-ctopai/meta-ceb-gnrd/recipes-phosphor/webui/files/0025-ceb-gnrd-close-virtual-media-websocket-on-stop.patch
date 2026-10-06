@@ -1,0 +1,141 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] webui: close virtual media sessions and cancel pending reads
+
+Upstream-Status: Pending
+
+Handle stopping during connection setup as well as after opening. Abort
+pending FileReaders and avoid sending late replies onto a closed connection.
+Report started only after the WebSocket opens.
+
+diff --git a/src/utilities/NBDServer.js b/src/utilities/NBDServer.js
+--- a/src/utilities/NBDServer.js
++++ b/src/utilities/NBDServer.js
+@@ -41,6 +41,7 @@
+     this.ws = null;
+     this.state = NBD_STATE_UNKNOWN;
+     this.msgbuf = null;
++    this.readers = new Set();
+     this.start = function () {
+       this.ws = new WebSocket(this.endpoint, [token]);
+       this.state = NBD_STATE_OPEN;
+@@ -49,12 +50,20 @@
+       this.ws.onopen = this._on_ws_open.bind(this);
+       this.ws.onclose = this._on_ws_close.bind(this);
+       this.ws.onerror = this._on_ws_error.bind(this);
+-      this.socketStarted();
+-    };
+-    this.stop = function () {
+-      if (this.ws.readyState == 1) {
+-        this.ws.close();
+-        this.state = NBD_STATE_UNKNOWN;
++    };
++    this._cancelReads = function () {
++      for (const reader of this.readers) {
++        if (reader.readyState === FileReader.LOADING) reader.abort();
++      }
++      this.readers.clear();
++    };
++    this.stop = function (code = 1000, reason = 'Virtual media stopped') {
++      this.state = NBD_STATE_UNKNOWN;
++      this.msgbuf = null;
++      this._cancelReads();
++      if (this.ws && this.ws.readyState < WebSocket.CLOSING) {
++        // Closing the connection tells bmcweb to stop nbd-proxy and unbind USB.
++        this.ws.close(code, reason);
+       }
+     };
+     this._on_ws_error = function (ev) {
+@@ -66,17 +75,25 @@
+         `${endpoint} closed with code: ${ev.code} + reason: ${ev.reason}`,
+       );
+       console.log(JSON.stringify(ev));
++      this.state = NBD_STATE_UNKNOWN;
++      this.msgbuf = null;
++      this._cancelReads();
+       this.socketClosed(ev.code);
+     };
+     /* websocket event handlers */
+     this._on_ws_open = function () {
++      if (this.state !== NBD_STATE_OPEN || this.ws.readyState !== WebSocket.OPEN) {
++        return;
++      }
+       console.log(endpoint + ' opened');
+       this.client = {
+         flags: 0,
+       };
+       this._negotiate();
++      this.socketStarted();
+     };
+     this._on_ws_message = function (ev) {
++      if (this.state === NBD_STATE_UNKNOWN) return;
+       var data = ev.data;
+       if (this.msgbuf == null) {
+         this.msgbuf = data;
+@@ -90,15 +107,16 @@
+         var handler = this.recv_handlers[this.state];
+         if (!handler) {
+           console.log('no handler for state ' + this.state);
+-          this.stop();
++          this.stop(1002, 'Invalid NBD state');
+           break;
+         }
+         var consumed = handler(this.msgbuf);
++        if (this.state === NBD_STATE_UNKNOWN) break;
+         if (consumed < 0) {
+           console.log(
+             'handler[state=' + this.state + '] returned error ' + consumed,
+           );
+-          this.stop();
++          this.stop(1002, 'Invalid NBD request');
+           break;
+         }
+         if (consumed == 0) {
+@@ -245,7 +263,7 @@
+         this.ws.send(resp);
+         if (err == ENOSPC) {
+           this.errorReadingFile();
+-          this.stop();
++          this.stop(1011, 'Virtual media read failed');
+         }
+       }
+       return consumed;
+@@ -258,19 +276,38 @@
+       if (offset + req.length > file.size) return ENOSPC;
+       var blob = this.file.slice(offset, offset + req.length);
+       var reader = new FileReader();
++      this.readers.add(reader);
+ 
+       reader.onload = function (ev) {
+         var reader = ev.target;
+-        if (reader.readyState != FileReader.DONE) return;
++        this.readers.delete(reader);
++        if (
++          reader.readyState != FileReader.DONE ||
++          this.state !== NBD_STATE_TRANSMISSION ||
++          this.ws.readyState !== WebSocket.OPEN
++        ) return;
++        if (reader.result.byteLength !== req.length) {
++          this.ws.send(this._create_cmd_response(req, EIO));
++          this.errorReadingFile();
++          this.stop(1011, 'Short virtual media read');
++          return;
++        }
+         var resp = this._create_cmd_response(req, 0, reader.result);
+         this.ws.send(resp);
+       }.bind(this);
+ 
+       reader.onerror = function (ev) {
+         var reader = ev.target;
++        this.readers.delete(reader);
++        if (
++          this.state !== NBD_STATE_TRANSMISSION ||
++          this.ws.readyState !== WebSocket.OPEN
++        ) return;
+         console.log('error reading file: ' + reader.error);
+         var resp = this._create_cmd_response(req, EIO);
+         this.ws.send(resp);
++        this.errorReadingFile();
++        this.stop(1011, 'Virtual media read failed');
+       }.bind(this);
+       reader.readAsArrayBuffer(blob);
+       return 0;

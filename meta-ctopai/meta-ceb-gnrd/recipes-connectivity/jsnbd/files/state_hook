@@ -1,122 +1,150 @@
 #!/bin/sh
 
-if [ $# -ne 2 ]
-then
+if [ "$#" -ne 2 ]; then
     echo "usage: $0 <start|stop> <config>" >&2
     exit 1
 fi
 
 action=$1
 config=$2
-
-gadget_name=mass-storage
-gadget_dir=/sys/kernel/config/usb_gadget/$gadget_name
-
 case "$config" in
-0)
-    nbd_device=/dev/nbd0
-    ;;
-1)
-    nbd_device=/dev/nbd1
-    ;;
-*)
-    echo "invalid config $config" >&2
-    exit 1
-    ;;
+0) nbd_device=/dev/nbd0 ;;
+1) nbd_device=/dev/nbd1 ;;
+*) echo "invalid config $config" >&2; exit 1 ;;
 esac
 
 set -e
+GADGET_BASE=/sys/kernel/config/usb_gadget
+gadget_dir=$GADGET_BASE/mass-storage
+owner_file=/run/nbd-proxy-gadget.owner
+# Both hooks are children of the same nbd-proxy. A failed concurrent proxy
+# must not remove the gadget owned by an existing session.
+owner_id=$PPID:$config
+created=0
+stage=initialization
 
 log()
 {
-    echo "virtual-media[$config]: $*" >&2
+    echo "virtual-media[$config,proxy=$PPID,hook=$$]: $*" >&2
 }
-trap 'rc=$?; if [ "$rc" -ne 0 ]; then log "$action failed (exit $rc)"; fi' 0
 
-GADGET_BASE=/sys/kernel/config/usb_gadget
+cleanup_gadget()
+{
+    [ -d "$gadget_dir" ] || return 0
+    (
+        cd "$gadget_dir" || return 1
+        if [ -n "$(cat UDC)" ]; then
+            log "unbind UDC=$(cat UDC) backing=$(cat functions/mass_storage.usb0/lun.0/file 2>/dev/null || true)"
+            printf '\n' > UDC || return 1
+        fi
+        if [ -L configs/c.1/mass_storage.usb0 ]; then
+            rm configs/c.1/mass_storage.usb0 || return 1
+        fi
+        if [ -d functions/mass_storage.usb0 ]; then
+            rmdir functions/mass_storage.usb0 || return 1
+        fi
+        if [ -d configs/c.1/strings/0x409 ]; then
+            rmdir configs/c.1/strings/0x409 || return 1
+        fi
+        if [ -d configs/c.1 ]; then
+            rmdir configs/c.1 || return 1
+        fi
+        if [ -d strings/0x409 ]; then
+            rmdir strings/0x409 || return 1
+        fi
+    ) || return 1
+    rmdir "$gadget_dir"
+}
+
+hook_exit()
+{
+    rc=$?
+    trap - 0
+    if [ "$rc" -ne 0 ]; then
+        log "$action failed stage=$stage (exit $rc)"
+        if [ "$action" = start ] && [ "$created" -eq 1 ]; then
+            log "rolling back incomplete gadget setup"
+            if cleanup_gadget; then
+                rm -f "$owner_file"
+            else
+                log "rollback failed; retaining ownership for stop cleanup"
+            fi
+        fi
+    fi
+    exit "$rc"
+}
+trap hook_exit 0
 
 which_dev()
 {
-       in_use="$(cat $GADGET_BASE/*/UDC)"
-       cd /sys/class/udc
-       for dev in *; do
-               case "$in_use" in
-                       *"$dev"*) ;;
-                       *) echo "$dev"; return 0;;
-               esac
-       done
-       return 1
+    in_use=$(
+        for gadget in "$GADGET_BASE"/*; do
+            [ -r "$gadget/UDC" ] || continue
+            cat "$gadget/UDC"
+        done
+    )
+    for udc in /sys/class/udc/*; do
+        [ -e "$udc" ] || continue
+        dev=${udc##*/}
+        if ! printf '%s\n' "$in_use" | grep -Fqx -- "$dev"; then
+            echo "$dev"
+            return 0
+        fi
+    done
+    log "no free USB device controller"
+    return 1
 }
 
 case "$action" in
 start)
     log "start: backing device $nbd_device"
-    if [ ! -b "$nbd_device" ]; then
-        log "backing block device is missing"
-        exit 1
-    fi
+    [ -b "$nbd_device" ] || { log "backing block device is missing"; exit 1; }
     if [ -d "$gadget_dir" ]; then
-        log "gadget already exists; remove previous media before starting"
+        log "gadget already exists; previous session must finish cleanup first"
         exit 1
     fi
-    mkdir -p $gadget_dir
-    (
-    cd $gadget_dir
-    # http://www.linux-usb.org/usb.ids
-    #    |-> 1d6b  Linux Foundation
-    #          |-> 0104  Multifunction Composite Gadget
-    echo "0x1d6b" > idVendor
-    echo "0x0104" > idProduct
-    mkdir -p strings/0x409
-    echo "OpenBMC" > strings/0x409/manufacturer
-    echo "Virtual Media Device" > strings/0x409/product
-    mkdir -p configs/c.1/strings/0x409
-    echo "config 1" > configs/c.1/strings/0x409/configuration
-    mkdir -p functions/mass_storage.usb0
-    ln -s functions/mass_storage.usb0 configs/c.1
-    echo 1 > functions/mass_storage.usb0/lun.0/removable
-    echo 1 > functions/mass_storage.usb0/lun.0/ro
-    echo 0 > functions/mass_storage.usb0/lun.0/cdrom
-    echo $nbd_device > functions/mass_storage.usb0/lun.0/file
+    stage=select-udc
+    log "NBD sectors=$(cat /sys/block/${nbd_device##*/}/size 2>/dev/null || true) client_pid=$(cat /sys/block/${nbd_device##*/}/pid 2>/dev/null || true)"
     device=$(which_dev)
-    log "binding $nbd_device to $device"
-    echo "$device" > UDC
+    log "selected UDC=$device"
+    stage=create-gadget
+    # mkdir without -p atomically rejects another session's existing gadget.
+    mkdir "$gadget_dir"
+    created=1
+    printf '%s\n' "$owner_id" > "$owner_file"
+    stage=configure-and-bind
+    (
+        cd "$gadget_dir"
+        echo 0x1d6b > idVendor
+        echo 0x0104 > idProduct
+        mkdir -p strings/0x409
+        echo OpenBMC > strings/0x409/manufacturer
+        echo "Virtual Media Device" > strings/0x409/product
+        mkdir -p configs/c.1/strings/0x409
+        echo "config 1" > configs/c.1/strings/0x409/configuration
+        mkdir -p functions/mass_storage.usb0
+        ln -s functions/mass_storage.usb0 configs/c.1
+        echo 1 > functions/mass_storage.usb0/lun.0/removable
+        echo 1 > functions/mass_storage.usb0/lun.0/ro
+        echo 0 > functions/mass_storage.usb0/lun.0/cdrom
+        log "attach LUN backing=$nbd_device ro=1 removable=1 cdrom=0"
+        echo "$nbd_device" > functions/mass_storage.usb0/lun.0/file
+        log "binding $nbd_device to $device"
+        echo "$device" > UDC
     )
-    log "USB storage gadget bound successfully"
+    log "USB storage gadget bound successfully owner=$owner_id UDC=$(cat "$gadget_dir/UDC") backing=$(cat "$gadget_dir/functions/mass_storage.usb0/lun.0/file")"
     ;;
 stop)
-    log "stop: disconnect USB gadget before removing its configuration"
-    if [ ! -d "$gadget_dir" ]; then
-        log "gadget already absent"
+    owner=$(cat "$owner_file" 2>/dev/null || true)
+    if [ "$owner" != "$owner_id" ]; then
+        log "no gadget owned by this session; skipping cleanup expected=$owner_id actual=$owner"
         exit 0
     fi
-    (
-    cd "$gadget_dir"
-    # ConfigFS does not allow removing a function while the gadget is bound.
-    # Disconnect first so pending USB requests can be cancelled by the UDC.
-    if [ -n "$(cat UDC)" ]; then
-        printf '\n' > UDC
-    fi
-    if [ -L configs/c.1/mass_storage.usb0 ]; then
-        rm configs/c.1/mass_storage.usb0
-    fi
-    if [ -d functions/mass_storage.usb0 ]; then
-        rmdir functions/mass_storage.usb0
-    fi
-    if [ -d configs/c.1/strings/0x409 ]; then
-        rmdir configs/c.1/strings/0x409
-    fi
-    if [ -d configs/c.1 ]; then
-        rmdir configs/c.1
-    fi
-    if [ -d strings/0x409 ]; then
-        rmdir strings/0x409
-    fi
-    )
-    rmdir "$gadget_dir"
+    log "stop: disconnect USB gadget before removing its configuration"
+    stage=unbind-and-remove
+    cleanup_gadget
+    rm -f "$owner_file"
     log "USB storage gadget removed"
     ;;
-*)
-    echo "invalid action $action" >&2
-    exit 1
+*) echo "invalid action $action" >&2; exit 1 ;;
 esac

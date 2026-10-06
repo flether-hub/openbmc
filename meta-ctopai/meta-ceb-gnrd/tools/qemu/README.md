@@ -209,6 +209,37 @@ QMP 对象包括 /machine/soc/espi、/machine/soc/usb-vhub、
 
 ## 日志与核对状态
 
+### 虚拟媒体检查与已修正问题
+
+浏览器 NBD 会话经 bmcweb 管道连接 nbd-proxy / nbd-client，内核建立
+`/dev/nbd0` 后由 state hook 绑定只读 USB mass-storage gadget。
+模拟器只模拟主机 USB 一侧：主机开机后枚举 gadget，读取 INQUIRY、
+READ CAPACITY(10) 和 READ(10) LBA0；不绕过 BMC，也不模拟 x86 从镜像启动。
+
+2026-10-06 源码检查修正：
+
+- jsnbd 回收子进程时遇到 ECHILD 会停止，避免无子进程后的死循环。
+- 管道关闭产生 EPIPE 时正常退出并清理，不再被 SIGPIPE 直接终止。
+- 停止时先等待尚未完成的 gadget 启动脚本，避免 ConfigFS 启停并发。
+- gadget 创建失败会回滚，UDC 按完整名称检查占用，无可用 UDC 则明确报错。
+- 通过代理 PID 和配置编号标记 gadget 所有者，失败的另一个会话不能删除它。
+- 浏览器建立连接期间也能停止；停止/断开时取消 FileReader，避免迟到的读取
+  回调向已关闭的 WebSocket 发送数据；实际打开连接后才显示服务启动。
+
+这些是源码修复，不代表虚拟媒体已通过端到端验证。当前检查未发现确定的
+模拟器 Bulk/SCSI 根因；READ CAPACITY(16) 和镜像启动仍不在探测功能范围内。
+
+更新固件后先开启模拟主机，在 BMC Web 挂载 ISO/IMG，再在模拟器的
+虚拟媒体页选择枚举出的存储端口，执行“读取容量和首扇区”。应返回
+`read_ok=true`、正确容量和 `lba0_sha256`。停止后 gadget 应移除，下一次挂载
+应能重新枚举；同时 BMC Web 应持续可访问。
+
+失败后将 `diagnose-virtual-media.sh` 复制到 BMC，使用 `sh` 执行并回传输出，
+再回传构建机当前的 `tail -n 100 ~/qemu-ceb-gnrd/panel.log`。
+NBD size=0 且无 pid 表示后端尚未建立，不能归因于主机 USB 读盘；
+size 正常但未绑定 UDC 时检查 hook；已绑定而未枚举时检查 USB 模型/主机状态；
+已枚举但 read_ok=false 时检查日志中的 SCSI sense、CSW 和超时。
+
 ### AC 恢复与 BMC 重启
 
 0024 补丁为 AST2600 提供 SCU074/078 复位事件日志：新建 QEMU 进程表示
@@ -272,3 +303,14 @@ GUI 采用左侧功能 Tab、右上固定硬件连接、右下固定事件日志
 USB 支持检查 boot 键盘及 OpenBMC 六字节绝对鼠标报告；媒体由 BMC Web 挂载，GUI 只读检查 INQUIRY、容量和 LBA0，记录握手/SCSI 错误。没有客户端连接时 HID 节点缺失不能单独判定固件错误。
 
 风扇 owner、PSU 生命周期和 Web 电源刷新另有固件修复，需要构建固件。详细根因、文件及待验证项见 `CHANGE-REPORT-2026-10-05.md` 第 11 节。所有新增端到端功能仍待用户运行验证。
+
+#### 虚拟媒体诊断日志
+
+BMC 的 `journalctl -b -u bmcweb.service --no-pager` 中，`virtual-media[配置号,pid=...]`
+记录代理会话、nbd-client 启动及超时配置、NBD 设备就绪、双向首次传输、断开原因和累计字节。
+`virtual-media[配置号,proxy=...,hook=...]` 记录 gadget 操作阶段、NBD 扇区数、UDC 选择、LUN 绑定、解绑及回滚。
+不同会话用代理 PID 对照；不会记录镜像内容或每个传输包。
+
+模拟器 `~/qemu-ceb-gnrd/panel.log` 记录 USB 枚举、SCSI CDB/CSW、sense 错误、NAK 超时，
+以及媒体检查的 INQUIRY、容量、LBA0 SHA256、失败阶段和耗时。这些读盘日志在点击“读取容量和首扇区”时产生。
+故障后在 BMC 执行 `sh diagnose-virtual-media.sh` 收集状态，并保留相同时段的 panel.log。
