@@ -1,0 +1,558 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] webui: refresh live sensors and status views
+
+Upstream-Status: Inappropriate [CEB-GNRD live status refresh policy]
+
+Poll sensors and status lists while visible. Stop on unmount, avoid
+concurrent refreshes, and preserve table selection and unsaved forms.
+Revalidate cached collections on mount, focus and reconnect.
+
+diff --git a/src/api/composables/useAllSubResources.ts b/src/api/composables/useAllSubResources.ts
+--- a/src/api/composables/useAllSubResources.ts
++++ b/src/api/composables/useAllSubResources.ts
+@@ -99,6 +99,7 @@
+   canExpand: boolean,
+   queryClient: ReturnType<typeof useQueryClient>,
+   queryKey: unknown[],
++  publishIncremental: boolean,
+ ): Promise<T[]> {
+   const subResourcePath = `${parentUri}/${subResourceName}`;
+ 
+@@ -110,10 +111,12 @@
+       }>(`${subResourcePath}?$expand=.($levels=1)`);
+ 
+       if (data.Members && Array.isArray(data.Members)) {
+-        queryClient.setQueryData(queryKey, (oldData: T[] = []) => [
+-          ...oldData,
+-          ...(data.Members || []),
+-        ]);
++        if (publishIncremental) {
++          queryClient.setQueryData(queryKey, (oldData: T[] = []) => [
++            ...oldData,
++            ...(data.Members || []),
++          ]);
++        }
+         return data.Members;
+       }
+     }
+@@ -131,10 +134,12 @@
+       async (member: CollectionMember) => {
+         try {
+           const { data: memberData } = await api.get<T>(member['@odata.id']);
+-          queryClient.setQueryData(queryKey, (oldData: T[] = []) => [
+-            ...oldData,
+-            memberData,
+-          ]);
++          if (publishIncremental) {
++            queryClient.setQueryData(queryKey, (oldData: T[] = []) => [
++              ...oldData,
++              memberData,
++            ]);
++          }
+           return memberData;
+         } catch (error) {
+           console.error(`Error fetching ${member['@odata.id']}:`, error);
+@@ -202,7 +207,8 @@
+   queryClient: ReturnType<typeof useQueryClient>,
+   queryKey: unknown[],
+ ): Promise<T[]> {
+-  queryClient.setQueryData(queryKey, []);
++  const publishIncremental = queryClient.getQueryData(queryKey) === undefined;
++  if (publishIncremental) queryClient.setQueryData(queryKey, []);
+ 
+   const fetchPromises = parentUris.map((parentUri) =>
+     fetchSubResourcesFromParent<T>(
+@@ -211,6 +217,7 @@
+       canExpand,
+       queryClient,
+       queryKey,
++      publishIncremental,
+     ).catch((error) => {
+       // Return empty array on failure but track the error
+       console.error(
+@@ -269,6 +276,7 @@
+ export function useAllSubResources<T>(
+   parentCollectionPath: string,
+   subResourceName: string,
++  refreshInterval: number | false = false,
+ ) {
+   const queryClient = useQueryClient();
+   const { data: serviceRoot } = useRedfishRoot();
+@@ -304,11 +312,13 @@
+       );
+     },
+     enabled: computed(() => !!serviceRoot.value),
+-    staleTime: Infinity, // Data never becomes stale automatically
++    staleTime: refreshInterval || 30000,
+     gcTime: 300000, // Keep in cache for 5 minutes after component unmount
+-    refetchOnMount: false, // Don't refetch when component remounts
+-    refetchOnWindowFocus: false, // Don't refetch when window regains focus
+-    refetchOnReconnect: false, // Don't refetch on network reconnect
++    refetchOnMount: 'always',
++    refetchOnWindowFocus: true,
++    refetchOnReconnect: true,
++    refetchInterval: refreshInterval,
++    refetchIntervalInBackground: false,
+     placeholderData: (prev) => prev,
+     retry: shouldRetry,
+     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+diff --git a/src/api/composables/useRedfishCollection.ts b/src/api/composables/useRedfishCollection.ts
+--- a/src/api/composables/useRedfishCollection.ts
++++ b/src/api/composables/useRedfishCollection.ts
+@@ -332,9 +332,9 @@
+     queryKey: ['redfish', 'collection', path, normalizedParams],
+     queryFn: () => fetchCollection<T>(path, options, canExpand.value),
+     enabled: computed(() => !!serviceRoot.value),
+-    refetchOnMount: false, // Don't refetch when component remounts
+-    refetchOnWindowFocus: false, // Don't refetch when window regains focus
+-    refetchOnReconnect: false,
++    refetchOnMount: true,
++    refetchOnWindowFocus: true,
++    refetchOnReconnect: true,
+     retry: 2,
+     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+   });
+diff --git a/src/components/AppHeader/AppHeader.vue b/src/components/AppHeader/AppHeader.vue
+--- a/src/components/AppHeader/AppHeader.vue
++++ b/src/components/AppHeader/AppHeader.vue
+@@ -120,6 +120,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import BVToastMixin from '@/components/Mixins/BVToastMixin';
+ import IconAvatar from '@carbon/icons-vue/es/user--avatar/20';
+ import IconClose from '@carbon/icons-vue/es/close/20';
+@@ -143,7 +144,10 @@
+     LoadingBar,
+     LogoHeader,
+   },
+-  mixins: [BVToastMixin],
++  mixins: [
++    createLiveRefreshMixin(['global/getSystemInfo', 'eventLog/getEventLogData'], 30000),
++    BVToastMixin,
++  ],
+   props: {
+     routerKey: {
+       type: Number,
+diff --git a/src/components/Composables/useSensors.ts b/src/components/Composables/useSensors.ts
+--- a/src/components/Composables/useSensors.ts
++++ b/src/components/Composables/useSensors.ts
+@@ -125,7 +125,11 @@
+     error,
+     refetch,
+     isFetching,
+-  } = useAllSubResources<RawSensor>('/redfish/v1/Chassis', 'Sensors');
++  } = useAllSubResources<RawSensor>(
++    '/redfish/v1/Chassis',
++    'Sensors',
++    10000,
++  );
+ 
+   // Transform raw sensor data to display format
+   const sensors = computed(() => {
+diff --git a/src/components/Mixins/LiveRefreshMixin.js b/src/components/Mixins/LiveRefreshMixin.js
+new file mode 100644
+--- /dev/null
++++ b/src/components/Mixins/LiveRefreshMixin.js
+@@ -0,0 +1,79 @@
++// Refresh read-only state without reloading routes or resetting forms.
++// Share outstanding reads when header and page use the same Vuex action.
++const pendingReads = new WeakMap();
++
++function readAction(store, action) {
++  let pending = pendingReads.get(store);
++  if (!pending) {
++    pending = new Map();
++    pendingReads.set(store, pending);
++  }
++  if (!pending.has(action)) {
++    const request = store.dispatch(action).finally(() => pending.delete(action));
++    pending.set(action, request);
++  }
++  return pending.get(action);
++}
++
++export default function createLiveRefreshMixin(actions, interval = 10000) {
++  return {
++    data() {
++      return {
++        liveRefreshTimer: null,
++        liveRefreshRunning: false,
++        liveRefreshStopped: false,
++        liveVisibilityHandler: null,
++      };
++    },
++    mounted() {
++      this.liveVisibilityHandler = () => {
++        clearTimeout(this.liveRefreshTimer);
++        if (!document.hidden) this.refreshLiveData();
++      };
++      document.addEventListener('visibilitychange', this.liveVisibilityHandler);
++      this.scheduleLiveRefresh();
++    },
++    beforeUnmount() {
++      this.liveRefreshStopped = true;
++      clearTimeout(this.liveRefreshTimer);
++      document.removeEventListener('visibilitychange', this.liveVisibilityHandler);
++    },
++    methods: {
++      scheduleLiveRefresh() {
++        clearTimeout(this.liveRefreshTimer);
++        if (!this.liveRefreshStopped && !document.hidden) {
++          this.liveRefreshTimer = setTimeout(() => this.refreshLiveData(), interval);
++        }
++      },
++      async refreshLiveData() {
++        if (this.liveRefreshStopped || this.liveRefreshRunning) return;
++        // Preserve row identity while selecting, confirming, or saving.
++        if (
++          document.hidden || this.isBusy || this.isSaving ||
++          this.selectedRows?.length ||
++          document.querySelector(
++            '.modal.show, [role="dialog"][aria-modal="true"], tr[aria-selected="true"]',
++          )
++        ) {
++          this.scheduleLiveRefresh();
++          return;
++        }
++        this.liveRefreshRunning = true;
++        try {
++          if (typeof actions === 'function') {
++            await actions.call(this);
++          } else {
++            await Promise.allSettled(
++              actions.map((action) => readAction(this.$store, action)),
++            );
++          }
++        } catch (error) {
++          console.warn('Live state refresh failed:', error);
++        } finally {
++          this.liveRefreshRunning = false;
++          this.scheduleLiveRefresh();
++        }
++      },
++    },
++  };
++}
+diff --git a/src/store/modules/Operations/FirmwareStore.js b/src/store/modules/Operations/FirmwareStore.js
+--- a/src/store/modules/Operations/FirmwareStore.js
++++ b/src/store/modules/Operations/FirmwareStore.js
+@@ -47,9 +47,11 @@
+   },
+   actions: {
+     async getFirmwareInformation({ dispatch }) {
+-      dispatch('getActiveBiosFirmware');
+-      dispatch('getActiveBmcFirmware');
+-      return await dispatch('getFirmwareInventory');
++      return await Promise.all([
++        dispatch('getActiveBiosFirmware'),
++        dispatch('getActiveBmcFirmware'),
++        dispatch('getFirmwareInventory'),
++      ]);
+     },
+     async getActiveBmcFirmware({ commit }) {
+       return api
+diff --git a/src/views/HardwareStatus/Inventory/Inventory.vue b/src/views/HardwareStatus/Inventory/Inventory.vue
+--- a/src/views/HardwareStatus/Inventory/Inventory.vue
++++ b/src/views/HardwareStatus/Inventory/Inventory.vue
+@@ -34,6 +34,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import eventBus from '@/eventBus';
+ import PageTitle from '@/components/Global/PageTitle';
+ import ServiceIndicator from './InventoryServiceIndicator';
+@@ -57,7 +58,18 @@
+     PageSection,
+     JumpLink: JumpLink16,
+   },
+-  mixins: [LoadingBarMixin, JumpLinkMixin],
++  mixins: [
++    createLiveRefreshMixin(
++      [
++        'system/getSystem',
++        'bmc/getBmcInfo',
++        'chassis/getChassisInfo',
++      ],
++      30000,
++    ),
++    LoadingBarMixin,
++    JumpLinkMixin,
++  ],
+   beforeRouteLeave(to, from, next) {
+     // Hide loader if user navigates away from page
+     // before requests complete
+diff --git a/src/views/HardwareStatus/Sensors/Sensors.vue b/src/views/HardwareStatus/Sensors/Sensors.vue
+--- a/src/views/HardwareStatus/Sensors/Sensors.vue
++++ b/src/views/HardwareStatus/Sensors/Sensors.vue
+@@ -247,7 +247,8 @@
+     : filteredSensors.value.length;
+ });
+ 
+-const isBusy = computed(() => isLoading.value || isFetching.value);
++// Keep readings visible while background polling updates the query.
++const isBusy = computed(() => isLoading.value);
+ 
+ // perPage 0 is "view all": no pagination
+ function getTotalRowCount(count) {
+diff --git a/src/views/Logs/Dumps/Dumps.vue b/src/views/Logs/Dumps/Dumps.vue
+--- a/src/views/Logs/Dumps/Dumps.vue
++++ b/src/views/Logs/Dumps/Dumps.vue
+@@ -151,6 +151,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import IconDelete from '@carbon/icons-vue/es/trash-can/20';
+ import IconDownload from '@carbon/icons-vue/es/download/20';
+ import DumpsForm from './DumpsForm';
+@@ -196,6 +197,7 @@
+     TableFilter,
+   },
+   mixins: [
++    createLiveRefreshMixin(['dumps/getAllDumps'], 10000),
+     BVTableSelectableMixin,
+     BVToastMixin,
+     BVPaginationMixin,
+diff --git a/src/views/Logs/EventLogs/EventLogs.vue b/src/views/Logs/EventLogs/EventLogs.vue
+--- a/src/views/Logs/EventLogs/EventLogs.vue
++++ b/src/views/Logs/EventLogs/EventLogs.vue
+@@ -227,6 +227,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import IconDelete from '@carbon/icons-vue/es/trash-can/20';
+ import IconTrashcan from '@carbon/icons-vue/es/trash-can/20';
+ import IconExport from '@carbon/icons-vue/es/document--export/20';
+@@ -286,6 +287,7 @@
+     TableDateFilter,
+   },
+   mixins: [
++    createLiveRefreshMixin(['eventLog/getEventLogData'], 10000),
+     BVPaginationMixin,
+     BVTableSelectableMixin,
+     BVToastMixin,
+diff --git a/src/views/Logs/PostCodeLogs/PostCodeLogs.vue b/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
+--- a/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
++++ b/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
+@@ -166,6 +166,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import IconDelete from '@carbon/icons-vue/es/trash-can/20';
+ import IconDownload from '@carbon/icons-vue/es/download/20';
+ import IconExport from '@carbon/icons-vue/es/document--export/20';
+@@ -214,6 +215,7 @@
+     TableDateFilter,
+   },
+   mixins: [
++    createLiveRefreshMixin(['postCodeLogs/getPostCodesLogData'], 10000),
+     BVPaginationMixin,
+     BVTableSelectableMixin,
+     BVToastMixin,
+diff --git a/src/views/Operations/Firmware/Firmware.vue b/src/views/Operations/Firmware/Firmware.vue
+--- a/src/views/Operations/Firmware/Firmware.vue
++++ b/src/views/Operations/Firmware/Firmware.vue
+@@ -51,6 +51,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import Alert from '@/components/Global/Alert';
+ import AlertsServerPower from './FirmwareAlertServerPower';
+ import BmcCards from './FirmwareCardsBmc';
+@@ -73,7 +74,15 @@
+     PageSection,
+     PageTitle,
+   },
+-  mixins: [LoadingBarMixin],
++  mixins: [
++    createLiveRefreshMixin(
++      [
++        'firmware/getFirmwareInformation',
++      ],
++      30000,
++    ),
++    LoadingBarMixin,
++  ],
+   beforeRouteLeave(to, from, next) {
+     this.hideLoader();
+     next();
+diff --git a/src/views/Operations/RebootBmc/RebootBmc.vue b/src/views/Operations/RebootBmc/RebootBmc.vue
+--- a/src/views/Operations/RebootBmc/RebootBmc.vue
++++ b/src/views/Operations/RebootBmc/RebootBmc.vue
+@@ -34,6 +34,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import PageTitle from '@/components/Global/PageTitle';
+ import PageSection from '@/components/Global/PageSection';
+ import BVToastMixin from '@/components/Mixins/BVToastMixin';
+@@ -44,7 +45,16 @@
+ export default {
+   name: 'RebootBmc',
+   components: { PageTitle, PageSection },
+-  mixins: [BVToastMixin, LoadingBarMixin],
++  mixins: [
++    createLiveRefreshMixin(
++      [
++        'controls/getLastBmcRebootTime',
++      ],
++      30000,
++    ),
++    BVToastMixin,
++    LoadingBarMixin,
++  ],
+   beforeRouteLeave(to, from, next) {
+     this.hideLoader();
+     next();
+diff --git a/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue b/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
+--- a/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
++++ b/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
+@@ -171,6 +171,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import eventBus from '@/eventBus';
+ import PageTitle from '@/components/Global/PageTitle';
+ import PageSection from '@/components/Global/PageSection';
+@@ -187,7 +188,17 @@
+ export default {
+   name: 'ServerPowerOperations',
+   components: { PageTitle, PageSection, BootSettings, Alert, InfoTooltip },
+-  mixins: [BVToastMixin, LoadingBarMixin],
++  mixins: [
++    createLiveRefreshMixin(
++      [
++        'global/getSystemInfo',
++        'controls/getLastPowerOperationTime',
++      ],
++      10000,
++    ),
++    BVToastMixin,
++    LoadingBarMixin,
++  ],
+   beforeRouteLeave(to, from, next) {
+     this.hideLoader();
+     next();
+diff --git a/src/views/Overview/Overview.vue b/src/views/Overview/Overview.vue
+--- a/src/views/Overview/Overview.vue
++++ b/src/views/Overview/Overview.vue
+@@ -37,6 +37,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import LoadingBarMixin from '@/components/Mixins/LoadingBarMixin';
+ import OverviewDumps from './OverviewDumps.vue';
+ import OverviewEvents from './OverviewEvents.vue';
+@@ -61,7 +62,19 @@
+     PageSection,
+     PageTitle,
+   },
+-  mixins: [LoadingBarMixin],
++  mixins: [
++    createLiveRefreshMixin(
++      [
++        'system/getSystem',
++        'eventLog/getEventLogData',
++        'firmware/getFirmwareInformation',
++        'network/getEthernetData',
++        'global/getBmcTime',
++      ],
++      30000,
++    ),
++    LoadingBarMixin,
++  ],
+   data() {
+     return {
+       showDumps: import.meta.env.VITE_ENV_NAME === 'ibm',
+diff --git a/src/views/SecurityAndAccess/Sessions/Sessions.vue b/src/views/SecurityAndAccess/Sessions/Sessions.vue
+--- a/src/views/SecurityAndAccess/Sessions/Sessions.vue
++++ b/src/views/SecurityAndAccess/Sessions/Sessions.vue
+@@ -121,6 +121,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import PageTitle from '@/components/Global/PageTitle';
+ import Search from '@/components/Global/Search';
+ import TableCellCount from '@/components/Global/TableCellCount';
+@@ -150,6 +151,7 @@
+     TableToolbar,
+   },
+   mixins: [
++    createLiveRefreshMixin(['sessions/getSessionsData'], 10000),
+     BVPaginationMixin,
+     BVTableSelectableMixin,
+     BVToastMixin,
+diff --git a/src/views/Settings/FanControl/FanControl.vue b/src/views/Settings/FanControl/FanControl.vue
+--- a/src/views/Settings/FanControl/FanControl.vue
++++ b/src/views/Settings/FanControl/FanControl.vue
+@@ -87,6 +87,7 @@
+ </template>
+ 
+ <script>
++import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import api from '@/store/api';
+ import BVToastMixin from '@/components/Mixins/BVToastMixin';
+ import PageTitle from '@/components/Global/PageTitle';
+@@ -103,7 +104,7 @@
+ export default {
+   name: 'FanControl',
+   components: { PageTitle },
+-  mixins: [BVToastMixin],
++  mixins: [BVToastMixin, createLiveRefreshMixin(function () { return this.loadSettings(false); })],
+   data() {
+     return {
+       mode: 'adaptive',
+@@ -163,18 +164,18 @@
+       });
+       return response?.data?.data;
+     },
+-    async loadSettings() {
++    async loadSettings(updateForm = true) {
+       try {
+         // [keep after reboot, then mode, duty, rpm low, rpm high for each fan]
+         const bytes = await this.callService('GetFans');
+         if (!Array.isArray(bytes) || bytes.length < 1 + 4 * fanCount) return;
+         this.hasControl = true;
+-        this.persist = bytes[0] === 1;
++        if (updateForm) this.persist = bytes[0] === 1;
+         this.fanStatus = Array.from({ length: fanCount }, (_, index) => ({
+           fixed: bytes[1 + index * 4] === 1,
+           duty: bytes[2 + index * 4],
+         }));
+-        this.showSelectedFan();
++        if (updateForm) this.showSelectedFan();
+       } catch {
+         this.loadError = true;
+       }
+diff --git a/src/store/modules/Logs/DumpsStore.js b/src/store/modules/Logs/DumpsStore.js
+--- a/src/store/modules/Logs/DumpsStore.js
++++ b/src/store/modules/Logs/DumpsStore.js
+@@ -39,13 +39,12 @@
+         .catch((error) => console.log(error));
+     },
+     async getAllDumps({ commit, dispatch }) {
+-      return await api
+-        .all([dispatch('getBmcDumpEntries'), dispatch('getSystemDumpEntries')])
++      // CEB-GNRD supports BMC dumps; an unsupported host-dump endpoint
++      // must not prevent the BMC list from loading or refreshing.
++      return await dispatch('getBmcDumpEntries')
+         .then((response) => {
+-          const bmcDumpEntries = response[0].data?.Members || [];
+-          const systemDumpEntries = response[1].data?.Members || [];
+-          const allDumps = [...bmcDumpEntries, ...systemDumpEntries];
+-          commit('setAllDumps', allDumps);
++          if (!response?.data) return;
++          commit('setAllDumps', response.data.Members || []);
+         })
+         .catch((error) => console.log(error));
+     },

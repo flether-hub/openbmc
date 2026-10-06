@@ -23,6 +23,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0021-ceb-gnrd-refresh-server-power-operation-state.patch \
     file://0022-ceb-gnrd-event-log-explicit-columns.patch \
     file://0023-ceb-gnrd-event-log-actions-heading.patch \
+    file://0024-ceb-gnrd-refresh-live-status-pages.patch \
     file://zh-CN.json \
 "
 
