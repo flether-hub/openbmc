@@ -7,7 +7,7 @@ Description=Set the BMC system clock from the battery-backed RTC (NCT3015Y)
 # is limited to 3 s (start timeout 5 s).
 DefaultDependencies=no
 After=systemd-modules-load.service
-Before=sysinit.target time-set.target systemd-timesyncd.service phosphor-time-manager.service
+Before=sysinit.target time-set.target systemd-timesyncd.service xyz.openbmc_project.Time.Manager.service
 
 [Service]
 Type=oneshot

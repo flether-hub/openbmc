@@ -50,7 +50,7 @@ FruDevice 写入后会读回物理 EEPROM 并比对；成功日志 `FRU EEPROM w
 | DEPLOY | ~/openbmc/build/ceb-gnrd/tmp/deploy/images/ceb-gnrd |
 | STATE | ~/qemu-ceb-gnrd；QMP、FRU 文件、运行日志及面板上传的 VGA 图片 |
 | BIOS_FLASH | ~/qemu-bios.bin，64 MiB BIOS 模拟 Flash |
-| PANEL_PORT | 8800，模拟控制面板 HTTP 端口 |
+| PANEL_PORT | 8800，硬件模拟控制台 HTTP 端口 |
 | NO_PANEL=1 | 隐藏面板，仍运行主机 COM1、USB、VGA 辅助线程 |
 | NETWORK_CAPTURE=1 | 抓取管理网卡 Ethernet 包到 STATE/management.pcap，贯穿 BMC reboot |
 | PECI_CPU=gnrd / spr | 默认 GNR-D 温度模型；spr 保留上一代 SPR 模型用于比较 |
@@ -72,7 +72,7 @@ FruDevice 写入后会读回物理 EEPROM 并比对；成功日志 `FRU EEPROM w
 | BMC Web / Redfish | https://127.0.0.1:8443 | 转发至 BMC eth0 192.168.185.200:443 |
 | BMC SSH | 127.0.0.1:2222 | 转发至 BMC 22 |
 | IPMI LAN | UDP 127.0.0.1:2623 | 转发至 BMC 623 |
-| 模拟控制面板 | http://127.0.0.1:8800 | Python 主机模拟器，非 BMC Web |
+| CEB-GNRD 硬件模拟控制台 | http://127.0.0.1:8800 | Python 主机模拟器，非 BMC Web |
 
 转发只绑定回环地址。从其他电脑访问，可建立 SSH 隧道：
 

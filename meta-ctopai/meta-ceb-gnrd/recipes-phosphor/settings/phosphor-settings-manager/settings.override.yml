@@ -1,3 +1,11 @@
+# Factory time mode is Manual: seed system UTC from rtc0 at boot. Persisted
+# user selections (including NTP) remain authoritative after firmware updates.
+/xyz/openbmc_project/time/sync_method:
+    - Interface: xyz.openbmc_project.Time.Synchronization
+      Properties:
+          TimeSyncMethod:
+              Default: Synchronization::Method::Manual
+
 /xyz/openbmc_project/ipmi/sol/eth0:
     - Interface: xyz.openbmc_project.Ipmi.SOL
       Properties:
