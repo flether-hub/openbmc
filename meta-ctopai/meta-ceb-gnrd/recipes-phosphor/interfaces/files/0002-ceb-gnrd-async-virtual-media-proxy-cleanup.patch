@@ -1,0 +1,203 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] virtual-media: reap nbd-proxy without blocking the web loop
+
+Upstream-Status: Pending
+
+A stalled nbd-proxy shutdown must not prevent HTTP requests or systemd
+watchdog notifications. Reap asynchronously, bound graceful cleanup, and
+retain buffers until cancelled pipe operations have completed. Preserve
+proxy stderr in the journal so mounting failures are diagnosable.
+
+--- a/features/virtual_media/vm_websocket.hpp
++++ b/features/virtual_media/vm_websocket.hpp
+@@ -15,6 +15,7 @@
+ #include <boost/asio/io_context.hpp>
+ #include <boost/asio/local/stream_protocol.hpp>
+ #include <boost/asio/readable_pipe.hpp>
++#include <boost/asio/steady_timer.hpp>
+ #include <boost/asio/writable_pipe.hpp>
+ #include <boost/beast/core/buffers_to_string.hpp>
+ #include <boost/beast/core/error.hpp>
+@@ -27,6 +28,7 @@
+ 
+ #include <cerrno>
+ #include <csignal>
++#include <chrono>
+ #include <cstddef>
+ #include <filesystem>
+ #include <format>
+@@ -55,10 +57,10 @@
+ {
+   public:
+     Handler(const std::string& media, boost::asio::io_context& ios) :
+-        pipeOut(ios), pipeIn(ios),
++        pipeOut(ios), pipeIn(ios), stopTimer(ios),
+         proxy(ios, "/usr/bin/nbd-proxy", {media},
+               boost::process::v2::process_stdio{
+-                  .in = pipeIn, .out = pipeOut, .err = nullptr})
++                  .in = pipeIn, .out = pipeOut})
+     {}
+ 
+     ~Handler() = default;
+@@ -68,19 +70,55 @@
+     Handler& operator=(const Handler&) = delete;
+     Handler& operator=(Handler&&) = delete;
+ 
+-    void doClose()
+-    {
+-        // boost::process::child::terminate uses SIGKILL, need to send SIGTERM
+-        // to allow the proxy to stop nbd-client and the USB device gadget.
+-        // NOLINTNEXTLINE(misc-include-cleaner)
++    void doClose(std::function<void()> onStopped)
++    {
++        if (closing)
++        {
++            return;
++        }
++        closing = true;
++
++        // Do not wait synchronously on the HTTP/WebSocket event loop. Gadget
++        // cleanup in nbd-proxy may block while an NBD request is outstanding.
+         int rc = kill(proxy.id(), SIGTERM);
+-        if (rc != 0)
+-        {
+-            BMCWEB_LOG_ERROR("Failed to terminate nbd-proxy: {}", errno);
+-            return;
+-        }
+-
+-        proxy.wait();
++        if (rc != 0 && errno != ESRCH)
++        {
++            BMCWEB_LOG_ERROR("Failed to signal nbd-proxy: {}", errno);
++        }
++
++        boost::system::error_code pipeEc;
++        pipeIn.close(pipeEc);
++        pipeOut.close(pipeEc);
++
++        // jsnbd has a 30-second NBD timeout; allow normal cleanup to finish.
++        stopTimer.expires_after(std::chrono::seconds(45));
++        stopTimer.async_wait(
++            [self = shared_from_this()](const boost::system::error_code& ec) {
++                if (ec || self->stopped)
++                {
++                    return;
++                }
++                BMCWEB_LOG_ERROR("nbd-proxy cleanup timed out; sending SIGKILL");
++                if (kill(self->proxy.id(), SIGKILL) != 0 && errno != ESRCH)
++                {
++                    BMCWEB_LOG_ERROR("Failed to kill nbd-proxy: {}", errno);
++                }
++            });
++        // Keep the process and its buffers alive until asynchronous reap and
++        // outstanding pipe callbacks complete. Retain the global handler until
++        // reap so another connection cannot reuse the gadget during cleanup.
++        proxy.async_wait(
++            [self = shared_from_this(), onStopped = std::move(onStopped)](
++                const auto& ec, int exitCode) {
++                self->stopped = true;
++                self->stopTimer.cancel();
++                if (ec)
++                {
++                    BMCWEB_LOG_ERROR("nbd-proxy wait failed: {}", ec.message());
++                }
++                BMCWEB_LOG_INFO("nbd-proxy exited: {}", exitCode);
++                onStopped();
++            });
+     }
+ 
+     void connect()
+@@ -89,7 +127,7 @@
+         if (ec)
+         {
+             BMCWEB_LOG_ERROR("Couldn't connect to nbd-proxy: {}", ec.message());
+-            if (session != nullptr)
++            if (!closing && session != nullptr)
+             {
+                 session->close("Error connecting to nbd-proxy");
+             }
+@@ -101,6 +139,10 @@
+ 
+     void doWrite()
+     {
++        if (closing)
++        {
++            return;
++        }
+         if (doingWrite)
+         {
+             BMCWEB_LOG_DEBUG("Already writing.  Bailing out");
+@@ -122,7 +164,7 @@
+                 doingWrite = false;
+                 inputBuffer.consume(bytesWritten);
+ 
+-                if (session == nullptr)
++                if (closing || session == nullptr)
+                 {
+                     return;
+                 }
+@@ -143,6 +185,10 @@
+ 
+     void doRead()
+     {
++        if (closing)
++        {
++            return;
++        }
+         std::size_t bytes = outputBuffer.capacity() - outputBuffer.size();
+ 
+         pipeOut.async_read_some(
+@@ -150,16 +196,20 @@
+             [this, self(shared_from_this())](
+                 const boost::system::error_code& ec, std::size_t bytesRead) {
+                 BMCWEB_LOG_DEBUG("Read done.  Read {} bytes", bytesRead);
++                if (closing)
++                {
++                    return;
++                }
+                 if (ec)
+                 {
+                     BMCWEB_LOG_ERROR("Couldn't read from VM port: {}", ec);
+-                    if (session != nullptr)
++                    if (!closing && session != nullptr)
+                     {
+                         session->close("Error in connecting to VM port");
+                     }
+                     return;
+                 }
+-                if (session == nullptr)
++                if (closing || session == nullptr)
+                 {
+                     return;
+                 }
+@@ -177,7 +227,10 @@
+ 
+     boost::asio::readable_pipe pipeOut;
+     boost::asio::writable_pipe pipeIn;
++    boost::asio::steady_timer stopTimer;
+     boost::process::v2::process proxy;
++    bool closing{false};
++    bool stopped{false};
+     bool doingWrite{false};
+ 
+     boost::beast::flat_static_buffer<nbdBufferSize> outputBuffer;
+@@ -597,14 +650,15 @@
+                 }
+ 
+                 session = nullptr;
+-                handler->doClose();
+-                handler->inputBuffer.clear();
+-                handler->outputBuffer.clear();
+-                handler.reset();
++                handler->doClose([] { handler.reset(); });
+             })
+             // ast-grep-ignore: long-lambda
+             .onmessage([](crow::websocket::Connection& conn,
+                           const std::string& data, bool) {
++                if (&conn != session || handler == nullptr || handler->closing)
++                {
++                    return;
++                }
+                 if (data.length() > handler->inputBuffer.capacity() -
+                                         handler->inputBuffer.size())
+                 {

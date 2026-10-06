@@ -1,6 +1,7 @@
 # The fan control page stores its persistence option through the D-Bus REST API.
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-delete-single-file-event-log.patch"
+SRC_URI:append:ceb-gnrd = " file://0002-ceb-gnrd-async-virtual-media-proxy-cleanup.patch"
 
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 
