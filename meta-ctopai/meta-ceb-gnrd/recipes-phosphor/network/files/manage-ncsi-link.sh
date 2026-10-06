@@ -31,6 +31,7 @@ has_carrier() {
 }
 
 last_state=unknown
+last_carrier=unknown
 retries=0
 last_up=0
 while :; do
@@ -65,5 +66,10 @@ while :; do
         fi
     fi
 
+    carrier=$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo unknown)
+    if [ "$carrier" != "$last_carrier" ]; then
+        logger -t ceb-gnrd-ncsi "eth1 carrier=$carrier chassis=$desired retries=$retries"
+        last_carrier=$carrier
+    fi
     sleep 1
 done

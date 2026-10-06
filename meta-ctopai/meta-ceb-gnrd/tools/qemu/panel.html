@@ -280,6 +280,23 @@ body.resizing { cursor: col-resize; user-select: none; }
   <pre class="log" id="log"></pre>
 </section>
 
+<section class="card wide" id="networkcard">
+  <h2>网络接口 <small>RTL8211FS / Intel NC-SI</small></h2>
+  <h3>独立管理 RJ45 · eth0</h3>
+  <p id="rj45-link" class="muted">等候模型状态</p>
+  <div class="row"><button onclick="cmd('net rj45 link up')">连接网线</button><button class="danger" onclick="cmd('net rj45 link down')">拔出网线</button>
+    <button onclick="cmd('net rj45 speed 10')">10 Mbps</button><button onclick="cmd('net rj45 speed 100')">100 Mbps</button><button onclick="cmd('net rj45 speed 1000')">1000 Mbps</button></div>
+  <p class="caption">拔出管理网线后，BMC Web / SSH / IPMI 转发会暂时不可用；仍可从本面板恢复。速率为软件状态模拟，不限制实际吞吐量。</p>
+  <h3>Intel NC-SI · eth1 · package 0</h3>
+  <p id="ncsi-link" class="muted">等候模型状态</p>
+  <div class="row"><button onclick="cmd('net ncsi channel 0 up')">通道 0 连通</button><button class="danger" onclick="cmd('net ncsi channel 0 down')">通道 0 断开</button></div>
+  <div class="row"><button onclick="cmd('net ncsi channel 1 up')">通道 1 连通</button><button class="danger" onclick="cmd('net ncsi channel 1 down')">通道 1 断开</button></div>
+  <div class="row"><button onclick="cmd('net ncsi speed 1000')">1 Gbps</button><button onclick="cmd('net ncsi speed 10000')">10 Gbps</button><button onclick="cmd('net ncsi speed 25000')">25 Gbps</button><button onclick="cmd('net ncsi speed 100000')">100 Gbps</button></div>
+  <div class="row"><button onclick="cmd('net ncsi responsive off')">模拟命令超时</button><button onclick="cmd('net ncsi responsive on')">恢复命令应答</button><button onclick="cmd('net ncsi reset')">模拟 NIC 复位</button></div>
+  <p class="caption">NIC 供电跟随主机，关机时不应答。连通/断开会产生链路 AEN（需 BMC 启用）；NIC 复位产生配置重建通知。两通道共享一个外部用户网络；速率表示 NIC 外网链路，BMC RMII 侧仍为 100 Mbps。</p>
+  <details><summary>网络诊断详情</summary><pre class="term" id="network-details"></pre></details>
+</section>
+
 </main>
 <script>
 let S = {};
@@ -587,6 +604,12 @@ function drawMisc() {
   setText('postcode', S.post == null ? '--' : hex(S.post));
   document.getElementById('posthist').innerHTML =
       (S.posts || []).slice().reverse().map(p => `${p[0]}  0x${hex(p[1])}`).join('<br>');
+  const network = S.network || {}, rj = network.rj45 || {}, nc = network.ncsi || {};
+  setText('rj45-link', rj['test-link'] == null ? '网络模型不可用；请更新 QEMU' :
+    `网线：${rj['test-link'] ? '连接' : '断开'}；对端速率上限：${rj['test-speed']} Mbps（全双工；协商结果见诊断详情）`);
+  setText('ncsi-link', nc['test-link'] == null ? '网络模型不可用；请更新 QEMU' :
+    `NIC 供电：${nc['ncsi-powered'] ? '开启' : '关闭'}；通道 0：${nc['channel0-link'] ? '连通' : '断开'}；通道 1：${nc['channel1-link'] ? '连通' : '断开'}；外网速率：${nc['test-speed']} Mbps；命令应答：${nc['ncsi-powered'] ? (nc['ncsi-responsive'] ? '正常' : '超时') : '未供电'}`);
+  setText('network-details', 'RJ45: ' + (rj['network-diagnostics'] || '--') + '\nNC-SI: ' + (nc['network-diagnostics'] || '--'));
   const rb = S.rtc_battery;
   document.getElementById('rtccard').classList.toggle('hidden', rb == null);
   document.getElementById('rtcbat').className = 'led ' + (rb ? 'g' : 'r');
@@ -698,7 +721,7 @@ function buildNavigation() {
   const cards = [...document.querySelectorAll('main > section.card')];
   const pages = [['主机 / POST', [1, 2]], ['风扇', [3]], ['PSU', [4]],
     ['温度', [5]], ['电压', [6]], ['RTC', [7]], ['eSPI / CHASI#', [8]],
-    ['VGA / USB', [9]], ['虚拟媒体', [10]], ['SOL', [11]]];
+    ['VGA / USB', [9]], ['虚拟媒体', [10]], ['SOL', [11]], ['网络', [13]]];
   const nav = document.getElementById('navigation');
   const workbench = document.createElement('div'); workbench.className = 'workbench';
   const content = document.createElement('div'); content.className = 'tab-content';

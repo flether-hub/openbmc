@@ -1,0 +1,1030 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] ftgmac100: add opt-in RTL8211FS and Intel NC-SI test profiles
+
+Upstream-Status: Inappropriate [CEB-GNRD software test model]
+
+Expose the board PHY at MDIO address 2 and retain Realtek vendor pages.
+Model two Intel NC-SI channels at the MAC boundary, independently of
+libslirp's stateless responder. Defer and bound replies, implement filters,
+Intel OEM MAC discovery and link/configuration AENs. Drive NIC power from
+the simulated host, independently of the browser panel or BMC resets.
+
+diff --git a/include/hw/net/ftgmac100.h b/include/hw/net/ftgmac100.h
+--- a/include/hw/net/ftgmac100.h
++++ b/include/hw/net/ftgmac100.h
+@@ -21,6 +21,7 @@
+ 
+ #include "hw/core/sysbus.h"
+ #include "net/net.h"
++#include "qemu/timer.h"
+ 
+ /*
+  * Max frame size for the receiving buffer
+@@ -68,6 +69,47 @@
+     uint32_t phy_int;
+     uint32_t phy_int_mask;
+ 
++
++    /* Opt-in CEB-GNRD external network profiles, selected by backend ID. */
++    bool ceb_network;
++    bool rtl8211f;
++    bool ncsi_e810;
++    bool ncsi_responsive;
++    bool ncsi_powered;
++    bool ncsi_keep_phy;
++    uint8_t ncsi_hw_mac[6];
++    uint8_t ncsi_vlan_enabled[2];
++    uint8_t ncsi_bc_enabled[2];
++    uint8_t ncsi_mc_enabled[2];
++    uint32_t ncsi_mc[2];
++    bool test_link;
++    uint32_t test_speed;
++    uint16_t phy_page;
++    uint16_t phy_gig_control;
++    uint16_t phy_vendor[65536]; /* 4096 pages, vendor registers 16..31 */
++    uint32_t mdio_accesses;
++    uint8_t ncsi_selected;
++    uint8_t ncsi_link[2];
++    uint8_t ncsi_enabled[2];
++    uint8_t ncsi_tx[2];
++    uint8_t ncsi_mc_id[2];
++    uint8_t ncsi_mac_enabled[2];
++    uint8_t ncsi_vlan_mode[2];
++    uint8_t ncsi_flow[2];
++    uint8_t ncsi_mac[12];
++    uint8_t ncsi_bmc_mac[6];
++    uint16_t ncsi_vlan[2];
++    uint32_t ncsi_aen[2];
++    uint32_t ncsi_bc[2];
++    uint32_t ncsi_link_mode[2];
++    uint32_t ncsi_commands, ncsi_responses, ncsi_aens;
++    uint32_t ncsi_dropped, ncsi_bad_checksum, ncsi_unsupported;
++    uint32_t network_tx, network_rx, network_dropped;
++    QEMUTimer *reply_timer;
++    uint8_t replies[8192];
++    uint16_t reply_len[32];
++    uint32_t reply_head, reply_count, reply_wait;
++
+     bool aspeed;
+     uint32_t txdes0_edotr;
+     uint32_t rxdes0_edorr;
+diff --git a/hw/net/ftgmac100.c b/hw/net/ftgmac100.c
+--- a/hw/net/ftgmac100.c
++++ b/hw/net/ftgmac100.c
+@@ -16,6 +16,8 @@
+ #include "hw/net/ftgmac100.h"
+ #include "system/dma.h"
+ #include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "qemu/timer.h"
+ #include "qemu/log.h"
+ #include "qemu/module.h"
+ #include "net/checksum.h"
+@@ -280,22 +282,35 @@
+     ftgmac100_update_irq(s);
+ }
+ 
++static bool ceb_phy_link(FTGMAC100State *s);
++static unsigned ceb_phy_speed(FTGMAC100State *s);
++
+ static void phy_update_link(FTGMAC100State *s)
+ {
+     /* Autonegotiation status mirrors link status.  */
+-    if (qemu_get_queue(s->nic)->link_down) {
++    if (qemu_get_queue(s->nic)->link_down ||
++        (s->rtl8211f && !ceb_phy_link(s))) {
+         s->phy_status &= ~(MII_BMSR_LINK_ST | MII_BMSR_AN_COMP);
+         s->phy_int |= PHY_INT_DOWN;
+     } else {
+-        s->phy_status |= (MII_BMSR_LINK_ST | MII_BMSR_AN_COMP);
++        s->phy_status |= MII_BMSR_LINK_ST;
++        if (!s->rtl8211f || (s->phy_control & MII_BMCR_AUTOEN)) {
++            s->phy_status |= MII_BMSR_AN_COMP;
++        } else {
++            s->phy_status &= ~MII_BMSR_AN_COMP;
++        }
+         s->phy_int |= PHY_INT_AUTONEG_COMPLETE;
+     }
+     phy_update_irq(s);
+ }
+ 
++#include "ceb_gnrd_network.c.inc"
++
+ static void ftgmac100_set_link(NetClientState *nc)
+ {
+-    phy_update_link(FTGMAC100(qemu_get_nic_opaque(nc)));
++    FTGMAC100State *s = FTGMAC100(qemu_get_nic_opaque(nc));
++    phy_update_link(s);
++    for (unsigned ch = 0; ch < 2; ch++) { ceb_aen(s, ch, 0); }
+ }
+ 
+ static void phy_reset(FTGMAC100State *s)
+@@ -310,11 +325,38 @@
+                         MII_ANAR_CSMACD);
+     s->phy_int_mask = 0;
+     s->phy_int = 0;
++    s->phy_page = 0;
++    s->phy_gig_control = 0x0200;
++    memset(s->phy_vendor, 0, sizeof(s->phy_vendor));
++    if (s->nic) { phy_update_link(s); }
+ }
+ 
+ static uint16_t do_phy_read(FTGMAC100State *s, uint8_t reg)
+ {
+     uint16_t val;
++    s->mdio_accesses++;
++    if (s->rtl8211f) {
++        if (reg == 31) { return s->phy_page; }
++        if (reg >= 16 && s->phy_page) {
++            if (s->phy_page == 0xa43 && reg == 0x12) {
++                return ceb_phy_speed(s) == 1000 ? 0x20 :
++                       ceb_phy_speed(s) == 100 ? 0x10 : 0;
++            }
++            if (s->phy_page == 0xa43 && reg == 0x1d) {
++                val = s->phy_int ? 0x10 : 0;
++                s->phy_int = 0;
++                return val;
++            }
++            return s->phy_vendor[s->phy_page * 16 + reg - 16];
++        }
++        if (reg == 15) { return 0x3000; }
++        if (reg == 13 || reg == 14) { return 0; } /* no EEE/MMD features */
++        if (reg == RTL8211E_MII_PHYSR) {
++            return (ceb_phy_link(s) ? 0x0400 : 0) | 0x2000 |
++                   (ceb_phy_speed(s) == 1000 ? 0x8000 :
++                    ceb_phy_speed(s) == 100 ? 0x4000 : 0);
++        }
++    }
+ 
+     switch (reg) {
+     case MII_BMCR: /* Basic Control */
+@@ -327,12 +369,18 @@
+         val = RTL8211E_PHYID1;
+         break;
+     case MII_PHYID2: /* ID2 */
+-        val = RTL8211E_PHYID2;
++        val = s->rtl8211f ? 0xc916 : RTL8211E_PHYID2;
+         break;
+     case MII_ANAR: /* Auto-neg advertisement */
+         val = s->phy_advertise;
+         break;
+     case MII_ANLPAR: /* Auto-neg Link Partner Ability */
++        if (s->rtl8211f) {
++            val = MII_ANLPAR_ACK | MII_ANLPAR_CSMACD |
++                  (s->test_speed >= 100 ? MII_ANLPAR_TXFD : 0) |
++                  MII_ANLPAR_10FD;
++            break;
++        }
+         val = (MII_ANLPAR_ACK | MII_ANLPAR_PAUSE | MII_ANLPAR_TXFD |
+                MII_ANLPAR_TX | MII_ANLPAR_10FD | MII_ANLPAR_10 |
+                MII_ANLPAR_CSMACD);
+@@ -341,10 +389,11 @@
+         val = MII_ANER_NWAY;
+         break;
+     case MII_CTRL1000: /* 1000BASE-T control  */
+-        val = (MII_CTRL1000_HALF | MII_CTRL1000_FULL);
++        val = s->rtl8211f ? s->phy_gig_control :
++              (MII_CTRL1000_HALF | MII_CTRL1000_FULL);
+         break;
+     case MII_STAT1000: /* 1000BASE-T status  */
+-        val = MII_STAT1000_FULL;
++        val = s->rtl8211f && s->test_speed != 1000 ? 0 : MII_STAT1000_FULL;
+         break;
+     case RTL8211E_MII_INSR:  /* Interrupt status.  */
+         val = s->phy_int;
+@@ -376,11 +425,22 @@
+ 
+ #define MII_BMCR_MASK (MII_BMCR_LOOPBACK | MII_BMCR_SPEED100 |          \
+                        MII_BMCR_SPEED | MII_BMCR_AUTOEN | MII_BMCR_PDOWN | \
+-                       MII_BMCR_FD | MII_BMCR_CTST)
++                       MII_BMCR_FD | MII_BMCR_CTST | MII_BMCR_ISOLATE | \
++                       MII_BMCR_SPEED1000)
+ #define MII_ANAR_MASK 0x2d7f
+ 
+ static void do_phy_write(FTGMAC100State *s, uint8_t reg, uint16_t val)
+ {
++    s->mdio_accesses++;
++    if (s->rtl8211f) {
++        if (reg == 31) { s->phy_page = val & 0x0fff; return; }
++        if (reg >= 16 && s->phy_page) {
++            s->phy_vendor[s->phy_page * 16 + reg - 16] = val;
++            return;
++        }
++        if (reg == MII_CTRL1000) { s->phy_gig_control = val; return; }
++        if (reg == 13 || reg == 14) { return; }
++    }
+     switch (reg) {
+     case MII_BMCR:     /* Basic Control */
+         if (val & MII_BMCR_RESET) {
+@@ -392,9 +452,13 @@
+                 s->phy_status |= MII_BMSR_AN_COMP;
+             }
+         }
++        if (s->rtl8211f) {
++            phy_update_link(s);
++        }
+         break;
+     case MII_ANAR:     /* Auto-neg advertisement */
+-        s->phy_advertise = (val & MII_ANAR_MASK) | MII_ANAR_TX;
++        s->phy_advertise = (val & MII_ANAR_MASK) |
++                           (s->rtl8211f ? 0 : MII_ANAR_TX);
+         break;
+     case RTL8211E_MII_INER: /* Interrupt enable */
+         s->phy_int_mask = val & 0xff;
+@@ -433,6 +497,11 @@
+ 
+     reg = FTGMAC100_PHYCR_NEW_REG(s->phycr);
+     data = FTGMAC100_PHYCR_NEW_DATA(s->phycr);
++    if (s->rtl8211f && FTGMAC100_PHYCR_NEW_DEV(s->phycr) != 2) {
++        s->phydata = 0xffff;
++        s->phycr &= ~FTGMAC100_PHYCR_NEW_FIRE;
++        return;
++    }
+ 
+     switch (FTGMAC100_PHYCR_NEW_OP(s->phycr)) {
+     case FTGMAC100_PHYCR_NEW_OP_WRITE:
+@@ -452,6 +521,11 @@
+ static void do_phy_ctl(FTGMAC100State *s)
+ {
+     uint8_t reg = FTGMAC100_PHYCR_REG(s->phycr);
++    if (s->rtl8211f && FTGMAC100_PHYCR_DEV(s->phycr) != 2) {
++        s->phydata = 0xffff0000;
++        s->phycr &= ~(FTGMAC100_PHYCR_MIIWR | FTGMAC100_PHYCR_MIIRD);
++        return;
++    }
+ 
+     if (s->phycr & FTGMAC100_PHYCR_MIIWR) {
+         do_phy_write(s, reg, s->phydata & 0xffff);
+@@ -612,7 +686,14 @@
+             }
+ 
+             /* Last buffer in frame.  */
+-            qemu_send_packet(qemu_get_queue(s->nic), s->frame, frame_size);
++            if (!ceb_ncsi_command(s, s->frame, frame_size)) {
++                if (ceb_data_allowed(s, s->frame, frame_size, true)) {
++                    qemu_send_packet(qemu_get_queue(s->nic), s->frame, frame_size);
++                    s->network_tx++;
++                } else {
++                    s->network_dropped++;
++                }
++            }
+             ptr = s->frame;
+             frame_size = 0;
+             s->isr |= FTGMAC100_INT_XPKT_ETH;
+@@ -719,8 +800,16 @@
+     s->phydata = 0;
+     s->fcr = 0x400;
+ 
+-    /* and the PHY */
+-    phy_reset(s);
++    /* MAC software reset does not reset the external PHY or NC-SI NIC. */
++    if (!sw_reset || (!s->rtl8211f && !s->ncsi_e810)) {
++        phy_reset(s);
++    }
++    if (!sw_reset && s->reply_timer) {
++        timer_del(s->reply_timer);
++        s->reply_count = s->reply_head = s->reply_wait = 0;
++        s->ncsi_selected = false;
++        for (unsigned ch = 0; ch < 2; ch++) { ceb_channel_reset(s, ch); }
++    }
+ }
+ 
+ static void ftgmac100_reset(DeviceState *d)
+@@ -1047,6 +1136,11 @@
+         return -1;
+     }
+ 
++    if (!ceb_data_allowed(s, buf, size, false)) {
++        s->network_dropped++;
++        return size;
++    }
++    if (proto != 0x88f8) { s->network_rx++; }
+     if (!ftgmac100_filter(s, buf, size)) {
+         return size;
+     }
+@@ -1222,12 +1316,22 @@
+                           object_get_typename(OBJECT(dev)), dev->id,
+                           &dev->mem_reentrancy_guard, s);
+     qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
++    s->reply_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, ceb_reply_timer, s);
++    if (s->ceb_network && qemu_get_queue(s->nic)->peer) {
++        const char *backend = qemu_get_queue(s->nic)->peer->name;
++        s->rtl8211f = !strcmp(backend, "ceb-management");
++        s->ncsi_e810 = !strcmp(backend, "ceb-ncsi");
++        if (s->ncsi_e810) { s->test_speed = 25000; }
++        memcpy(s->ncsi_hw_mac, s->conf.macaddr.a, 6);
++        qemu_log("CEB network backend=%s profile=%s\n", backend,
++                 s->rtl8211f ? "RTL8211FS" : s->ncsi_e810 ? "E810-NCSI-SIM" : "generic");
++    }
+ }
+ 
+ static const VMStateDescription vmstate_ftgmac100 = {
+     .name = TYPE_FTGMAC100,
+-    .version_id = 2,
+-    .minimum_version_id = 2,
++    .version_id = 3,
++    .minimum_version_id = 3,
+     .fields = (const VMStateField[]) {
+         VMSTATE_UINT32(irq_state, FTGMAC100State),
+         VMSTATE_UINT32(isr, FTGMAC100State),
+@@ -1256,15 +1360,66 @@
+         VMSTATE_UINT64(tx_ring, FTGMAC100State),
+         VMSTATE_UINT64(rx_descriptor, FTGMAC100State),
+         VMSTATE_UINT64(tx_descriptor, FTGMAC100State),
++        VMSTATE_BOOL(test_link, FTGMAC100State),
++        VMSTATE_BOOL(ncsi_responsive, FTGMAC100State),
++        VMSTATE_BOOL(ncsi_powered, FTGMAC100State),
++        VMSTATE_BOOL(ncsi_keep_phy, FTGMAC100State),
++        VMSTATE_UINT8_ARRAY(ncsi_hw_mac, FTGMAC100State, 6),
++        VMSTATE_UINT8_ARRAY(ncsi_vlan_enabled, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_bc_enabled, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_mc_enabled, FTGMAC100State, 2),
++        VMSTATE_UINT32_ARRAY(ncsi_mc, FTGMAC100State, 2),
++        VMSTATE_UINT32(test_speed, FTGMAC100State),
++        VMSTATE_UINT32(mdio_accesses, FTGMAC100State),
++        VMSTATE_UINT32(ncsi_commands, FTGMAC100State),
++        VMSTATE_UINT32(ncsi_responses, FTGMAC100State),
++        VMSTATE_UINT32(ncsi_aens, FTGMAC100State),
++        VMSTATE_UINT32(ncsi_dropped, FTGMAC100State),
++        VMSTATE_UINT32(ncsi_bad_checksum, FTGMAC100State),
++        VMSTATE_UINT32(ncsi_unsupported, FTGMAC100State),
++        VMSTATE_UINT32(network_tx, FTGMAC100State),
++        VMSTATE_UINT32(network_rx, FTGMAC100State),
++        VMSTATE_UINT32(network_dropped, FTGMAC100State),
++        VMSTATE_UINT32(reply_head, FTGMAC100State),
++        VMSTATE_UINT32(reply_count, FTGMAC100State),
++        VMSTATE_UINT32(reply_wait, FTGMAC100State),
++        VMSTATE_UINT16(phy_page, FTGMAC100State),
++        VMSTATE_UINT16(phy_gig_control, FTGMAC100State),
++        VMSTATE_UINT8(ncsi_selected, FTGMAC100State),
++        VMSTATE_UINT8_ARRAY(ncsi_link, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_enabled, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_tx, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_mc_id, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_mac_enabled, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_vlan_mode, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_flow, FTGMAC100State, 2),
++        VMSTATE_UINT8_ARRAY(ncsi_mac, FTGMAC100State, 12),
++        VMSTATE_UINT8_ARRAY(ncsi_bmc_mac, FTGMAC100State, 6),
++        VMSTATE_UINT8_ARRAY(replies, FTGMAC100State, 8192),
++        VMSTATE_UINT16_ARRAY(phy_vendor, FTGMAC100State, 65536),
++        VMSTATE_UINT16_ARRAY(ncsi_vlan, FTGMAC100State, 2),
++        VMSTATE_UINT16_ARRAY(reply_len, FTGMAC100State, 32),
++        VMSTATE_UINT32_ARRAY(ncsi_aen, FTGMAC100State, 2),
++        VMSTATE_UINT32_ARRAY(ncsi_bc, FTGMAC100State, 2),
++        VMSTATE_UINT32_ARRAY(ncsi_link_mode, FTGMAC100State, 2),
++        VMSTATE_TIMER_PTR(reply_timer, FTGMAC100State),
+         VMSTATE_END_OF_LIST()
+     }
+ };
+ 
+ static const Property ftgmac100_properties[] = {
+     DEFINE_PROP_BOOL("aspeed", FTGMAC100State, aspeed, false),
++    DEFINE_PROP_BOOL("ceb-gnrd-network", FTGMAC100State, ceb_network, false),
+     DEFINE_NIC_PROPERTIES(FTGMAC100State, conf),
+     DEFINE_PROP_BOOL("dma64", FTGMAC100State, dma64, false),
+ };
++
++static void ceb_unrealize(DeviceState *dev)
++{
++    FTGMAC100State *s = FTGMAC100(dev);
++    timer_free(s->reply_timer);
++    qemu_del_nic(s->nic);
++}
+ 
+ static void ftgmac100_class_init(ObjectClass *klass, const void *data)
+ {
+@@ -1275,6 +1430,7 @@
+     device_class_set_props(dc, ftgmac100_properties);
+     set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
+     dc->realize = ftgmac100_realize;
++    dc->unrealize = ceb_unrealize;
+     dc->desc = "Faraday FTGMAC100 Gigabit Ethernet emulation";
+ }
+ 
+@@ -1282,6 +1438,7 @@
+     .name = TYPE_FTGMAC100,
+     .parent = TYPE_SYS_BUS_DEVICE,
+     .instance_size = sizeof(FTGMAC100State),
++    .instance_init = ceb_init,
+     .class_init = ftgmac100_class_init,
+ };
+ 
+@@ -1329,6 +1486,11 @@
+ 
+     reg = ASPEED_MII_PHYCR_REG(s->phycr);
+     data = ASPEED_MII_PHYCR_DATA(s->phycr);
++    if (s->nic->rtl8211f && ASPEED_MII_PHYCR_PHY(s->phycr) != 2) {
++        s->phydata = ASPEED_MII_PHYDATA_IDLE | 0xffff;
++        aspeed_mii_transition(s, false);
++        return;
++    }
+ 
+     switch (ASPEED_MII_PHYCR_OP(s->phycr)) {
+     case ASPEED_MII_PHYCR_OP_WRITE:
+diff --git a/hw/net/ceb_gnrd_network.c.inc b/hw/net/ceb_gnrd_network.c.inc
+--- /dev/null
++++ b/hw/net/ceb_gnrd_network.c.inc
+@@ -0,0 +1,569 @@
++/* CEB-GNRD software test profiles. SPDX-License-Identifier: GPL-2.0-or-later */
++static bool ftgmac100_can_receive(NetClientState *nc);
++
++static unsigned ceb_phy_speed(FTGMAC100State *s)
++{
++    if (!(s->phy_control & MII_BMCR_AUTOEN)) {
++        unsigned forced = s->phy_control & MII_BMCR_SPEED1000 ? 1000 :
++                          s->phy_control & MII_BMCR_SPEED100 ? 100 : 10;
++        return forced <= s->test_speed ? forced : 0;
++    }
++    if (s->test_speed >= 1000 && (s->phy_gig_control & MII_CTRL1000_FULL)) {
++        return 1000;
++    }
++    if (s->test_speed >= 100 && (s->phy_advertise & MII_ANAR_TXFD)) {
++        return 100;
++    }
++    return s->phy_advertise & MII_ANAR_10FD ? 10 : 0;
++}
++
++static bool ceb_phy_link(FTGMAC100State *s)
++{
++    return s->test_link && !qemu_get_queue(s->nic)->link_down &&
++           !(s->phy_control & (MII_BMCR_PDOWN | MII_BMCR_ISOLATE)) &&
++           ceb_phy_speed(s);
++}
++
++static uint32_t ceb_ncsi_link(FTGMAC100State *s, unsigned ch)
++{
++    unsigned speed = s->test_speed == 100000 ? 13 :
++                     s->test_speed == 25000 ? 10 :
++                     s->test_speed == 10000 ? 8 :
++                     s->test_speed == 1000 ? 7 :
++                     s->test_speed == 100 ? 5 : 2;
++    return s->ncsi_powered && s->ncsi_link[ch] && s->test_link &&
++           !qemu_get_queue(s->nic)->link_down ? 0x61 | (speed << 1) : 0;
++}
++
++static uint32_t ceb_checksum(const uint8_t *p, size_t len)
++{
++    uint32_t sum = 0;
++    for (size_t i = 0; i < len; i += 2) {
++        sum += (uint32_t)p[i] << 8;
++        if (i + 1 < len) {
++            sum += p[i + 1];
++        }
++    }
++    return -sum;
++}
++
++static void ceb_reply_timer(void *opaque)
++{
++    FTGMAC100State *s = opaque;
++    if (!s->reply_count) {
++        return;
++    }
++    if (ftgmac100_can_receive(qemu_get_queue(s->nic))) {
++        unsigned slot = s->reply_head;
++        qemu_receive_packet(qemu_get_queue(s->nic),
++                            s->replies + slot * 256, s->reply_len[slot]);
++        s->reply_head = (slot + 1) % 32;
++        s->reply_count--;
++        s->reply_wait = 0;
++    } else if (++s->reply_wait >= 100) {
++        /* Bounded retry: no unbounded memory growth with disabled RX DMA. */
++        s->reply_head = (s->reply_head + 1) % 32;
++        s->reply_count--;
++        s->reply_wait = 0;
++        s->ncsi_dropped++;
++    }
++    if (s->reply_count) {
++        timer_mod(s->reply_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 10);
++    }
++}
++
++static void ceb_queue(FTGMAC100State *s, const uint8_t *frame, size_t len)
++{
++    unsigned slot;
++    if (s->reply_count == 32 || len > 256) {
++        s->ncsi_dropped++;
++        return;
++    }
++    slot = (s->reply_head + s->reply_count) % 32;
++    memcpy(s->replies + slot * 256, frame, len);
++    s->reply_len[slot] = len;
++    if (!s->reply_count++) {
++        timer_mod(s->reply_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1);
++    }
++}
++
++static void ceb_aen(FTGMAC100State *s, unsigned ch, unsigned type)
++{
++    uint8_t f[64] = {0};
++    unsigned payload = type == 0 ? 12 : 4;
++    if (!s->ncsi_e810 || !s->ncsi_powered || !(s->ncsi_aen[ch] & (1U << type))) {
++        return;
++    }
++    memcpy(f, s->ncsi_bmc_mac, 6);
++    memcpy(f + 6, s->conf.macaddr.a, 6);
++    stw_be_p(f + 12, 0x88f8);
++    f[14] = s->ncsi_mc_id[ch];
++    f[15] = 1;
++    f[18] = 0xff;
++    f[19] = ch;
++    stw_be_p(f + 20, payload);
++    f[33] = type;
++    if (type == 0) {
++        stl_be_p(f + 34, ceb_ncsi_link(s, ch));
++    }
++    stl_be_p(f + 30 + payload, ceb_checksum(f + 14, 16 + payload));
++    ceb_queue(s, f, sizeof(f));
++    s->ncsi_aens++;
++}
++
++static void ceb_channel_reset(FTGMAC100State *s, unsigned ch)
++{
++    s->ncsi_enabled[ch] = false;
++    s->ncsi_tx[ch] = false;
++    s->ncsi_aen[ch] = 0;
++    s->ncsi_bc[ch] = 0;
++    s->ncsi_mc[ch] = 0;
++    s->ncsi_bc_enabled[ch] = false;
++    s->ncsi_mc_enabled[ch] = false;
++    s->ncsi_vlan_enabled[ch] = false;
++    s->ncsi_flow[ch] = 0;
++    s->ncsi_link_mode[ch] = 0;
++    s->ncsi_vlan_mode[ch] = 0;
++    s->ncsi_vlan[ch] = 0;
++    s->ncsi_mac_enabled[ch] = false;
++    memset(s->ncsi_mac + ch * 6, 0, 6);
++}
++
++/* All offsets are relative to Ethernet + the 16-byte NC-SI common header.
++ * Two channels in package 0; unsupported packages/channels never respond,
++ * so the Linux discovery scan does not invent extra hardware.
++ */
++static bool ceb_ncsi_command(FTGMAC100State *s, const uint8_t *f, size_t len)
++{
++    uint8_t r[256] = {0};
++    const uint8_t *p;
++    unsigned ch, cmd, plen, out = 4, code = 0, reason = 0, need = 0;
++    uint32_t checksum;
++    if (!s->ncsi_e810 || len < 14 || lduw_be_p(f + 12) != 0x88f8) {
++        return false;
++    }
++    s->ncsi_commands++;
++    if (!s->ncsi_powered || !s->ncsi_responsive) { s->ncsi_dropped++; return true; }
++    if (len < 34 || f[15] != 1 || (f[18] & 0x80)) {
++        s->ncsi_dropped++;
++        return true;
++    }
++    cmd = f[18];
++    ch = f[19] & 31;
++    plen = lduw_be_p(f + 20);
++    if ((f[19] >> 5) != 0 ||
++        (ch >= 2 && !((cmd == 1 || cmd == 2 || cmd == 0x14 || cmd == 0x1b) && ch == 31))) {
++        s->ncsi_dropped++;
++        return true;
++    }
++    if (plen > 128 || len < 30 + ROUND_UP(plen, 4) + 4) {
++        s->ncsi_dropped++;
++        return true;
++    }
++    checksum = ldl_be_p(f + 30 + ROUND_UP(plen, 4));
++    if (checksum && checksum != ceb_checksum(f + 14, 16 + plen)) {
++        s->ncsi_bad_checksum++;
++        return true;
++    }
++    p = f + 30;
++    switch (cmd) {
++    case 1: case 4: case 5: case 0x0c: case 0x10: case 0x12: case 0x14:
++        need = 4; break;
++    case 8: case 9: case 0x0b: case 0x0e:
++        need = 8; break;
++    case 0x50:
++        need = 5; break;
++    default:
++        break;
++    }
++    if ((cmd == 0x50 && plen < need) || (cmd != 0x50 && plen != need)) {
++        code = 1; reason = 5;
++        goto reply;
++    }
++    memcpy(s->ncsi_bmc_mac, f + 6, 6);
++    switch (cmd) {
++    case 0: /* Clear Initial State */
++        ceb_channel_reset(s, ch);
++        break;
++    case 1:
++        s->ncsi_selected = true;
++        break;
++    case 2:
++        s->ncsi_selected = false;
++        for (unsigned i = 0; i < 2; i++) {
++            ceb_channel_reset(s, i);
++        }
++        break;
++    case 3: s->ncsi_enabled[ch] = true; break;
++    case 4: s->ncsi_enabled[ch] = false; s->ncsi_tx[ch] = false; break;
++    case 5: ceb_channel_reset(s, ch); break;
++    case 6:
++        s->ncsi_tx[0] = s->ncsi_tx[1] = false;
++        s->ncsi_tx[ch] = true;
++        break;
++    case 7: s->ncsi_tx[ch] = false; break;
++    case 8:
++        s->ncsi_mc_id[ch] = p[3];
++        s->ncsi_aen[ch] = ldl_be_p(p + 4) & 3;
++        break;
++    case 9: s->ncsi_link_mode[ch] = ldl_be_p(p); break;
++    case 0x0a:
++        out = 16;
++        stl_be_p(r + 34, ceb_ncsi_link(s, ch));
++        break;
++    case 0x0b:
++        if (p[6] != 1 || (p[7] & ~1)) {
++            code = 1; reason = 2; break;
++        }
++        s->ncsi_vlan_enabled[ch] = p[7];
++        s->ncsi_vlan[ch] = lduw_be_p(p + 2) & 0xfff;
++        break;
++    case 0x0c:
++        if (p[3] < 1 || p[3] > 3) { code = 1; reason = 2; break; }
++        s->ncsi_vlan_mode[ch] = p[3]; break;
++    case 0x0d: s->ncsi_vlan_mode[ch] = 0; break;
++    case 0x0e:
++        if (p[6] != 1 || (p[7] & 0xe0)) {
++            code = 1; reason = 2; break;
++        }
++        s->ncsi_mac_enabled[ch] = p[7] & 1;
++        memcpy(s->ncsi_mac + ch * 6, p, 6);
++        break;
++    case 0x10:
++        s->ncsi_bc_enabled[ch] = true;
++        s->ncsi_bc[ch] = ldl_be_p(p) & 15; break;
++    case 0x12:
++        s->ncsi_mc_enabled[ch] = true;
++        s->ncsi_mc[ch] = ldl_be_p(p) & 63; break;
++    case 0x13: s->ncsi_mc_enabled[ch] = false; break;
++    case 0x11: s->ncsi_bc_enabled[ch] = false; break;
++    case 0x14:
++        /* No pause generation advertised; disabling flow control is harmless. */
++        if (p[3]) { code = 3; reason = 0x7fff; }
++        break;
++    case 0x15:
++        out = 40;
++        r[34] = 1; r[35] = 2;
++        memcpy(r + 42, "E810-SIM", 8);
++        stl_be_p(r + 54, 1);
++        stw_be_p(r + 58, 0x1592);
++        stw_be_p(r + 60, 0x8086);
++        stl_be_p(r + 66, 0x157);
++        break;
++    case 0x16:
++        out = 32;
++        /* IPv4 broadcast and IPv6 global multicast filters; no arbitration. */
++        stl_be_p(r + 34, 0x50); /* global multicast, no hardware arbitration */
++        stl_be_p(r + 38, 15); /* ARP, DHCP client/server, NetBIOS */
++        stl_be_p(r + 42, 63); /* IPv6 ND, router, DHCPv6, MLD */
++        stl_be_p(r + 50, 3); /* link/configuration AEN */
++        r[54] = 1; /* one VLAN slot */
++        r[57] = 1; /* one unicast MAC */
++        r[60] = 7; /* VLAN modes 1, 2, 3 */
++        r[61] = 2; /* two channels */
++        break;
++    case 0x17:
++        out = 40;
++        r[34] = 1; r[37] = s->ncsi_mac_enabled[ch]; r[38] = 1;
++        stw_be_p(r + 40, s->ncsi_vlan_enabled[ch]);
++        stl_be_p(r + 42, s->ncsi_link_mode[ch]);
++        stl_be_p(r + 46, s->ncsi_bc[ch]);
++        stl_be_p(r + 50, s->ncsi_bc_enabled[ch] |
++                 (s->ncsi_enabled[ch] << 1) | (s->ncsi_tx[ch] << 2) |
++                 (s->ncsi_mc_enabled[ch] << 3));
++        r[54] = s->ncsi_vlan_mode[ch]; r[55] = s->ncsi_flow[ch];
++        stl_be_p(r + 58, s->ncsi_aen[ch]);
++        memcpy(r + 62, s->ncsi_mac + ch * 6, 6);
++        stw_be_p(r + 68, s->ncsi_vlan[ch]);
++        break;
++    case 0x18: /* Controller packet statistics: unmodelled hardware counters zero */
++        out = 204;
++        stl_be_p(r + 50, s->network_rx);
++        stl_be_p(r + 62, s->network_tx);
++        break;
++    case 0x19:
++        out = 32;
++        stl_be_p(r + 34, s->ncsi_commands);
++        stl_be_p(r + 38, s->ncsi_dropped);
++        stl_be_p(r + 42, s->ncsi_unsupported);
++        stl_be_p(r + 46, s->ncsi_bad_checksum);
++        stl_be_p(r + 50, s->ncsi_commands);
++        stl_be_p(r + 54, s->ncsi_responses);
++        stl_be_p(r + 58, s->ncsi_aens);
++        break;
++    case 0x1a:
++        out = 48;
++        stl_be_p(r + 34, s->network_tx);
++        stl_be_p(r + 38, s->network_dropped);
++        stl_be_p(r + 50, s->network_rx);
++        break;
++    case 0x1b: out = 8; break;
++    case 0x50:
++        /* Intel Get MAC Address: driver increments the returned NIC MAC. */
++        if (ldl_be_p(p) != 0x157) {
++            code = 3; reason = 0x7fff; break;
++        }
++        if (p[4] == 0x20 && plen == 7) {
++            /* Keep PHY up while powered; this cannot supply standby power. */
++            s->ncsi_keep_phy = p[6] & 1;
++            out = 12;
++            stl_be_p(r + 34, 0x157); r[38] = 0x20;
++            break;
++        }
++        if (p[4] != 6 || plen != 5) {
++            code = 3; reason = 0x7fff; break;
++        }
++        out = 16;
++        stl_be_p(r + 34, 0x157); r[38] = 6;
++        memcpy(r + 39, s->ncsi_hw_mac, 6);
++        for (int i = 44; i >= 39; i--) {
++            if (r[i]--) { break; }
++        }
++        break;
++    case 0x52:
++        out = 20;
++        memcpy(r + 34, "CEB-E810-SIM-0001", 16);
++        break;
++    default:
++        code = 3; reason = 0x7fff;
++        s->ncsi_unsupported++;
++        break;
++    }
++reply:
++    memcpy(r, f + 6, 6);
++    memcpy(r + 6, s->conf.macaddr.a, 6);
++    stw_be_p(r + 12, 0x88f8);
++    r[14] = f[14]; r[15] = 1; r[17] = f[17];
++    r[18] = cmd | 0x80; r[19] = f[19];
++    stw_be_p(r + 20, out);
++    stw_be_p(r + 30, code); stw_be_p(r + 32, reason);
++    stl_be_p(r + 30 + out, ceb_checksum(r + 14, 16 + out));
++    ceb_queue(s, r, MAX(60, 34 + out));
++    s->ncsi_responses++;
++    if (cmd != 0x0a || code) {
++        qemu_log("CEB NC-SI cmd=%02x channel=%u code=%u reason=%u selected=%u "
++                 "enabled=%u/%u tx=%u/%u\n", cmd, ch, code, reason,
++                 s->ncsi_selected, s->ncsi_enabled[0], s->ncsi_enabled[1],
++                 s->ncsi_tx[0], s->ncsi_tx[1]);
++    }
++    return true;
++}
++
++static bool ceb_rx_filter(FTGMAC100State *s, unsigned ch,
++                          const uint8_t *f, size_t len)
++{
++    unsigned offset = 14;
++    unsigned proto = lduw_be_p(f + 12);
++    bool tagged = proto == 0x8100;
++    if (tagged) {
++        if (len < 18) { return false; }
++        proto = lduw_be_p(f + 16);
++        offset = 18;
++    }
++    if (s->ncsi_vlan_mode[ch]) {
++        if (!tagged && s->ncsi_vlan_mode[ch] == 1) { return false; }
++        if (tagged && s->ncsi_vlan_mode[ch] != 3 &&
++            (!s->ncsi_vlan_enabled[ch] ||
++             (lduw_be_p(f + 14) & 0xfff) != s->ncsi_vlan[ch])) {
++            return false;
++        }
++    }
++    if (!memcmp(f, "\xff\xff\xff\xff\xff\xff", 6)) {
++        if (!s->ncsi_bc_enabled[ch]) { return true; }
++        if (proto == 0x0806) { return s->ncsi_bc[ch] & 1; }
++        if (proto == 0x0800 && len >= offset + 20) {
++            const uint8_t *ip = f + offset;
++            unsigned ihl = (ip[0] & 15) * 4;
++            if (ip[9] == 17 && ihl >= 20 && len >= offset + ihl + 8) {
++                unsigned port = lduw_be_p(ip + ihl + 2);
++                if (port == 68) { return s->ncsi_bc[ch] & 2; }
++                if (port == 67) { return s->ncsi_bc[ch] & 4; }
++                if (port == 137 || port == 138) { return s->ncsi_bc[ch] & 8; }
++            }
++        }
++        return false;
++    }
++    if (!(f[0] & 1)) {
++        return s->ncsi_mac_enabled[ch] &&
++               !memcmp(f, s->ncsi_mac + ch * 6, 6);
++    }
++    if (!s->ncsi_mc_enabled[ch]) { return true; }
++    if (proto == 0x86dd && len >= offset + 48) {
++        const uint8_t *ip = f + offset;
++        /* Selective protocol filters inspect the IPv6 base header. */
++        if (ip[6] == 58) {
++            unsigned type = ip[40];
++            if (type == 135) { return s->ncsi_mc[ch] & 0x20; }
++            if (type == 136) { return s->ncsi_mc[ch] & 1; }
++            if (type == 133 || type == 134) { return s->ncsi_mc[ch] & 2; }
++            if (type == 130 || type == 131 || type == 132 || type == 143) {
++                return s->ncsi_mc[ch] & 16;
++            }
++        } else if (ip[6] == 17) {
++            unsigned port = lduw_be_p(ip + 42);
++            if (port == 546 || port == 547) { return s->ncsi_mc[ch] & 12; }
++        }
++        return false;
++    }
++    return false;
++}
++
++static bool ceb_data_allowed(FTGMAC100State *s, const uint8_t *f,
++                             size_t len, bool tx)
++{
++    if (s->rtl8211f) { return ceb_phy_link(s); }
++    if (!s->ncsi_e810) { return true; }
++    if (!s->ncsi_powered) { return false; }
++    if (len >= 14 && lduw_be_p(f + 12) == 0x88f8) { return true; }
++    for (unsigned ch = 0; ch < 2; ch++) {
++        if (!s->ncsi_selected || !s->ncsi_enabled[ch] ||
++            !ceb_ncsi_link(s, ch) || (tx && !s->ncsi_tx[ch])) { continue; }
++        if (tx || (len >= 14 && ceb_rx_filter(s, ch, f, len))) { return true; }
++    }
++    return false;
++}
++
++static bool ceb_get_link(Object *obj, Error **errp)
++{
++    return FTGMAC100(obj)->test_link;
++}
++
++static void ceb_set_link(Object *obj, bool up, Error **errp)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    s->test_link = up;
++    if (s->nic) {
++        phy_update_link(s);
++        for (unsigned ch = 0; ch < 2; ch++) { ceb_aen(s, ch, 0); }
++    }
++    qemu_log("CEB network link=%s\n", up ? "up" : "down");
++}
++
++static void ceb_get_speed(Object *obj, Visitor *v, const char *name,
++                           void *opaque, Error **errp)
++{
++    int64_t value = FTGMAC100(obj)->test_speed;
++    visit_type_int(v, name, &value, errp);
++}
++
++static void ceb_set_speed(Object *obj, Visitor *v, const char *name,
++                           void *opaque, Error **errp)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    int64_t value;
++    if (!visit_type_int(v, name, &value, errp)) { return; }
++    if (value != 10 && value != 100 && value != 1000 &&
++        (!s->ncsi_e810 || (value != 10000 && value != 25000 && value != 100000))) {
++        error_setg(errp, "speed must be 10/100/1000 Mbps; NC-SI also 10000/25000/100000");
++        return;
++    }
++    s->test_speed = value;
++    s->phy_int |= PHY_INT_LINK_STATUS;
++    if (s->nic) { phy_update_link(s); }
++    for (unsigned ch = 0; ch < 2; ch++) { ceb_aen(s, ch, 0); }
++    qemu_log("CEB network speed=%" PRId64 " Mbps\n", value);
++}
++
++static bool ceb_get_channel_link(Object *obj, Error **errp)
++{
++    return FTGMAC100(obj)->ncsi_link[0];
++}
++static void ceb_set_channel_link(Object *obj, bool up, Error **errp)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    s->ncsi_link[0] = up; ceb_aen(s, 0, 0);
++}
++static bool ceb_get_channel1_link(Object *obj, Error **errp)
++{
++    return FTGMAC100(obj)->ncsi_link[1];
++}
++static void ceb_set_channel1_link(Object *obj, bool up, Error **errp)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    s->ncsi_link[1] = up; ceb_aen(s, 1, 0);
++}
++
++static void ceb_get_diagnostics(Object *obj, Visitor *v, const char *name,
++                                 void *opaque, Error **errp)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    char *value = g_strdup_printf(
++        "profile=%s link=%u speed=%u phy-id=%08x phy-address=%u "
++        "page=%04x mdio=%u phy-negotiated=%u powered=%u selected=%u ch0=%u/%u/%u ch1=%u/%u/%u "
++        "ncsi-commands=%u responses=%u aen=%u checksum-errors=%u "
++        "unsupported=%u control-dropped=%u tx=%u rx=%u data-dropped=%u",
++        s->rtl8211f ? "RTL8211FS" : s->ncsi_e810 ? "E810-NCSI-SIM" : "generic",
++        s->test_link, s->test_speed, s->rtl8211f ? 0x001cc916 : 0x001cc915,
++        s->rtl8211f ? 2 : 0, s->phy_page, s->mdio_accesses,
++        s->rtl8211f ? ceb_phy_speed(s) : 0,
++        s->ncsi_powered, s->ncsi_selected, s->ncsi_link[0], s->ncsi_enabled[0], s->ncsi_tx[0],
++        s->ncsi_link[1], s->ncsi_enabled[1], s->ncsi_tx[1],
++        s->ncsi_commands, s->ncsi_responses, s->ncsi_aens,
++        s->ncsi_bad_checksum, s->ncsi_unsupported, s->ncsi_dropped,
++        s->network_tx, s->network_rx, s->network_dropped);
++    visit_type_str(v, name, &value, errp);
++    g_free(value);
++}
++
++static bool ceb_get_responsive(Object *obj, Error **errp)
++{
++    return FTGMAC100(obj)->ncsi_responsive;
++}
++static void ceb_set_responsive(Object *obj, bool value, Error **errp)
++{
++    FTGMAC100(obj)->ncsi_responsive = value;
++}
++static bool ceb_get_reset(Object *obj, Error **errp)
++{
++    return false; /* pulse input */
++}
++static void ceb_set_reset(Object *obj, bool value, Error **errp)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    if (!value || !s->ncsi_e810) { return; }
++    for (unsigned ch = 0; ch < 2; ch++) {
++        ceb_aen(s, ch, 1);
++        ceb_channel_reset(s, ch);
++    }
++    s->ncsi_selected = false;
++    qemu_log("CEB NC-SI reset: configuration cleared; AEN queued for subscribed channels\n");
++}
++
++static bool ceb_get_powered(Object *obj, Error **errp)
++{
++    return FTGMAC100(obj)->ncsi_powered;
++}
++static void ceb_set_powered(Object *obj, bool value, Error **errp)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    if (value == s->ncsi_powered) { return; }
++    s->ncsi_powered = value;
++    s->ncsi_selected = false;
++    s->ncsi_keep_phy = false;
++    for (unsigned ch = 0; ch < 2; ch++) { ceb_channel_reset(s, ch); }
++    if (s->reply_timer) { timer_del(s->reply_timer); }
++    s->reply_count = s->reply_head = s->reply_wait = 0;
++    qemu_log("CEB NC-SI NIC power=%s (host power, no standby)\n",
++             value ? "on" : "off");
++}
++
++static void ceb_init(Object *obj)
++{
++    FTGMAC100State *s = FTGMAC100(obj);
++    s->test_link = true;
++    s->ncsi_responsive = true;
++    object_property_add_bool(obj, "ncsi-powered", ceb_get_powered, ceb_set_powered);
++    s->test_speed = 1000;
++    s->ncsi_link[0] = s->ncsi_link[1] = true;
++    object_property_add_bool(obj, "ncsi-responsive", ceb_get_responsive, ceb_set_responsive);
++    object_property_add_bool(obj, "ncsi-reset", ceb_get_reset, ceb_set_reset);
++    object_property_add_bool(obj, "test-link", ceb_get_link, ceb_set_link);
++    object_property_add(obj, "test-speed", "int", ceb_get_speed,
++                        ceb_set_speed, NULL, NULL);
++    object_property_add_bool(obj, "channel0-link", ceb_get_channel_link,
++                             ceb_set_channel_link);
++    object_property_add_bool(obj, "channel1-link", ceb_get_channel1_link,
++                             ceb_set_channel1_link);
++    object_property_add(obj, "network-diagnostics", "str",
++                        ceb_get_diagnostics, NULL, NULL, NULL);
++}
+diff --git a/hw/misc/bmc_host_sim.c b/hw/misc/bmc_host_sim.c
+--- a/hw/misc/bmc_host_sim.c
++++ b/hw/misc/bmc_host_sim.c
+@@ -79,6 +79,7 @@
+     AspeedPECIState *peci;
+     AspeedLPCState *lpc;
+     Object *espi;
++    Object *ncsi;
+     bool espi_powered;
+     char *power_out_name;
+     char *reset_out_name;
+@@ -233,6 +234,13 @@
+ {
+     BMCHostSimState *s = opaque;
+     int64_t now = host_now();
++    /* E810 has no standby supply. This runs in QEMU even without the panel,
++     * and survives BMC-only resets because host state is external. */
++    if (s->ncsi && object_property_get_bool(s->ncsi, "ncsi-powered",
++                                           &error_abort) != (s->state != HOST_OFF)) {
++        object_property_set_bool(s->ncsi, "ncsi-powered", s->state != HOST_OFF,
++                                 &error_abort);
++    }
+     if (s->espi && s->espi_powered != (s->state != HOST_OFF)) {
+         s->espi_powered = s->state != HOST_OFF;
+         object_property_set_bool(s->espi, "host-reset", !s->espi_powered,
+@@ -489,6 +497,7 @@
+ 
+ /* Defaults: the CEB-GNRD (AST2600 + Granite Rapids-D) wiring */
+ static const Property host_properties[] = {
++    DEFINE_PROP_LINK("ncsi", BMCHostSimState, ncsi, "ftgmac100", Object *),
+     DEFINE_PROP_LINK("espi", BMCHostSimState, espi, "aspeed.espi-sim", Object *),
+     DEFINE_PROP_LINK("gpio", BMCHostSimState, gpio, TYPE_ASPEED_GPIO,
+                      AspeedGPIOState *),

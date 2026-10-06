@@ -43,6 +43,8 @@ Commands (type them while it runs; "help" lists them):
   cpu <C> | dimm <C>     CPU package / DIMM temperature over PECI
   adc <0-15> <V>         measured rail voltage; divider applied automatically
   rtc battery ok|low     RTC battery (low: the RTC time is refused)
+  net rj45 link up|down | net rj45 speed 10|100|1000
+  net ncsi channel 0|1 up|down | net ncsi responsive on|off | net ncsi reset
   post <s> | shutdown <s>
   quit
 
@@ -89,6 +91,7 @@ ADC = "/machine/soc/adc"
 PSU = "/machine/peripheral/psu%d"
 RTC = "/machine/peripheral/rtc"
 CHASSIS = "/machine/soc/chassis"
+NETWORK = {"rj45": "/machine/soc/ftgmac100[1]", "ncsi": "/machine/soc/ftgmac100[2]"}
 HOST_IO = None
 USB = None
 SERVICES = None
@@ -538,6 +541,27 @@ def run_command(host, qmp, words):
         log("%s = %.3f V；分压 ÷%s，ADC 引脚 %.3f V%s" % (
             ADC_NAMES[channel], rail, ADC_SCALE[channel], pad_mv / 1000,
             "（超过 2.5 V，ADC 读数将饱和）" if pad_mv > 2500 else ""))
+    elif cmd == "net":
+        if len(rest) < 2 or rest[0] not in NETWORK:
+            raise ValueError("net rj45|ncsi link up|down / speed 10|100|1000 / channel 0|1 up|down / responsive on|off / reset")
+        port, action = rest[:2]
+        path = NETWORK[port]
+        if action == "reset" and port == "ncsi" and len(rest) == 2:
+            prop, value = "ncsi-reset", True
+        elif action == "link" and len(rest) == 3 and rest[2] in ("up", "down"):
+            prop, value = "test-link", rest[2] == "up"
+        elif action == "speed" and len(rest) == 3 and rest[2] in (
+                ("10", "100", "1000") if port == "rj45" else
+                ("10", "100", "1000", "10000", "25000", "100000")):
+            prop, value = "test-speed", int(rest[2])
+        elif action == "channel" and port == "ncsi" and len(rest) == 4 and rest[2] in ("0", "1") and rest[3] in ("up", "down"):
+            prop, value = "channel%s-link" % rest[2], rest[3] == "up"
+        elif action == "responsive" and port == "ncsi" and len(rest) == 3 and rest[2] in ("on", "off"):
+            prop, value = "ncsi-responsive", rest[2] == "on"
+        else:
+            raise ValueError("网络操作参数无效")
+        qmp.execute("qom-set", path=path, property=prop, value=value)
+        log("网络：" + " ".join(rest))
     elif cmd == "rtc" and len(rest) == 2 and rest[0] == "battery":
         qmp.execute("qom-set", path=RTC, property="battery-ok", value=rest[1] == "ok")
         log("RTC battery %s" % rest[1])
@@ -910,6 +934,9 @@ class Panel:
                       ("cpu-online", "cpu-temp-mc", "dimm-temp-mc", "tjmax")}
         st["adc"] = [{"name": ADC_NAMES[i], "scale": ADC_SCALE[i],
                       "mv": qom(q, ADC, "ch%d-mv" % i)} for i in range(16)]
+        st["network"] = {name: {key: qom(q, path, key) for key in
+            ("test-link", "test-speed", "channel0-link", "channel1-link",
+             "ncsi-responsive", "ncsi-powered", "network-diagnostics")} for name, path in NETWORK.items()}
         st["rtc_battery"] = qom(q, RTC, "battery-ok")
         st["chassis"] = {"open": qom(q, CHASSIS, "open"), "latched": qom(q, CHASSIS, "latched")}
         st["espi"] = {k: qom(q, ESPI, k) for k in
@@ -990,6 +1017,11 @@ class Panel:
             if a.get("mv") != b.get("mv") and b.get("mv") is not None:
                 log("ADC%d %s：ADC 引脚 %s→%s mV（电源轨 %.3f V）" % (
                     i, b["name"], fmt(a.get("mv")), b["mv"], b["mv"] * b["scale"] / 1000))
+        for port, state in st["network"].items():
+            for key in ("test-link", "test-speed", "channel0-link", "channel1-link", "ncsi-responsive", "ncsi-powered"):
+                old = prev.get("network", {}).get(port, {}).get(key)
+                if old != state.get(key) and state.get(key) is not None:
+                    log("网络 %s %s：%s→%s" % (port, key, old, state[key]))
         if prev["rtc_battery"] != st["rtc_battery"] and st["rtc_battery"] is not None:
             log("RTC 电池 %s" % ("正常" if st["rtc_battery"] else "没电"))
         for key, label in (("open", "机箱开盖"), ("latched", "入侵锁存")):

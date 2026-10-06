@@ -5,7 +5,7 @@
 #
 #   flash   BMC flash (the built image) on FMC, a 64 MiB BIOS flash on SPI1
 #   network MAC2 = eth0, the RJ45 port (192.168.185.200, port forwards below)
-#           MAC3 = eth1, NC-SI (QEMU's user network answers NC-SI, DHCP 10.0.2.x)
+#           MAC3 = eth1, Intel NC-SI profile (DHCP 10.0.2.x)
 #   I2C7    (Linux i2c-6)  0x48-0x4b  4 temperature sensors (tmp105, LM75 compatible)
 #   I2C8    (Linux i2c-7)  0x58-0x5a  PSU slots
 #   I2C11   (Linux i2c-10) 0x50-0x53  FRU EEPROM, 1 KiB like the FM24C08; all four
@@ -81,6 +81,11 @@ mkdir -p "$STATE" || exit 1
 [ -f "$BIOS_FLASH" ] || truncate -s 64M "$BIOS_FLASH"
 rm -f "$QMP"
 
+NETWORK_PROPS=$("$QEMU" -device ftgmac100,help 2>/dev/null)
+if ! echo "$NETWORK_PROPS" | grep -q 'ceb-gnrd-network'; then
+    echo "QEMU lacks RTL8211FS/Intel NC-SI patch 0026; rebuild the image" >&2
+    exit 1
+fi
 DEVICES=$("$QEMU" -device help 2>/dev/null)
 HOST_PROPS=$("$QEMU" -device bmc-host-sim,help 2>/dev/null)
 if echo "$HOST_PROPS" | grep -q 'espi'; then
@@ -141,7 +146,7 @@ fi
 # Stock QEMU: no VUART, so UART3 (BMC ttyS2) stands in for it (README.md).
 BOARD=""
 if [ -n "$BOARD_QEMU" ]; then
-    BOARD="-device bmc-host-sim,id=host,gpio=/machine/soc/gpio,peci=/machine/soc/peci,lpc=/machine/soc/lpc"
+    BOARD="-device bmc-host-sim,id=host,gpio=/machine/soc/gpio,peci=/machine/soc/peci,lpc=/machine/soc/lpc,ncsi=/machine/soc/ftgmac100[2]"
     if [ -n "$HOST_IO_QEMU" ]; then
         BOARD="$BOARD,espi=/machine/soc/espi"
     else
@@ -229,6 +234,7 @@ fi
 # UART1, UART2, UART3.
 # shellcheck disable=SC2086
 "$QEMU" -M ast2600-evb -m 1G -nographic -monitor none \
+  -global ftgmac100.ceb-gnrd-network=true \
   -qmp "unix:$QMP,server=on,wait=off" \
   $VUART \
   -serial stdio -serial null -serial null -serial "$UART3" \
@@ -236,7 +242,7 @@ fi
   -drive file="$BIOS_FLASH",format=raw,if=mtd,index=1 \
   -nic user \
   -nic user,id=ceb-management,net=192.168.185.0/24,host=192.168.185.1,tftp=/srv/tftp,hostfwd=tcp:127.0.0.1:8443-192.168.185.200:443,hostfwd=tcp:127.0.0.1:2222-192.168.185.200:22,hostfwd=udp:127.0.0.1:2623-192.168.185.200:623 \
-  -nic user \
+  -nic user,id=ceb-ncsi \
   -nic user,restrict=on \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x48,id=temp-inlet \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x49,id=temp-outlet \

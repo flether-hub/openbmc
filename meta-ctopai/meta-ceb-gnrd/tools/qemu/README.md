@@ -403,3 +403,49 @@ core 二进制不再写入 Flash，也不再生成堆栈分析；崩溃信号、
 升级后启动清理旧 core 载荷并压缩 journal 保留范围，不删除业务配置。
 实际容量需在 BMC 检查 `df -k /var/lib /var/log` 和 `du -k -d 2 /var/lib /var/log`，
 应保留至少 4 MiB 空闲；若不足，需要定位实际占用，不能只依靠配置预算保证。
+
+### RTL8211FS 与 Intel NC-SI 网络测试
+
+0026 补丁随 BitBake 的 qemu-system-native 构建；更新后重新构建镜像并运行
+`./run-qemu.sh`。启动脚本检查模型属性，拒绝使用缺少补丁的旧 QEMU。
+在模拟器 Web 面板的“网络”页切换网线、速率、NC-SI 通道、命令超时和 NIC 复位。
+
+| 接口 | 模拟内容 |
+| --- | --- |
+| MAC2 / eth0 / RTL8211FS-CG | MDIO 地址 2、PHY ID 001cc916、Clause 22、分页寄存器、RGMII 延迟配置读写、复位、自动协商状态、掉线/恢复、10/100/1000 Mbps 全双工 |
+| MAC3 / eth1 / Intel E810 NC-SI 配置 | package 0 两通道；发现、选择、启停、TX 通道选择、链路查询、链路/配置 AEN、MAC/VLAN/IPv4 广播/IPv6 多播过滤、能力/版本/统计、UUID、Intel OEM MAC 地址与 Keep PHY 命令 |
+| NIC 供电 | 跟随模拟主机供电；主机关机时不应答、不收发数据。BMC 软件重启不切断主机或 NIC 供电；无需浏览器面板参与 |
+| 故障注入 | 各通道掉线/恢复、两通道均无链路、停止命令应答、NIC 复位后重建配置；未知命令返回不支持，校验错误计数并丢弃 |
+
+原来的管理访问地址和端口保持不变：BMC Web `https://127.0.0.1:8443`、
+SSH 2222、IPMI UDP 2623。管理网线断开后这些转发不可用，可在模拟器面板恢复。
+eth1 使用独立 user 网络并通过 DHCP 获取地址，默认没有入站端口转发。
+两个 NC-SI 通道共享同一个网络后端，适合测试通道选择和切换，不能代表两条独立物理网络。
+
+NC-SI 的外网速率可切换为 1/10/25/100 Gbps（默认 25 Gbps）；BMC 与 NIC 之间
+的 RMII 仍为 100 Mbps。速率模拟只改变软件可见状态，不限制吞吐量。
+Linux 默认用 DGMF 禁用多播过滤，此时全部多播通过；启用单项过滤时只解析基础头的
+ND、路由、DHCPv6 和 MLD，扩展头多播需禁用全局过滤。
+统计中没有模拟的硬件错误/字节计数返回零，不应拿它们评估吞吐量。
+该模型用于 BMC 协议和驱动测试，不包含 E810 PCIe 主机驱动、SFP、电气时序、
+实际自动协商延时、半双工冲突、NIC 固件升级或完整厂商 OEM/PLDM 功能。
+QEMU 快照格式随新 MAC 状态升级；旧版保存的内存快照不兼容，Flash/FRU 文件继续使用。
+
+源码中核对了 Linux 的 Realtek 驱动和 NC-SI 命令/响应布局；尚未在 Linux 上编译、
+启动固件或确认通道切换结果。固件运行时可检查：
+
+```sh
+ip -br link
+ip -br addr
+cat /sys/class/net/eth0/phydev/phy_id
+cat /sys/class/net/eth0/carrier
+cat /sys/class/net/eth1/carrier
+journalctl -b -u ceb-gnrd-ncsi.service --no-pager -n 80
+dmesg | grep -Ei 'realtek|rtl8211|ftgmac|ncsi'
+```
+
+`~/qemu-ceb-gnrd/host.log` 记录模型识别、NC-SI 命令/响应结果、供电与配置重建；
+常规链路查询不逐次刷日志。`panel.log` 记录人工操作及链路、速率和供电变化。
+面板诊断详情包含 MDIO 访问、命令、响应、AEN、校验错误、丢包和通道状态计数。
+BMC 的 `ceb-gnrd-ncsi.service` 日志记录接口启停、carrier 变化与重试。
+这些新增日志继续使用现有轮转和容量限制。

@@ -34,4 +34,5 @@ SRC_URI += " \
     file://0023-bmc-host-sim-add-board-reset-button.patch \
     file://0024-aspeed-preserve-power-on-and-watchdog-reset-causes.patch \
     file://0025-at24c-separate-backing-size-from-address-space.patch \
+    file://0026-ftgmac100-ceb-gnrd-rtl8211-and-intel-ncsi.patch \
     "
