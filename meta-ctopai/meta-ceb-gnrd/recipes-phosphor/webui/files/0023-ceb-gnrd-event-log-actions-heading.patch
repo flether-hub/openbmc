@@ -1,0 +1,20 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Event logs: label the actions column
+
+Show an explicit heading for export and delete actions in the two supported
+board UI languages.
+
+Upstream-Status: Inappropriate [CEB-GNRD-specific UI languages]
+
+diff --git a/src/views/Logs/EventLogs/EventLogs.vue b/src/views/Logs/EventLogs/EventLogs.vue
+--- a/src/views/Logs/EventLogs/EventLogs.vue
++++ b/src/views/Logs/EventLogs/EventLogs.vue
+@@ -344,7 +344,7 @@
+         {
+           key: 'actions',
+           sortable: false,
+-          label: '',
++          label: i18n.global.locale.value === 'zh-CN' ? '操作' : 'Actions',
+           tdClass: 'text-end text-nowrap',
+         },
+       ],
