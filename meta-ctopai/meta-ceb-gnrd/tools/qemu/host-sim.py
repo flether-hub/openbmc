@@ -2,10 +2,10 @@
 """Simulated host for the ceb-gnrd BMC running in QEMU (run-qemu.sh).
 
 --web opens the browser control panel (run-qemu.sh starts it), at
-http://localhost:8800. --gui remains a compatibility alias for the web panel.
+http://localhost:8800.
 It shows a drawing of the signals between the BMC and the host with their
 LEDs and buttons, the fans, PSUs, temperatures, ADC inputs, POST codes and the
-host serial console. Without --web or --gui it reads commands from stdin.
+host serial console. Without --web it reads commands from stdin.
 
 With the QEMU from build-qemu.sh the host lives inside QEMU (the bmc-host-sim
 device, /machine/peripheral/host) and runs without this script; the script is
@@ -46,7 +46,7 @@ Commands (type them while it runs; "help" lists them):
   post <s> | shutdown <s>
   quit
 
-Usage: host-sim.py [--gui [--port 8800]] [--qmp ~/qemu-ceb-gnrd/qmp.sock]
+Usage: host-sim.py [--web [--port 8800]] [--qmp ~/qemu-ceb-gnrd/qmp.sock]
                    [--uart ~/qemu-ceb-gnrd/host-uart.sock] [--post 20] [--shutdown 10]
 Python 3 standard library only.
 """
@@ -1091,8 +1091,6 @@ def main():
     parser.add_argument("--qmp", default=os.path.expanduser("~/qemu-ceb-gnrd/qmp.sock"))
     parser.add_argument("--post", type=float, default=20, help="POST time in s")
     parser.add_argument("--shutdown", type=float, default=10, help="OS shutdown time in s")
-    parser.add_argument("--gui", action="store_true",
-                        help="compatibility alias for --web")
     parser.add_argument("--web", action="store_true",
                         help="browser control panel (http://localhost:PORT)")
     parser.add_argument("--port", type=int, default=8800, help="control panel port")
@@ -1144,7 +1142,7 @@ def main():
         log("USB vHub 模型可用；主机上电后枚举真实 BMC gadget")
     else:
         log("USB vHub 模型不存在：请重建并选择包含 0018/0021 的 QEMU")
-    if args.gui or args.web:
+    if args.web:
         log("simulated host ready (%s)" % host.state)
     else:
         log("simulated host ready (%s). Type 'help' for commands." % host.state)
@@ -1201,7 +1199,7 @@ def main():
         threading.Event().wait()
         return
 
-    if args.gui or args.web:
+    if args.web:
         serve_panel(panel, args.port, host, qmp)
         return
 

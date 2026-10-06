@@ -180,7 +180,7 @@ D3V0_BAT0 当前 ScaleFactor=1，3 V 输入会饱和；实板是否有分压须�
 
 ## CLI 与 QMP
 
-`host-sim.py` 默认从 stdin 接收命令，`--gui` 打开面板，
+`host-sim.py` 默认从 stdin 接收命令，`--web` 打开浏览器面板，
 `--headless` 保持主机辅助线程。QMP socket 是 STATE/qmp.sock。
 
 | 命令 | 用途 |
