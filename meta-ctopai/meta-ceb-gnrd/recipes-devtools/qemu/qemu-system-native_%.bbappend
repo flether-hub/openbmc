@@ -33,4 +33,5 @@ SRC_URI += " \
     file://0022-aspeed-remove-unrealized-legacy-vuart.patch \
     file://0023-bmc-host-sim-add-board-reset-button.patch \
     file://0024-aspeed-preserve-power-on-and-watchdog-reset-causes.patch \
+    file://0025-at24c-separate-backing-size-from-address-space.patch \
     "

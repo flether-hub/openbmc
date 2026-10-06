@@ -7,7 +7,7 @@
 KVM 服务和虚拟媒体挂载仍由 BMC 固件处理。
 
 正式源码和补丁都在本目录；仓库根目录的 `.tutorial-build/qemu/kvm-usb` 是临时源码展开目录，
-不参与构建，也不是运行依赖。QEMU 的 C 模型通过 `patches/0001..0019` 集成；
+不参与构建，也不是运行依赖。QEMU 的 C 模型通过 `patches/0001..0025` 集成；
 `recipes-devtools/qemu/qemu-system-native_%.bbappend` 引用同一组补丁。
 
 ## 构建与启动（Linux 构建机）
@@ -29,6 +29,18 @@ sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 旧的独立构建安装目录为 `~/qemu-ceb-gnrd/qemu`，源码和构建目录为
 `~/qemu-ceb-gnrd/src`（构建输出在 `src/build`）。停止模拟器后可以删除这两个目录。
 请保留 `~/qemu-ceb-gnrd` 本身，其余文件包括 FRU、日志和面板上传图片仍供模拟器使用。
+
+FRU EEPROM 使用四个 256 字节地址块（0x50～0x53），每块使用单字节偏移。
+`fru0.bin`～`fru3.bin` 文件各保留 512 字节长度以满足块设备对齐，实际 EEPROM
+仅使用前 256 字节。已有文件会保留，BMC reboot 不应使写入内容回退。
+此配置需要 QEMU 补丁 0025；更新后须重新构建镜像及 native QEMU。
+
+`ipmitool fru gen` 默认 Chassis PN 为 `93-XXXXX-XX`、Board PN 为 `91-39380-A0`、
+Product PN 为 `81-XXXXX-XX`；名称为 CEB-GNR-D、制造商 CTOPAI，序列号默认为
+UTC 日期加 0001。交互生成时可以修改各字段。
+FruDevice 写入后会读回物理 EEPROM 并比对；成功日志 `FRU EEPROM write verified`
+包含设备路径、偏移及长度。读回不一致会记录 `write/readback mismatch` 并返回失败。
+更新后重新写入 FRU，再比较写入后及 BMC reboot 后的 `ipmitool fru print 0`。
 `build-qemu.sh` 保留为独立构建工具，不用于本启动脚本。
 
 只有旧补丁的 QEMU 会提示缺少 0018，不能用于新增 eSPI/USB/CHASI# 检查。

@@ -97,11 +97,10 @@ else
     echo "      rebuild OpenBMC to get them" >&2
 fi
 
-# FRU EEPROM: the FM24C08 answers at 0x50-0x53, 256 bytes each, 1-byte offsets.
-# QEMU's block layer counts a raw file in 512-byte sectors and at24c-eeprom wants
-# file size == rom-size, so each block has a 512-byte file (erased = 0xff) with
-# 1-byte addressing; the guest only uses the first 256 bytes.  LC_ALL=C: in a
-# UTF-8 locale tr writes \377 as two bytes.  A file of another size is recreated.
+# FM24C08: four 256-byte, one-byte-addressed blocks at 0x50..0x53.
+# Raw block backends report sector-aligned lengths, so retain the existing
+# 512-byte files but expose only the first 256 bytes through backing-size.
+# Existing EEPROM files are preserved across BMC and simulator restarts.
 FRU=""
 for blk in 0 1 2 3; do
     f=$STATE/fru$blk.bin
@@ -109,7 +108,7 @@ for blk in 0 1 2 3; do
         head -c 512 /dev/zero | LC_ALL=C tr '\000' '\377' > "$f"
     fi
     FRU="$FRU -drive file=$f,format=raw,if=none,id=fru$blk"
-    FRU="$FRU -device at24c-eeprom,bus=aspeed.i2c.bus.10,address=0x5$blk,rom-size=512,address-size=1,drive=fru$blk"
+    FRU="$FRU -device at24c-eeprom,bus=aspeed.i2c.bus.10,address=0x5$blk,rom-size=256,backing-size=512,address-size=1,drive=fru$blk"
 done
 
 # PCIe slot buses: an EEPROM at 0x50 on Linux i2c-0 .. i2c-5

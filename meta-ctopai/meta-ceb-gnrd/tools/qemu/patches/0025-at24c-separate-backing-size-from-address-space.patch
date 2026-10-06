@@ -1,0 +1,54 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] at24c: allow aligned backing for byte-addressed 256-byte blocks
+
+Upstream-Status: Pending
+
+A 24C08 consists of four 256-byte address blocks. Enlarging each block
+to 512 bytes to match the raw block backend leaks the preceding address
+bit into the next one-byte address, and sequential reads wrap incorrectly.
+Keep the guest address space at 256 bytes with explicit 512-byte backing.
+Persist completed EEPROM writes with FUA.
+
+--- a/hw/nvram/eeprom_at24c.c
++++ b/hw/nvram/eeprom_at24c.c
+@@ -37,6 +37,8 @@
+     uint16_t cur;
+     /* total size in bytes */
+     uint32_t rsize;
++    /* Optional sector-aligned backing length, independent of address space. */
++    uint32_t backing_size;
+     /*
+      * address byte number
+      *  for  24c01, 24c02 size <= 256 byte, use only 1 byte
+@@ -71,7 +73,7 @@
+     case I2C_START_RECV:
+         DPRINTK("clear\n");
+         if (ee->blk && ee->changed) {
+-            int ret = blk_pwrite(ee->blk, 0, ee->rsize, ee->mem, 0);
++            int ret = blk_pwrite(ee->blk, 0, ee->rsize, ee->mem, BDRV_REQ_FUA);
+             if (ret < 0) {
+                 error_report("%s: failed to write backing file", __func__);
+             }
+@@ -174,9 +176,11 @@
+     if (ee->blk) {
+         int64_t len = blk_getlength(ee->blk);
+ 
+-        if (len != ee->rsize) {
+-            error_setg(errp, "%s: Backing file size %" PRId64 " != %u",
+-                       TYPE_AT24C_EE, len, ee->rsize);
++        uint32_t backing_size = ee->backing_size ?: ee->rsize;
++        if (backing_size < ee->rsize || len != backing_size) {
++            error_setg(errp, "%s: Backing file size %" PRId64 " != %u"
++                       " (must cover EEPROM size %u)",
++                       TYPE_AT24C_EE, len, backing_size, ee->rsize);
+             return;
+         }
+ 
+@@ -229,6 +233,7 @@
+ 
+ static const Property at24c_eeprom_props[] = {
+     DEFINE_PROP_UINT32("rom-size", EEPROMState, rsize, 0),
++    DEFINE_PROP_UINT32("backing-size", EEPROMState, backing_size, 0),
+     DEFINE_PROP_UINT8("address-size", EEPROMState, asize, 0),
+     DEFINE_PROP_BOOL("writable", EEPROMState, writable, true),
+     DEFINE_PROP_DRIVE("drive", EEPROMState, blk),

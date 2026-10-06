@@ -4,6 +4,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/entity-manager:"
 SRC_URI:append:ceb-gnrd = " \
     file://ceb-gnrd.json \
     file://0001-ceb-gnrd-fru-device-allow-eeprom-sized-write.patch \
+    file://0002-ceb-gnrd-verify-fru-eeprom-write.patch \
     "
 
 do_install:append:ceb-gnrd() {

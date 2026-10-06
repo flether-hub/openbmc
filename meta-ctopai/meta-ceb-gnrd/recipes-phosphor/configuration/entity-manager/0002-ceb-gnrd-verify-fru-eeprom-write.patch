@@ -1,0 +1,74 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] fru-device: verify EEPROM writes before reporting success
+
+Upstream-Status: Pending
+
+Complete short sysfs writes and read the physical EEPROM back before
+accepting WriteFru. Log path/offset/length and fail the D-Bus operation on
+readback mismatch rather than leaving an apparently successful cache update.
+
+--- a/src/fru_device/fru_device.cpp
++++ b/src/fru_device/fru_device.cpp
+@@ -1109,16 +1109,53 @@
+             throw DBusInternalError();
+         }
+ 
+-        ssize_t writtenBytes = write(eeprom, fru.data(), fru.size());
+-        if (writtenBytes < 0)
+-        {
+-            lg2::error("unable to write to i2c device {PATH}", "PATH", path);
+-            close(eeprom);
++        size_t done = 0;
++        while (done < fru.size())
++        {
++            ssize_t rc = write(eeprom, fru.data() + done, fru.size() - done);
++            if (rc < 0 && errno == EINTR)
++            {
++                continue;
++            }
++            if (rc <= 0)
++            {
++                lg2::error("FRU EEPROM write failed: {PATH}, bytes={DONE}/{SIZE}",
++                           "PATH", path, "DONE", done, "SIZE", fru.size());
++                close(eeprom);
++                throw DBusInternalError();
++            }
++            done += static_cast<size_t>(rc);
++        }
++
++        // Read physical EEPROM rather than trusting the IPMI/FruDevice cache.
++        // This also catches a write-protected EEPROM that ACKs but ignores data.
++        std::vector<uint8_t> verify(fru.size());
++        done = 0;
++        while (done < verify.size())
++        {
++            int64_t rc = readFromEeprom(eeprom, offset + static_cast<off_t>(done),
++                                      verify.size() - done, verify.data() + done);
++            if (rc < 0 && errno == EINTR)
++            {
++                continue;
++            }
++            if (rc <= 0)
++            {
++                lg2::error("FRU EEPROM readback failed: {PATH}", "PATH", path);
++                close(eeprom);
++                throw DBusInternalError();
++            }
++            done += static_cast<size_t>(rc);
++        }
++        close(eeprom);
++        if (verify != fru)
++        {
++            lg2::error("FRU EEPROM write/readback mismatch: {PATH}, size={SIZE}",
++                       "PATH", path, "SIZE", fru.size());
+             throw DBusInternalError();
+-            return false;
+-        }
+-
+-        close(eeprom);
++        }
++        lg2::info("FRU EEPROM write verified: {PATH}, offset={OFFSET}, size={SIZE}",
++                  "PATH", path, "OFFSET", offset, "SIZE", fru.size());
+         return true;
+     }
+ 
