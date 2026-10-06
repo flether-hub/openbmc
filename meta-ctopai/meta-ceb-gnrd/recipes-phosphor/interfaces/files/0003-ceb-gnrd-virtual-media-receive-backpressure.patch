@@ -1,0 +1,144 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] virtual-media: drain proxy writes before reading more messages
+
+Upstream-Status: Pending
+
+Keep one asynchronous pipe write in flight. Resume WebSocket reads only
+after the current payload has reached nbd-proxy, bounding queued input.
+Retain pipe buffers through cancellation and complete each receive callback.
+
+--- a/features/virtual_media/vm_websocket.hpp
++++ b/features/virtual_media/vm_websocket.hpp
+@@ -17,6 +17,7 @@
+ #include <boost/asio/readable_pipe.hpp>
+ #include <boost/asio/steady_timer.hpp>
+ #include <boost/asio/writable_pipe.hpp>
++#include <boost/asio/write.hpp>
+ #include <boost/beast/core/buffers_to_string.hpp>
+ #include <boost/beast/core/error.hpp>
+ #include <boost/beast/core/flat_static_buffer.hpp>
+@@ -133,53 +134,29 @@
+             }
+             return;
+         }
+-        doWrite();
+         doRead();
+     }
+ 
+-    void doWrite()
+-    {
+-        if (closing)
+-        {
+-            return;
+-        }
+-        if (doingWrite)
+-        {
+-            BMCWEB_LOG_DEBUG("Already writing.  Bailing out");
+-            return;
+-        }
+-
+-        if (inputBuffer.size() == 0)
+-        {
+-            BMCWEB_LOG_DEBUG("inputBuffer empty.  Bailing out");
+-            return;
+-        }
+-
+-        doingWrite = true;
+-        pipeIn.async_write_some(
+-            inputBuffer.data(),
+-            [this, self(shared_from_this())](const boost::beast::error_code& ec,
+-                                             std::size_t bytesWritten) {
+-                BMCWEB_LOG_DEBUG("Wrote {}bytes", bytesWritten);
+-                doingWrite = false;
+-                inputBuffer.consume(bytesWritten);
+-
+-                if (closing || session == nullptr)
+-                {
+-                    return;
+-                }
+-                if (ec == boost::asio::error::eof)
+-                {
+-                    session->close("VM socket port closed");
+-                    return;
+-                }
+-                if (ec)
+-                {
+-                    session->close("Error in writing to proxy port");
+-                    BMCWEB_LOG_ERROR("Error in VM socket write {}", ec);
+-                    return;
+-                }
+-                doWrite();
++    void send(std::string_view data, std::function<void()>&& whenComplete)
++    {
++        // onmessageex retains the WebSocket payload until completion. Only
++        // one pipe write is pending, so input cannot accumulate behind NBD.
++        size_t copied = boost::asio::buffer_copy(
++            inputBuffer.prepare(data.size()), boost::asio::buffer(data));
++        inputBuffer.commit(copied);
++        boost::asio::async_write(
++            pipeIn, inputBuffer.data(),
++            [self = shared_from_this(),
++             whenComplete = std::move(whenComplete)](
++                const boost::system::error_code& ec, size_t bytesWritten) {
++                self->inputBuffer.consume(bytesWritten);
++                if (!self->closing && session != nullptr && ec)
++                {
++                    BMCWEB_LOG_ERROR("Virtual media proxy write failed: {}", ec);
++                    session->close("Error writing virtual media data");
++                }
++                // Release the retained WebSocket, including on cancellation.
++                whenComplete();
+             });
+     }
+ 
+@@ -231,7 +208,6 @@
+     boost::process::v2::process proxy;
+     bool closing{false};
+     bool stopped{false};
+-    bool doingWrite{false};
+ 
+     boost::beast::flat_static_buffer<nbdBufferSize> outputBuffer;
+     boost::beast::flat_static_buffer<nbdBufferSize> inputBuffer;
+@@ -653,26 +629,24 @@
+                 handler->doClose([] { handler.reset(); });
+             })
+             // ast-grep-ignore: long-lambda
+-            .onmessage([](crow::websocket::Connection& conn,
+-                          const std::string& data, bool) {
++            .onmessageex([](crow::websocket::Connection& conn,
++                            std::string_view data,
++                            crow::websocket::MessageType /*type*/,
++                            std::function<void()>&& whenComplete) {
+                 if (&conn != session || handler == nullptr || handler->closing)
+                 {
+-                    return;
+-                }
+-                if (data.length() > handler->inputBuffer.capacity() -
+-                                        handler->inputBuffer.size())
+-                {
+-                    BMCWEB_LOG_ERROR("Buffer overrun when writing {} bytes",
+-                                     data.length());
+-                    conn.close("Buffer overrun");
+-                    return;
+-                }
+-
+-                size_t copied = boost::asio::buffer_copy(
+-                    handler->inputBuffer.prepare(data.size()),
+-                    boost::asio::buffer(data));
+-                handler->inputBuffer.commit(copied);
+-                handler->doWrite();
++                    whenComplete();
++                    return;
++                }
++                if (data.size() > handler->inputBuffer.capacity())
++                {
++                    BMCWEB_LOG_ERROR("Virtual media message too large: {} bytes",
++                                     data.size());
++                    conn.close("Virtual media message too large");
++                    whenComplete();
++                    return;
++                }
++                handler->send(data, std::move(whenComplete));
+             });
+     }
+ }

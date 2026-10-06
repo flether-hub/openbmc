@@ -2,6 +2,7 @@
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-delete-single-file-event-log.patch"
 SRC_URI:append:ceb-gnrd = " file://0002-ceb-gnrd-async-virtual-media-proxy-cleanup.patch"
+SRC_URI:append:ceb-gnrd = " file://0003-ceb-gnrd-virtual-media-receive-backpressure.patch"
 
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 

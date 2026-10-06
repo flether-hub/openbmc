@@ -231,6 +231,18 @@ READ CAPACITY(10) 和 READ(10) LBA0；不绕过 BMC，也不模拟 x86 从镜像
 - 浏览器建立连接期间也能停止；停止/断开时取消 FileReader，避免迟到的读取
   回调向已关闭的 WebSocket 发送数据；实际打开连接后才显示服务启动。
 
+- NBD 客户端显式选择空导出名（`-N ""`）和 EXPORT_NAME 协商（`-g`），
+  避免当前 nbd-client 在 `-L` 模式下拒绝启动。
+- 挂载后内核的较大读请求会产生超过 bmcweb 131088 字节接收限制的响应。
+  浏览器将完整 NBD 响应按顺序拆为 64 KiB WebSocket 消息；bmcweb 写完
+  当前消息到代理管道后才读取下一条，避免接收缓冲区溢出和管道积压。
+  Firefox Console 首次拆分时记录请求 offset、length 和 websocketChunk。
+
+用户日志已确认 NBD 协商与 gadget 绑定成功，但随后出现
+`The WebSocket operation caused a dynamic buffer overflow`，引发 NBD socket
+关闭和 sector 128 I/O error。该错误属于浏览器/bmcweb 传输层；关闭后的
+NBD size=0、gadget 消失是正常清理结果，不能据此判定 USB 模型枚举失败。
+
 这些是源码修复，不代表虚拟媒体已通过端到端验证。当前检查未发现确定的
 模拟器 Bulk/SCSI 根因；READ CAPACITY(16) 和镜像启动仍不在探测功能范围内。
 

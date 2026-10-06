@@ -1,0 +1,47 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] virtual-media: split NBD replies into bounded WebSocket messages
+
+Upstream-Status: Pending
+
+Kernel reads can exceed the 128 KiB WebSocket receive buffer in bmcweb.
+Send each NBD reply as consecutive 64 KiB messages, preserving the stream
+header/data ordering. Log the first split reply for transport diagnosis.
+
+--- a/src/utilities/NBDServer.js
++++ b/src/utilities/NBDServer.js
+@@ -1,3 +1,7 @@
++// bmcweb accepts at most 128 KiB + 16 bytes per WebSocket message.
++// NBD replies are a byte stream and may span multiple messages.
++const VM_MESSAGE_BYTES = 64 * 1024;
++
+ /* handshake flags */
+ const NBD_FLAG_FIXED_NEWSTYLE = 0x1;
+ const NBD_FLAG_NO_ZEROES = 0x2;
+@@ -42,6 +46,7 @@
+     this.state = NBD_STATE_UNKNOWN;
+     this.msgbuf = null;
+     this.readers = new Set();
++    this.chunkedReads = 0;
+     this.start = function () {
+       this.ws = new WebSocket(this.endpoint, [token]);
+       this.state = NBD_STATE_OPEN;
+@@ -293,7 +298,18 @@
+           return;
+         }
+         var resp = this._create_cmd_response(req, 0, reader.result);
+-        this.ws.send(resp);
++        if (resp.byteLength > VM_MESSAGE_BYTES && this.chunkedReads++ === 0) {
++          console.info(
++            `virtual-media[${this.id}]: splitting NBD reply ` +
++            `offset=${offset} length=${req.length} ` +
++            `websocketChunk=${VM_MESSAGE_BYTES}`,
++          );
++        }
++        // Queue every chunk of this reply together: another FileReader must
++        // not interleave its response header with this response's data.
++        for (let start = 0; start < resp.byteLength; start += VM_MESSAGE_BYTES) {
++          this.ws.send(resp.slice(start, start + VM_MESSAGE_BYTES));
++        }
+       }.bind(this);
+ 
+       reader.onerror = function (ev) {
