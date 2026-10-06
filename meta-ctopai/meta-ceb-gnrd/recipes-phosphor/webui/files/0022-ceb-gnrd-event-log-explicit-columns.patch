@@ -4,6 +4,8 @@ Subject: [PATCH] Event logs: remove unsupported status columns and avoid empty f
 Keep explicit table fields, deletion and export actions. File-backed logs
 do not provide a writable Resolved property.
 
+Upstream-Status: Inappropriate [CEB-GNRD-specific event log UI policy]
+
 diff --git a/src/views/Logs/EventLogs/EventLogs.vue b/src/views/Logs/EventLogs/EventLogs.vue
 --- a/src/views/Logs/EventLogs/EventLogs.vue
 +++ b/src/views/Logs/EventLogs/EventLogs.vue
