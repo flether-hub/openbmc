@@ -1,0 +1,250 @@
+Subject: [PATCH] static: stage only selected CEB-GNRD BMC partitions
+
+Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
+
+--- a/bmc/static/flash.cpp
++++ b/bmc/static/flash.cpp
+@@ -9,5 +9,10 @@
+ #include <phosphor-logging/lg2.hpp>
+ 
++#include <cstdint>
++#include <algorithm>
+ #include <filesystem>
++#include <fstream>
++#include <set>
++#include <string>
+ #include <system_error>
+ 
+@@ -52,17 +57,209 @@
+     fs::path toPath(PATH_INITRAMFS);
+ 
+-    for (const auto& bmcImage : parent.imageUpdateList)
+-    {
++    // The package-local selection is processed only after normal image
++    // validation/signature verification. No global settings carry to the next
++    // upload. Stage all files first; publish the plan last.
++    const fs::path source = uploadDir / versionId;
++    const fs::path staging = toPath / "ceb-gnrd-update";
++    const std::vector<std::string> partitions = {
++        "kernel", "rofs", "rwfs", "u-boot", "u-boot-env"};
++    const auto clearPublished = [&]() {
+         std::error_code ec;
+-        fs::copy_file(uploadDir / versionId / bmcImage, toPath / bmcImage,
+-                      fs::copy_options::overwrite_existing, ec);
+-    }
+-    for (const auto& optionalImaage : getOptionalImages())
+-    {
++        bool ok = true;
++        for (const auto& partition : partitions)
++        {
++            fs::remove(toPath / ("image-" + partition), ec);
++            ok = ok && !ec;
++        }
++        fs::remove(toPath / "image-bmc", ec);
++        ok = ok && !ec;
++        fs::remove(toPath / "bmc-partitions.txt", ec);
++        ok = ok && !ec;
++        fs::remove(toPath / "update-u-boot", ec);
++        return ok && !ec;
++    };
++    const auto fail = [&]() {
+         std::error_code ec;
+-        fs::copy_file(uploadDir / versionId / optionalImaage,
+-                      toPath / optionalImaage,
+-                      fs::copy_options::overwrite_existing, ec);
+-    }
++        fs::remove_all(staging, ec);
++        if (clearPublished())
++        {
++            fs::remove(toPath / "ceb-gnrd-update-incomplete", ec);
++        }
++        error("BMC update {ID}: partition staging failed; no flash writes scheduled",
++              "ID", versionId);
++        Activation::activation(sdbusplus::server::xyz::openbmc_project::software::
++                                   Activation::Activations::Failed);
++    };
++    std::set<std::string> selected = {"kernel", "rofs", "rwfs"};
++    std::error_code ec;
++    const fs::path selectionFile = source / "bmc-partitions.txt";
++    const auto status = fs::symlink_status(selectionFile, ec);
++    if (fs::exists(status))
++    {
++        if (ec || !fs::is_regular_file(status) ||
++            fs::file_size(selectionFile, ec) > 128 || ec)
++        {
++            fail();
++            return;
++        }
++        std::ifstream input(selectionFile);
++        std::string line;
++        if (!std::getline(input, line) || line != "version=1")
++        {
++            fail();
++            return;
++        }
++        selected.clear();
++        while (std::getline(input, line))
++        {
++            if (std::find(partitions.begin(), partitions.end(), line) ==
++                    partitions.end() || !selected.insert(line).second)
++            {
++                fail();
++                return;
++            }
++        }
++        if (!input.eof() || !selected.contains("kernel") ||
++            !selected.contains("rofs"))
++        {
++            fail();
++            return;
++        }
++    }
++    else if (ec && ec != std::errc::no_such_file_or_directory)
++    {
++        fail();
++        return;
++    }
++    // A full-flash package would overwrite unselected partitions and settings.
++    ec.clear();
++    if (fs::exists(source / "image-bmc", ec) || ec)
++    {
++        error("BMC update requires a partitioned .static.mtd.tar package");
++        fail();
++        return;
++    }
++    ec.clear();
++    fs::remove_all(staging, ec);
++    if (ec || !fs::create_directory(staging, ec) || ec)
++    {
++        fail();
++        return;
++    }
++    // If the updater dies during publication, shutdown must not flash a
++    // partial set of images. Removed only after the complete plan is ready.
++    {
++        std::ofstream incomplete(toPath / "ceb-gnrd-update-incomplete");
++        incomplete << versionId << '\n';
++        incomplete.close();
++        if (!incomplete)
++        {
++            fail();
++            return;
++        }
++    }
++    for (const auto& partition : selected)
++    {
++        const fs::path dest = staging / ("image-" + partition);
++        if (partition == "u-boot-env")
++        {
++            // Standard tar packages have no environment image. Reset the
++            // entire 128 KiB environment to erased flash (invalid CRC), so
++            // U-Boot loads its compiled defaults on the next boot.
++            std::ofstream output(dest, std::ios::binary);
++            const std::string erased(128 * 1024, static_cast<char>(0xff));
++            output.write(erased.data(), static_cast<std::streamsize>(erased.size()));
++            output.close();
++            if (!output)
++            {
++                fail();
++                return;
++            }
++        }
++        else
++        {
++            const fs::path file = source / ("image-" + partition);
++            ec.clear();
++            const auto fileStatus = fs::symlink_status(file, ec);
++            const std::uintmax_t limit = partition == "kernel" ? 9 * 1024 * 1024 :
++                partition == "rofs" ? 44 * 1024 * 1024 :
++                partition == "rwfs" ? 10 * 1024 * 1024 : 896 * 1024;
++            if (ec || !fs::is_regular_file(fileStatus))
++            {
++                fail();
++                return;
++            }
++            const auto size = fs::file_size(file, ec);
++            if (ec || size == 0 || size > limit ||
++                !fs::copy_file(file, dest, fs::copy_options::none, ec) || ec)
++            {
++                fail();
++                return;
++            }
++        }
++        info("BMC update {ID}: selected partition {PARTITION}",
++             "ID", versionId, "PARTITION", partition);
++    }
++    {
++        std::ofstream plan(staging / "bmc-partitions.txt");
++        plan << "version=1\n";
++        for (const auto& partition : selected)
++        {
++            plan << partition << '\n';
++        }
++        plan.close();
++        if (!plan)
++        {
++            fail();
++            return;
++        }
++    }
++    if (!clearPublished())
++    {
++        fail();
++        return;
++    }
++    for (const auto& partition : selected)
++    {
++        ec.clear();
++        fs::rename(staging / ("image-" + partition),
++                   toPath / ("image-" + partition), ec);
++        if (ec)
++        {
++            fail();
++            return;
++        }
++    }
++    // Compatibility with the existing initramfs hook: it also requires this
++    // opt-in to allow image-u-boot. The new hook requires the package plan.
++    if (selected.contains("u-boot"))
++    {
++        std::ofstream marker(toPath / "update-u-boot");
++        marker << versionId << '\n';
++        marker.close();
++        if (!marker)
++        {
++            fail();
++            return;
++        }
++    }
++    ec.clear();
++    fs::rename(staging / "bmc-partitions.txt", toPath / "bmc-partitions.txt", ec);
++    if (ec)
++    {
++        fail();
++        return;
++    }
++    fs::remove(staging, ec);
++    ec.clear();
++    fs::remove(toPath / "ceb-gnrd-update-incomplete", ec);
++    if (ec)
++    {
++        fail();
++        return;
++    }
++    info("BMC update {ID}: partitions staged, U-Boot={BOOT}, environment reset={ENV}",
++         "ID", versionId, "BOOT", selected.contains("u-boot"),
++         "ENV", selected.contains("u-boot-env"));
+ }
+ 
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -150,4 +150,9 @@
+ 
+         flashWrite();
++        if (softwareServer::Activation::activation() ==
++            softwareServer::Activation::Activations::Failed)
++        {
++            return softwareServer::Activation::Activations::Failed;
++        }
+ 
+ #if defined UBIFS_LAYOUT || defined MMC_LAYOUT

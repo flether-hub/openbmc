@@ -1,0 +1,260 @@
+Subject: [PATCH] firmware: select BMC partitions with explicit bootloader confirmation
+
+Upstream-Status: Inappropriate [CEB-GNRD static flash layout]
+
+--- a/src/views/Operations/Firmware/FirmwareFormUpdate.vue
++++ b/src/views/Operations/Firmware/FirmwareFormUpdate.vue
+@@ -22,6 +22,31 @@
+             </template>
+           </form-file>
+         </b-form-group>
++
++        <div v-if="bmcRegions.length" class="mb-3">
++          <p class="mb-1 fw-bold">{{ $t('pageFirmware.bmcPartitions.title') }}</p>
++          <p class="small text-muted">{{ $t('pageFirmware.bmcPartitions.hint') }}</p>
++          <div v-for="region in bmcRegions" :key="region.name" class="form-check">
++            <input
++              :id="'bmc-region-' + region.name"
++              class="form-check-input"
++              type="checkbox"
++              :checked="region.selected"
++              :disabled="region.required || isPageDisabled || isUpdateRunning || bmcConfirm.show"
++              @change="onBmcRegionToggle(region, $event)"
++            />
++            <label class="form-check-label" :for="'bmc-region-' + region.name">
++              {{ region.name }} ({{ region.size }})
++              <span v-if="region.required" class="small text-muted">
++                {{ $t('pageFirmware.bmcPartitions.required') }}
++              </span>
++              <span v-if="region.warning" class="small text-danger">
++                {{ $t('pageFirmware.bmcPartitions.' + region.warning) }}
++              </span>
++            </label>
++          </div>
++        </div>
++        <p v-if="packageError" class="text-danger" role="alert">{{ packageError }}</p>
+ 
+         <!-- CEB-GNRD: BIOS flash regions to write (BIOS packages only) -->
+         <div
+@@ -66,6 +91,7 @@
+           variant="primary"
+           :disabled="
+             isPageDisabled ||
++            inspectingPackage || !!packageError || bmcConfirm.show ||
+             isUpdateRunning ||
+             (biosRegions.length > 0 && !selectedRegionNames.length)
+           "
+@@ -121,6 +147,17 @@
+     <!-- Modals -->
+     <modal-update-firmware v-model="showUpdateModal" @ok="updateFirmware" />
+     <b-modal
++      id="modal-bmc-partition-risk"
++      v-model="bmcConfirm.show"
++      :title="$t('pageFirmware.bmcPartitions.confirmTitle')"
++      :ok-title="$t('pageFirmware.bmcPartitions.confirmOk')"
++      :cancel-title="$t('global.action.cancel')"
++      ok-variant="danger"
++      @ok="confirmBmcRegion"
++    >
++      <p>{{ $t('pageFirmware.bmcPartitions.' + bmcConfirm.warning) }}</p>
++    </b-modal>
++    <b-modal
+       id="modal-bios-region-nac"
+       v-model="nacConfirm.show"
+       :title="$t('pageFirmware.regions.nacConfirmTitle')"
+@@ -153,6 +190,10 @@
+ import Axios from 'axios';
+ import api from '@/store/api';
+ import i18n from '@/i18n';
++import bmcPartitionMessages from './BmcPartitionMessages';
++for (const [locale, messages] of Object.entries(bmcPartitionMessages)) {
++  i18n.global.mergeLocaleMessage(locale, { pageFirmware: { bmcPartitions: messages } });
++}
+ 
+ // CEB-GNRD: steps of the BIOS update, by the progress value that
+ // bios-update.sh writes (keep in sync with that script).  Each entry is the
+@@ -197,6 +238,14 @@
+ // MAC addresses: not written unless the user confirms.
+ const NAC_REGIONS = ['nac0', 'nac1'];
+ const BIOS_REGIONS_FILE = 'bios-regions.txt';
++const BMC_REGIONS_FILE = 'bmc-partitions.txt';
++const BMC_REGIONS = [
++  { name: 'kernel', size: '9 MiB', selected: true, required: true },
++  { name: 'rofs', size: '44 MiB', selected: true, required: true },
++  { name: 'rwfs', size: '10 MiB', selected: true },
++  { name: 'u-boot', size: '896 KiB', selected: false, warning: 'bootWarning' },
++  { name: 'u-boot-env', size: '128 KiB', selected: false, warning: 'envWarning' },
++];
+ 
+ const textDecoder = new TextDecoder();
+ 
+@@ -250,9 +299,19 @@
+       .split('\0')[0]
+       .replace(/^\.\//, '');
+     const size = parseInt(textDecoder.decode(header.subarray(124, 136)), 8);
+-    if (!name || Number.isNaN(size)) throw new Error('not a tar file');
++    if (!name || !Number.isSafeInteger(size) || size < 0 ||
++        offset + 512 + Math.ceil(size / 512) * 512 > file.size ||
++        entries.some((entry) => entry.name === name)) {
++      throw new Error('invalid or duplicate tar entry');
++    }
++    if (header[156] !== 0 && header[156] !== 48) {
++      throw new Error('only regular files are supported');
++    }
+     entries.push({ name, dataOffset: offset + 512, size });
+     offset += 512 + Math.ceil(size / 512) * 512;
++  }
++  if (entries.length >= 64 || offset + 1024 > file.size) {
++    throw new Error('invalid tar archive');
+   }
+   return { entries, end: offset };
+ }
+@@ -341,6 +400,10 @@
+       // 'Host' (BIOS) or 'BMC', from the MANIFEST of the selected package
+       filePurpose: null,
+       biosRegions: [],
++      bmcRegions: [],
++      bmcConfirm: { show: false, name: '', warning: 'bootWarning' },
++      inspectingPackage: false,
++      packageError: '',
+       nacConfirm: { show: false, name: '' },
+       progress: {
+         visible: false,
+@@ -392,6 +455,18 @@
+   },
+   methods: {
+     async updateFirmware() {
++      if (this.inspectingPackage || this.packageError || !this.file) return;
++      let image = this.file;
++      try {
++        if (this.filePurpose === 'BMC') {
++          image = await this.withBmcSelection(this.file);
++        } else if (this.filePurpose === 'Host' && this.biosRegions.length) {
++          image = await this.withRegionSelection(this.file);
++        }
++      } catch (error) {
++        this.errorToast(error.message);
++        return;
++      }
+       clearResume();
+       this.startLoader();
+       this.progress = {
+@@ -406,10 +481,6 @@
+         title: i18n.global.t('pageFirmware.toast.updateStarted'),
+         timestamp: true,
+       });
+-      let image = this.file;
+-      if (this.progress.purpose === 'Host' && this.biosRegions.length) {
+-        image = await this.withRegionSelection(this.file);
+-      }
+       this.dispatchWorkstationUpload(image);
+     },
+     dispatchWorkstationUpload(image) {
+@@ -462,6 +533,37 @@
+       } catch (error) {
+         console.log(error);
+         return file;
++      }
++    },
++    async withBmcSelection(file) {
++      if (this.bmcRegions.some((region) => region.selected && region.warning && !region.confirmed)) {
++        throw new Error(this.$t('pageFirmware.bmcPartitions.confirmTitle'));
++      }
++      const tar = await readTar(file);
++      const parts = tar.entries
++        .filter((entry) => entry.name !== BMC_REGIONS_FILE)
++        .map((entry) => file.slice(entry.dataOffset - 512,
++          entry.dataOffset + Math.ceil(entry.size / 512) * 512));
++      const names = this.bmcRegions.filter((region) => region.selected).map((region) => region.name);
++      return new File([
++        ...parts, ...tarEntry(BMC_REGIONS_FILE, 'version=1\n' + names.join('\n') + '\n'),
++        new Uint8Array(1024),
++      ], file.name, { type: 'application/x-tar' });
++    },
++    onBmcRegionToggle(region, event) {
++      region.confirmed = false;
++      if (event.target.checked && region.warning) {
++        event.target.checked = false;
++        this.bmcConfirm = { show: true, name: region.name, warning: region.warning };
++      } else {
++        region.selected = event.target.checked;
++      }
++    },
++    confirmBmcRegion() {
++      const region = this.bmcRegions.find((item) => item.name === this.bmcConfirm.name);
++      if (region && !this.isUpdateRunning) {
++        region.selected = true;
++        region.confirmed = true;
+       }
+     },
+     startPolling(taskUri) {
+@@ -656,17 +758,34 @@
+     async inspectPackage(file) {
+       this.filePurpose = null;
+       this.biosRegions = [];
++      this.bmcRegions = [];
++      this.bmcConfirm.show = false;
++      this.packageError = '';
++      this.inspectingPackage = false;
+       if (!file) return;
++      this.inspectingPackage = true;
+       try {
+         const tar = await readTar(file);
+         const manifest = (await readTarText(file, tar, 'MANIFEST')) || '';
+         const match = manifest.match(/^purpose=.*\.(\w+)\s*$/m);
++        if (file !== this.file) return;
+         this.filePurpose = match ? match[1] : null;
++        if (!['BMC', 'Host'].includes(this.filePurpose)) throw new Error('unsupported package');
++        if (this.filePurpose === 'BMC') {
++          const names = tar.entries.map((entry) => entry.name);
++          if (names.includes('image-bmc') ||
++              !['image-kernel', 'image-rofs', 'image-rwfs', 'image-u-boot'].every((name) => names.includes(name))) {
++            throw new Error('a partitioned BMC package is required');
++          }
++          this.bmcRegions = BMC_REGIONS.map((region) => ({ ...region, confirmed: false }));
++        }
+         if (this.filePurpose === 'Host') {
+           this.biosRegions = parseLayout(BIOS_LAYOUT);
+         }
+       } catch (error) {
+-        console.log(error);
++        if (file === this.file) this.packageError = this.$t('pageFirmware.bmcPartitions.invalidPackage');
++      } finally {
++        if (file === this.file) this.inspectingPackage = false;
+       }
+     },
+     isNacRegion(region) {
+@@ -689,7 +808,7 @@
+     },
+     onSubmitUpload() {
+       this.v$.$touch();
+-      if (this.v$.$invalid) return;
++      if (this.v$.$invalid || this.inspectingPackage || this.packageError || this.bmcConfirm.show) return;
+       this.showUpdateModal = true;
+     },
+     onFileUpload(file) {
+--- /dev/null
++++ b/src/views/Operations/Firmware/BmcPartitionMessages.js
+@@ -0,0 +1,22 @@
++export default {
++  "en-US": {
++    "title": "BMC partitions to update",
++    "hint": "U-Boot and its environment are preserved by default. Kernel and read-only filesystem are updated together. Updating rwfs retains only the configured preserved settings.",
++    "required": "(required together)",
++    "bootWarning": "Updating U-Boot can leave the BMC unable to boot if flashing fails or power is lost. Network recovery will then be unavailable; external flash programming may be required. Keep power connected until the update finishes.",
++    "envWarning": "Resetting U-Boot environment clears saved BMC MAC addresses and other boot settings. The BMC will use firmware defaults; reconfigure its MAC addresses and network settings afterwards.",
++    "confirmTitle": "Confirm update of this protected partition",
++    "confirmOk": "I understand; select this partition",
++    "invalidPackage": "Select a BMC .static.mtd.tar partition package or a BIOS update package. Raw/full-flash images and invalid archives are not supported here."
++  },
++  "zh-CN": {
++    "title": "选择 BMC 更新分区",
++    "hint": "默认保留 U-Boot 和 environment。kernel 与 rofs 必须一起更新；更新 rwfs 时仅保留配置清单中指定的设置。",
++    "required": "（必须一起更新）",
++    "bootWarning": "更新 U-Boot 时，如果写入失败或断电，BMC 可能无法启动，无法通过网络恢复，可能需要使用外部烧录器修复。更新完成前请保持供电。",
++    "envWarning": "重置 U-Boot environment 会清除保存的 BMC MAC 地址及其他启动参数，恢复固件默认值。更新后需要重新配置 MAC 地址和网络设置。",
++    "confirmTitle": "确认更新受保护分区",
++    "confirmOk": "我已了解风险，选择此分区",
++    "invalidPackage": "请选择 BMC 的 .static.mtd.tar 分区更新包或 BIOS 更新包。此处不支持原始整片镜像、整片更新包或无效归档。"
++  }
++};

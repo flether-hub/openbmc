@@ -7,17 +7,25 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-whitelist file://ceb-gnrd-update-skip-u-boot.sh"
 
 do_install:append:ceb-gnrd() {
-    # A BMC update does not rewrite U-Boot (see ceb-gnrd-update-skip-u-boot.sh):
-    # insert the check into the update script just before it lists the images.
+    # Check the package-local selection before constructing the flash list.
     awk -v snippet=${UNPACKDIR}/ceb-gnrd-update-skip-u-boot.sh '
         !done && index($0, "imglist=$(echo $image*)") == 1 {
             while ((getline line < snippet) > 0) print line
             print ""
             done = 1
         }
+        index($0, "flashcp -v") && index($0, "&& rm") {
+            print "\t\tif ! flashcp -v \"$f\" \"/dev/$m\"; then"
+            print "\t\t\techoerr \"Flash write failed: $f; stopping update\""
+            print "\t\t\texit 1"
+            print "\t\tfi"
+            print "\t\trm \"$f\""
+            stop_on_error = 1
+            next
+        }
         { print }
-        END { if (!done) exit 1 }' ${D}/update > ${B}/update.ceb-gnrd || \
-        bbfatal "obmc-update.sh: image list line not found, cannot skip U-Boot"
+        END { if (!done || !stop_on_error) exit 1 }' ${D}/update > ${B}/update.ceb-gnrd || \
+        bbfatal "obmc-update.sh: selection or flash write hook not found"
     cat ${B}/update.ceb-gnrd > ${D}/update
 
 

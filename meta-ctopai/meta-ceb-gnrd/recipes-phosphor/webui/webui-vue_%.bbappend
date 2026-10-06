@@ -28,6 +28,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0026-ceb-gnrd-chunk-virtual-media-read-replies.patch \
     file://0027-ceb-gnrd-post-code-table-sort-api.patch \
     file://0028-ceb-gnrd-event-logs-newest-first.patch \
+    file://0029-ceb-gnrd-bmc-update-partition-selection.patch \
     file://zh-CN.json \
 "
 
