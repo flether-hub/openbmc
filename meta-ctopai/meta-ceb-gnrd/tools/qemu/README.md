@@ -21,7 +21,8 @@ sh meta-ctopai/meta-ceb-gnrd/tools/qemu/run-qemu.sh
 ```
 
 补丁目标为项目固定的 QEMU 11.0.2。启动脚本固定使用镜像 qemuboot.conf
-中 `staging_bindir_native` 指向的 BitBake native QEMU；配置或程序缺失会报错退出。
+中 `staging_bindir_native` 指向的 BitBake native QEMU；相对路径按配置文件所在目录解析。
+配置或程序缺失会报错退出。
 不会使用独立安装目录、PATH 中的 QEMU 或环境变量 `QEMU`。
 完成 `bitbake obmc-phosphor-image` 后直接运行 `./run-qemu.sh` 即可。
 

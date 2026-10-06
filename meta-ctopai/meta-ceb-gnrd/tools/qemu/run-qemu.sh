@@ -59,6 +59,12 @@ if [ ! -f "$QEMUBOOT" ]; then
     exit 1
 fi
 bindir=$(sed -n 's/^staging_bindir_native *= *//p' "$QEMUBOOT" | head -n 1)
+# Yocto stores native paths relative to DEPLOY_DIR_IMAGE for relocatability.
+# Resolve from the configuration directory, not the caller's working directory.
+case "$bindir" in
+    ""|/*) ;;
+    *) bindir=$(cd "$(dirname "$QEMUBOOT")" && readlink -m "$bindir") || exit 1 ;;
+esac
 if [ -z "$bindir" ] || [ ! -x "$bindir/qemu-system-arm" ]; then
     echo "BitBake QEMU not found: ${bindir:-<missing staging_bindir_native>}/qemu-system-arm" >&2
     echo "Rebuild the image: bitbake obmc-phosphor-image" >&2
