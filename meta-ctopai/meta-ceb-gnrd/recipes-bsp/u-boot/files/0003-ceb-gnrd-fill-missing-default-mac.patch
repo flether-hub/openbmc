@@ -10,12 +10,12 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
  #include <common.h>
 +#include <environment.h>
  #include <asm/io.h>
- 
- #define SCU_BASE	0x1e6e2000
-@@ -131,3 +132,42 @@
- 	espi_init();
- 	return 0;
+ #include <asm/arch/aspeed_scu_info.h>
+ #include <fdt_support.h>
+@@ -163,3 +164,42 @@
+ 	return ret;
  }
+ #endif
 +
 +#if defined(CEB_GNRD_ENV) && !defined(CONFIG_SPL_BUILD)
 +/* A valid saved environment replaces the whole compiled default environment.

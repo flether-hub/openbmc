@@ -224,8 +224,7 @@ Upstream-Status: Inappropriate [CEB-GNRD update monitoring]
          visible: true,
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -398,7 +398,8 @@
-             "stageBmcStage": "Writing the image to the update area",
+@@ -422,6 +422,7 @@
              "stageBmcWaitReboot": "Image staged, waiting for the BMC to reboot",
              "stageBmcRebooting": "The BMC is writing the new firmware and rebooting; the page reloads when it is back",
              "stageBmcBack": "The BMC is back, reloading the page",
