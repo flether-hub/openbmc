@@ -10,16 +10,20 @@ SRC_URI = " \
     file://ceb-gnrd-ipmi-sel.logrotate \
     file://ceb-gnrd-sel-logrotate.service \
     file://ceb-gnrd-sel-logrotate.timer \
+    file://ceb-gnrd-log-storage-cleanup.sh \
+    file://ceb-gnrd-log-storage-cleanup.service \
     "
 
 S = "${UNPACKDIR}"
 
-SYSTEMD_SERVICE:${PN} = "ceb-gnrd-sel-logrotate.timer"
+SYSTEMD_SERVICE:${PN} = "ceb-gnrd-sel-logrotate.timer ceb-gnrd-log-storage-cleanup.service"
 SYSTEMD_AUTO_ENABLE = "enable"
 
 RDEPENDS:${PN} = "logrotate rsyslog"
 
 do_install() {
+    install -Dm0755 ${UNPACKDIR}/ceb-gnrd-log-storage-cleanup.sh ${D}${libexecdir}/ceb-gnrd-log-storage-cleanup
+    install -Dm0644 ${UNPACKDIR}/ceb-gnrd-log-storage-cleanup.service ${D}${systemd_system_unitdir}/ceb-gnrd-log-storage-cleanup.service
     install -d ${D}${sysconfdir}/ceb-gnrd ${D}${systemd_system_unitdir}
     install -m 0644 ${UNPACKDIR}/ceb-gnrd-ipmi-sel.logrotate ${D}${sysconfdir}/ceb-gnrd/ipmi_sel.logrotate
     install -m 0644 ${UNPACKDIR}/ceb-gnrd-sel-logrotate.service ${D}${systemd_system_unitdir}/ceb-gnrd-sel-logrotate.service
@@ -27,6 +31,8 @@ do_install() {
 }
 
 FILES:${PN} += " \
+    ${libexecdir}/ceb-gnrd-log-storage-cleanup \
+    ${systemd_system_unitdir}/ceb-gnrd-log-storage-cleanup.service \
     ${sysconfdir}/ceb-gnrd/ipmi_sel.logrotate \
     ${systemd_system_unitdir}/ceb-gnrd-sel-logrotate.service \
     ${systemd_system_unitdir}/ceb-gnrd-sel-logrotate.timer \

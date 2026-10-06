@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply CEB-GNRD persistent log storage budget
+After=local-fs.target systemd-journald.service
+Before=bmcweb.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ceb-gnrd-log-storage-cleanup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

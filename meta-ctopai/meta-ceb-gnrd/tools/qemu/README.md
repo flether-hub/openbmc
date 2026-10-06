@@ -379,17 +379,27 @@ USB 页的“无端口错误”对应空的错误集合，不代表已经收到�
 | Web POST 表格 | Created 默认倒序，同一秒内按 POST 接收顺序倒序 |
 | IPMI SEL 文件 | 15 KiB 轮转，保留当前文件和 1 份历史 |
 | Redfish 事件文件 | 64 KiB 轮转，保留当前文件和 1 份历史 |
-| systemd journal | 持久日志预算 4 MiB；运行时日志预算 8 MiB；最多 7 天 |
-| systemd core dump | 总预算 4 MiB，单份外部文件最多 4 MiB；过大的 core 不保留 |
-| BMC 诊断转储 | 总预算 1 MiB，单份预算 200 KiB |
-| D-Bus 事件条目 | 错误最多 200 条，信息最多 128 条 |
+| systemd journal | 持久日志预算 1 MiB，最多 8 个文件；运行时日志预算 8 MiB；最多 2 天 |
+| systemd core dump | 不保存 core 二进制；journal 保留最新崩溃摘要，启动时清理旧 core 文件 |
+| BMC 诊断转储 | 总预算 512 KiB，单份预算 200 KiB |
+| D-Bus 事件条目 | 错误最多 64 条，信息最多 64 条 |
 | 模拟器 panel.log / qemu.log / host.log | 每类当前文件和 .1 各最多 8 MiB（合计最多 48 MiB） |
 | 可选 management.pcap | 默认关闭；达到 64 MiB 后停止抓包，仿真器继续运行 |
 
 SEL/Redfish 每分钟检查一次，突发写入可在检查前超过轮转阈值；
-journal/core 的预算是清理目标，活动文件或正在生成的转储可能短暂超出。
+journal 的预算是清理目标，活动文件可能短暂超出。
 抓包每秒检查，达到阈值时保留文件，大小可多出该检查间隔内的流量。
 这些限制不会影响固件镜像、BIOS Flash 或 FRU EEPROM 文件。
 
 POST 管理器将板级 SEC 起始码 0x01 识别为新一轮 POST，包括主机电源
 保持开启的 BIOS 热重启。若生产 BIOS 起始码发生变化，需同步更新该判定。
+
+板级 SPI Flash 为 64 MiB，其中 rofs 为 44 MiB、rwfs 仅 10 MiB。
+日志与配置共同使用 rwfs；镜像剩余空间不能代替 rwfs 剩余空间。
+持久 journal 1 MiB、诊断转储 512 KiB、SEL/Redfish 约 158 KiB，
+合计约 1.66 MiB，另外还需计算按条数限制的 D-Bus 事件、两轮 POST、配置及文件系统开销。
+journal 设置至少保留 4 MiB 空闲作为清理目标；这不是其他程序写入的全局磁盘配额。
+core 二进制不再写入 Flash，也不再生成堆栈分析；崩溃信号、进程和服务重启原因仍记录在 journal。
+升级后启动清理旧 core 载荷并压缩 journal 保留范围，不删除业务配置。
+实际容量需在 BMC 检查 `df -k /var/lib /var/log` 和 `du -k -d 2 /var/lib /var/log`，
+应保留至少 4 MiB 空闲；若不足，需要定位实际占用，不能只依靠配置预算保证。

@@ -1,3 +1,3 @@
-# Explicit bounded D-Bus event entry counts for the 64 MiB board.
-ERR_INFO_CAP:ceb-gnrd = "128"
-EXTRA_OEMESON:append:ceb-gnrd = " -Derror_cap=200"
+# Keep the newest entries; the persistent rwfs is only 10 MiB.
+ERR_INFO_CAP:ceb-gnrd = "64"
+EXTRA_OEMESON:append:ceb-gnrd = " -Derror_cap=64"
