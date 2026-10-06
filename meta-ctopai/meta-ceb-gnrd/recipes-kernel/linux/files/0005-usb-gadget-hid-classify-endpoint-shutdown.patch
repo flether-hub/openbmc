@@ -1,0 +1,41 @@
+From: CEB-GNRD maintainers <openbmc@ctopai.com>
+Subject: [PATCH] usb: gadget: hid: classify cancelled IN requests
+
+Disabling an endpoint completes pending HID IN requests with -ESHUTDOWN.
+Dequeuing a request or resetting an endpoint can also cancel it. These are
+expected lifecycle completions, as already handled by the HID OUT path,
+and should not produce an error on the console.
+
+Keep unexpected failures visible and always clear write_pending and wake
+writers, including when the request was cancelled.
+
+Upstream-Status: Pending
+Signed-off-by: CEB-GNRD maintainers <openbmc@ctopai.com>
+---
+ drivers/usb/gadget/function/f_hid.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/gadget/function/f_hid.c b/drivers/usb/gadget/function/f_hid.c
+--- a/drivers/usb/gadget/function/f_hid.c
++++ b/drivers/usb/gadget/function/f_hid.c
+@@ -437,9 +437,19 @@ static void f_hidg_req_complete(struct usb_ep *ep, struct usb_request *req)
+ 	struct f_hidg *hidg = (struct f_hidg *)ep->driver_data;
+ 	unsigned long flags;
+ 
+-	if (req->status != 0) {
++	switch (req->status) {
++	case 0:
++		break;
++	case -ECONNABORTED: /* hardware forced ep reset */
++	case -ECONNRESET:   /* request dequeued */
++	case -ESHUTDOWN:    /* disconnect from host */
++		VDBG(hidg->func.config->cdev,
++		     "HID IN request cancelled: %d\n", req->status);
++		break;
++	default:
+ 		ERROR(hidg->func.config->cdev,
+ 			"End Point Request ERROR: %d\n", req->status);
++		break;
+ 	}
+ 
+ 	spin_lock_irqsave(&hidg->write_spinlock, flags);
