@@ -580,14 +580,16 @@ def run_command(host, qmp, words):
         else:
             raise ValueError("usb reconnect / usb media PORT")
     elif cmd == "vga" and SERVICES:
-        if rest == ["auto"]:
+        if len(rest) == 2 and rest[0] == "builtin":
+            SERVICES.builtin_vga(rest[1])
+        elif rest == ["auto"]:
             SERVICES.auto_vga()
         elif rest in (["on"], ["off"]):
             SERVICES.set_signal(rest[0] == "on")
         elif len(rest) == 1:
             SERVICES.set_vga(rest[0])
         else:
-            raise ValueError("vga <JPEG path>|auto|on|off")
+            raise ValueError("vga <JPEG path>|builtin post|builtin os|auto|on|off")
     elif cmd == "post" and rest:
         host.post_s = float(rest[0])
         host.set_times()
@@ -1035,7 +1037,9 @@ def serve_panel(panel, port, host, qmp):
             elif self.path == "/api/state":
                 self.reply(200, panel.state)
             elif self.path.startswith("/api/vga"):
-                path = SERVICES.state().get("preview_path") or qom(qmp, VIDEO, "image")
+                video = SERVICES.state()
+                path = (video.get("preview_path") or qom(qmp, VIDEO, "image")
+                        or video.get("fallback_preview_path"))
                 try:
                     self.reply(200, validate_jpeg(path), "image/jpeg")
                 except (OSError, ValueError, TypeError):

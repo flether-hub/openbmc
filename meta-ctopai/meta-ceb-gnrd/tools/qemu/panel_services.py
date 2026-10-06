@@ -9,6 +9,8 @@ import struct
 import threading
 
 VIDEO = "/machine/soc/video-engine"
+BUILTIN_SCREENS = {"post": "post.jpg", "os": "os.jpg"}
+KVM_DIRECTORY = Path(__file__).resolve().parent / "kvm"
 JPEG_LIMIT = 192 * 1024  # Below the 800x600 driver's compressed-buffer size.
 
 
@@ -62,6 +64,11 @@ class PanelServices:
             self.video_generation += 1
         self.log("VGA 图片已选择：" + os.path.basename(path))
 
+    def builtin_vga(self, name):
+        if name not in BUILTIN_SCREENS:
+            raise ValueError("内置 VGA 图片须选择 post 或 os")
+        self.set_vga(KVM_DIRECTORY / BUILTIN_SCREENS[name])
+
     def auto_vga(self):
         with self.lock:
             self.vga_override = None
@@ -78,4 +85,5 @@ class PanelServices:
         with self.lock:
             return {"image": os.path.basename(self.vga_override) if self.vga_override else "自动：POST / OS",
                     "generation": self.video_generation, "signal_override": self.vga_signal,
-                    "preview_path": self.vga_override}
+                    "preview_path": self.vga_override,
+                    "fallback_preview_path": str(KVM_DIRECTORY / BUILTIN_SCREENS["post"])}

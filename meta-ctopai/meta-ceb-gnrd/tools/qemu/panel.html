@@ -243,11 +243,13 @@ body.resizing { cursor: col-resize; user-select: none; }
   <div class="split"><div>
     <img id="vga-preview" class="preview" alt="主机 VGA 输入图预览">
     <p class="caption" id="vga-status">等待 VGA 状态</p>
+    <div class="row"><button onclick="cmd('vga builtin post')">内置图片 1 · BIOS POST</button><button onclick="cmd('vga builtin os')">内置图片 2 · OS 控制台</button></div>
     <div class="row"><label>选择 VGA 图片 <input id="vga-file" type="file" accept="image/jpeg"></label><button onclick="upload('vga')">应用 JPEG</button></div>
     <div class="row"><button onclick="cmd('vga auto')">自动 POST / OS</button><button onclick="cmd('vga off')">无信号</button><button onclick="cmd('vga on')">有信号</button></div>
     <p class="caption">800×600 baseline JPEG，最大 192 KiB。此处是输入图预览；实际采集结果请在 BMC Web KVM 页面查看。</p>
   </div><div>
     <p id="usb-status">等待 USB 枚举</p><pre class="term" id="usb-reports"></pre>
+    <details><summary>USB / VGA 诊断详情</summary><pre class="term" id="io-diagnostics"></pre></details>
     <div class="row"><button onclick="cmd('usb reconnect')">重新枚举</button><label>USB 端口 <input id="usb-port" type="number" min="1" max="7" value="1"></label><button onclick="cmd('usb media ' + val('usb-port'))">读取媒体</button></div>
     <p class="caption">在 BMC KVM 输入键盘/鼠标；这里显示真实 gadget 输出的 HID 报告，boot 键盘报告同时解码为文字。</p>
   </div></div>
@@ -619,19 +621,20 @@ function drawHardware() {
   ].map(x => '<span>' + esc(x) + '</span>').join('');
   setText('vga-status', v.available ? (v.signal ? 'VGA 有信号 · ' + v.image : 'VGA 无信号') : 'QEMU 没有视频模型');
   const preview = document.getElementById('vga-preview');
-  const previewPath = v.preview_path || (v.signal ? v.path : null);
+  const previewPath = v.preview_path || v.path || v.fallback_preview_path;
   preview.style.visibility = previewPath ? 'visible' : 'hidden';
   if (previewPath && changed('vga', [previewPath, v.generation])) preview.src = '/api/vga?t=' + Date.now();
-  if (v.preview_path && !v.signal) setText('vga-status', '已选择图片预览 · 主机 VGA 无信号；图片预览不代表 BMC KVM 捕获成功');
+  if (previewPath && !v.signal) setText('vga-status', '参考图片预览 · 当前 VGA 无信号；主机上电后可在 BMC Web KVM 查看采集画面');
   const devices = u.devices || [];
   setText('usb-status', (u.available ? (u.connected ? 'USB 已连接' : '等待主机上电 / gadget 就绪') : 'QEMU 没有 vHub 模型') +
     '\n' + devices.map(d => `端口${d.port} ${d.vid}:${d.pid} · ${d.reports} 个报告`).join(' / ') + (u.error ? '\n' + u.error : ''));
-  setText('usb-reports', (u.keyboard_text || '') + '\n\nHID 报告：\n' +
-    (u.reports || []).slice(-20).map(r => `port${r.port} ep${r.endpoint}  ${r.hex}`).join('\n') +
-    '\n\n鼠标：' + JSON.stringify(u.pointer || null) +
-    '\n端口错误：' + JSON.stringify(u.port_errors || {}) + '\n模型：' + (u.diagnostics || '无诊断属性'));
-  setText('vga-status', document.getElementById('vga-status').textContent +
-    '\n' + (v.diagnostics || '旧模型没有视频帧计数器'));
+  const portErrors = Object.entries(u.port_errors || {});
+  setText('usb-reports', '键盘输入：' + (u.keyboard_text || '尚未收到键盘输入') + '\n\nHID 报告：\n' +
+    ((u.reports || []).slice(-20).map(r => `port${r.port} ep${r.endpoint}  ${r.hex}`).join('\n') || '尚未收到 HID 报告') +
+    '\n\n鼠标：' + (u.pointer ? JSON.stringify(u.pointer) : '尚未收到鼠标输入') +
+    '\n端口状态：' + (portErrors.length ? portErrors.map(([port, error]) => `端口${port}：${error}`).join(' / ') : '无端口错误'));
+  setText('io-diagnostics', 'USB 模型：' + (u.diagnostics || '无诊断属性') +
+    '\n\nVGA 模型：' + (v.diagnostics || '无诊断属性'));
   const ports = devices.filter(d => d.interfaces.some(i => i.class === 8)).map(d => String(d.port));
   const selector = document.getElementById('media-port');
   if (changed('media-ports', ports)) {

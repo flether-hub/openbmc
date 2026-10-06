@@ -332,3 +332,14 @@ EXPORT_NAME 协商，并以 `-R` 保持只读。启动日志包含完整参数�
 SCU06C（0x1e6e206c）。旧版 0024 模型误写 SCU074/078，导致传给 Linux 的快照为零、
 boot-reason=unknown，AC 策略被跳过。修正后每次 SoC reset 在 qemu.log 输出两项标志，
 可与 U-Boot 串口的 `BMC boot reason` 及 Linux chosen 属性对照。
+
+### 内置 VGA 图片与 USB 状态
+
+VGA / USB 页提供“内置图片 1 · BIOS POST”和“内置图片 2 · OS 控制台”按钮，
+直接使用仓库中的 800×600 baseline JPEG，无需上传。选择图片不强制主机开机或开启 VGA 信号；
+关机时显示参考预览，实际视频采集应在主机开机后的 BMC Web KVM 中核对。
+“自动 POST / OS”恢复按主机状态自动选择。
+
+USB 页的“无端口错误”对应空的错误集合，不代表已经收到键盘报告。
+主机关机时模拟 USB 主机不枚举，提示等待上电；键盘输入须在 BMC Web KVM 中发送。
+原始 USB / VGA 寄存器计数放在折叠的诊断详情中，真正的枚举/传输错误仍直接显示并写入 panel.log。
