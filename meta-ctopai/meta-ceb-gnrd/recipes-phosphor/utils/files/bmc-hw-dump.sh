@@ -8,6 +8,7 @@
 #     sh bmc-hw-dump.sh            dump into /tmp/bmc-hw-<host>-<time>.tar.gz
 #     sh bmc-hw-dump.sh -s         also scan the I2C buses (i2cdetect -r, see below)
 #     sh bmc-hw-dump.sh -n         do not read the known ceb-gnrd chips over I2C
+#     sh bmc-hw-dump.sh -R         skip direct MMIO register reads
 #     sh bmc-hw-dump.sh -a         print every text file to the console too (long)
 #   The checklist (ceb-gnrd-checklist.txt) is always printed at the end.
 #     sh bmc-hw-dump.sh -o DIR     write the dump directory under DIR instead of /tmp
@@ -23,6 +24,10 @@
 #   (MAC, PHY address, NC-SI, IP), SPI flash partitions, LEDs, watchdog, RTC,
 #   USB device, video, PECI, kernel log and process list, ipmitool output,
 #   BMC debug console (console=, getty, UART nodes) and VGA / KVM video engine.
+#   DDR configuration/training results, PLLs, all bus bindings including
+#   unbound devices, USB gadget/HID/NBD configuration and SPI NOR SFDP.
+#   port-guide-coverage.txt maps port_guide.xlsx rows to collected evidence.
+#   hardware-limits.txt explains information that requires board measurements.
 #   ceb-gnrd-checklist.txt lists every hardware function of the ceb-gnrd firmware
 #   with the value the new firmware expects next to what this firmware shows.
 #   chips.txt lists the external chips (device tree compatibles, I2C / SPI
@@ -65,7 +70,11 @@ if [ "${1:-}" = compare ]; then
         espi-regs.txt lpc-regs.txt vuart-regs.txt \
         i2c-devices.txt i2c-scan.txt hwmon-layout.txt iio-layout.txt \
         serial.txt net-layout.txt mtd.txt leds.txt watchdog.txt rtc.txt \
-        dev-nodes.txt console-vga.txt chips.txt ceb-gnrd-checklist.txt
+        dev-nodes.txt console-vga.txt chips.txt ceb-gnrd-checklist.txt \
+        memory-config.txt memory-regs.txt clock-config.txt mac-regs.txt gpio18-pins.txt \
+        dt-hardware-cells.txt \
+        bus-bindings.txt usb-config.txt flash-config.txt board-config.txt \
+        port-guide-coverage.txt hardware-limits.txt
     do
         if [ ! -e "$old/$f" ] && [ ! -e "$new/$f" ]; then
             continue
@@ -86,11 +95,13 @@ fi
 SCAN=0
 PROBE=1
 ALL=0
+REGS=1
 OUTBASE=/tmp
 while [ $# -gt 0 ]; do
     case "$1" in
         -s) SCAN=1 ;;
         -n) PROBE=0 ;;
+        -R) REGS=0 ;;
         -a) ALL=1 ;;
         -o) shift; OUTBASE=${1:?-o needs a directory} ;;
         -h|--help) sed -n '2,/^PATH=/p' "$0" | sed '$d'; exit 0 ;;
@@ -102,7 +113,7 @@ done
 mkdir -p "$OUTBASE" && OUTBASE=$(cd "$OUTBASE" && pwd) || exit 1
 HOST=$(hostname 2>/dev/null || echo bmc)
 STAMP=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo now)
-NAME=bmc-hw-$HOST-$STAMP
+NAME=bmc-hw-$HOST-$STAMP-$$
 OUT=$OUTBASE/$NAME
 mkdir -p "$OUT" || exit 1
 LOG=$OUT/00-run.log
@@ -128,6 +139,8 @@ run() {
         echo "### $title"
         echo "\$ $*"
         $TMO "$@" 2>&1
+        rc=$?
+        echo "[exit=$rc; 124/137 may indicate timeout]"
         echo
     } >> "$OUT/$file"
 }
@@ -165,7 +178,7 @@ run kernel.txt "interrupts" cat /proc/interrupts
 run kernel.txt "iomem" cat /proc/iomem
 run kernel.txt "kernel config (if exposed)" sh -c 'zcat /proc/config.gz 2>/dev/null || echo "no /proc/config.gz"'
 run dmesg.txt "kernel log" dmesg
-have journalctl && run journal.txt "journal (this boot)" journalctl -b --no-pager
+have journalctl && run journal.txt "journal (last 3000 entries this boot)" journalctl -b --no-pager -n 3000
 [ -r /var/log/messages ] && run journal.txt "/var/log/messages" tail -n 3000 /var/log/messages
 
 # ---------------------------------------------------------------- 2. device tree
@@ -173,6 +186,10 @@ say "[2/15] device tree"
 if [ -r /sys/firmware/fdt ]; then
     cp /sys/firmware/fdt "$OUT/device-tree.dtb" 2>/dev/null &&
         echo "raw blob saved: decompile on the PC with  dtc -I dtb -O dts device-tree.dtb" >> "$OUT/system.txt"
+fi
+if have dtc && [ -d /proc/device-tree ]; then
+    run system.txt "complete live device tree (binary properties preserved)" \
+        dtc -I fs -O dtb -o "$OUT/device-tree-live.dtb" /proc/device-tree
 fi
 if [ -d /proc/device-tree ]; then
     # Every node with a status property, sorted, so enabled/disabled blocks can be
@@ -239,15 +256,19 @@ done > "$OUT/gpio-sysfs-exported.txt"
 
 # ---------------------------------------------------------------- register access
 DEVMEM=""
-if [ -e /dev/mem ]; then
+if [ "$REGS" = 1 ] && [ -e /dev/mem ] &&
+    grep -q 'aspeed,ast2600' /proc/device-tree/compatible 2>/dev/null; then
     if have devmem; then DEVMEM=devmem
-    elif have busybox && busybox devmem 0x1e6e2004 >/dev/null 2>&1; then DEVMEM="busybox devmem"
+    elif have busybox && $TMO busybox devmem 0x1e6e2004 >/dev/null 2>&1; then DEVMEM="busybox devmem"
     fi
 fi
 rd() {
     # rd ADDR -> 0x%08x value or "--------"
-    v=$($DEVMEM "$(printf '0x%08x' "$1")" 32 2>/dev/null)
-    [ -n "$v" ] && printf '0x%08x' "$v" || echo "----------"
+    v=$($TMO $DEVMEM "$(printf '0x%08x' "$1")" 32 2>/dev/null)
+    case "$v" in
+        0x[0-9a-fA-F]*) printf '0x%08x' "$v" ;;
+        *) echo "----------" ;;
+    esac
 }
 dump_range() {
     # dump_range FILE TITLE BASE FIRST LAST : 32-bit registers BASE+FIRST..BASE+LAST
@@ -316,6 +337,24 @@ if [ -n "$DEVMEM" ]; then
         echo "outputs).  A pin whose function is muxed away from GPIO (see scu-regs.txt)"
         echo "shows a meaningless value here."
     } > "$OUT/gpio-pins.txt"
+    {
+        echo "PIN DIRECTION VALUE (AST2600 36 GPIOs on the 1.8 V controller)"
+        for grp in "ABCD 0x000 0x004 0 32" "E 0x020 0x024 32 4"; do
+            set -- $grp
+            data=$(rd $((0x1e780800 + $2))); dir=$(rd $((0x1e780800 + $3)))
+            first=$4 count=$5
+            case "$data$dir" in *-*) echo "SKIP: group $1 unreadable"; continue ;; esac
+            bit=0
+            while [ "$bit" -lt "$count" ]; do
+                pin=$(bank_name $((first + bit)))
+                d=$(((dir >> bit) & 1)); v=$(((data >> bit) & 1))
+                [ "$d" = 1 ] && d=out || d=in
+                printf 'GPIO18%s %s %s\n' "${pin#GPIO}" "$d" "$v"
+                bit=$((bit + 1))
+            done
+        done
+        echo "Muxed RGMII pins must be interpreted with SCU pinmux configuration."
+    } > "$OUT/gpio18-pins.txt"
 
     # ------------------------------------------------------------ 6. eSPI / LPC / VUART
     say "[6/15] eSPI, LPC (KCS / snoop / SuperIO), VUART registers"
@@ -355,8 +394,8 @@ if [ -n "$DEVMEM" ]; then
     dump_range block-regs.txt "SPI1 (host BIOS flash) 0x1e630000" 0x1e630000 0x000 0x0fc
     dump_range block-regs.txt "PECI controller 0x1e78b000 (control / timing)" 0x1e78b000 0x000 0x01c
 else
-    say "[4-7/15] skipped: no /dev/mem or devmem on this firmware (registers not read)"
-    echo "devmem / /dev/mem not available: register dump skipped" > "$OUT/scu-regs.txt"
+    say "[4-7/15] skipped: MMIO disabled, non-AST2600, or /dev/mem/devmem unavailable"
+    echo "MMIO disabled or unavailable: register dump skipped" > "$OUT/scu-regs.txt"
 fi
 
 # busof N : Linux bus number of AST2600 I2C controller N (0x1e78a080 + N*0x80);
@@ -399,11 +438,11 @@ fi
 for e in /sys/bus/i2c/devices/*/eeprom; do
     [ -r "$e" ] || continue
     d=${e%/eeprom}; d=${d##*/}
-    dd if="$e" of="$OUT/eeprom-$d.bin" bs=1024 count=8 2>/dev/null
+    $TMO dd if="$e" of="$OUT/eeprom-$d.bin" bs=1024 count=8 2>/dev/null
     if have hexdump; then
         hexdump -C "$OUT/eeprom-$d.bin" > "$OUT/eeprom-$d.txt"
     elif have od; then
-        od -A x -t x1z "$OUT/eeprom-$d.bin" > "$OUT/eeprom-$d.txt" 2>/dev/null
+        od -t x1 "$OUT/eeprom-$d.bin" > "$OUT/eeprom-$d.txt" 2>/dev/null
     fi
 done
 
@@ -697,6 +736,13 @@ hex2ascii() {
         printf "\\$o"
     done
 }
+chip_read() {
+    echo "\$ i2cget $*" >> "$OUT/i2c-probe.log"
+    $TMO i2cget "$@" 2>> "$OUT/i2c-probe.log"
+    cr_rc=$?
+    echo "exit=$cr_rc" >> "$OUT/i2c-probe.log"
+    return "$cr_rc"
+}
 if [ "$PROBE" = 1 ] && have i2cget; then
     B6=$(busof 6); B7=$(busof 7); B9=$(busof 9); B10=$(busof 10)
     {
@@ -704,11 +750,15 @@ if [ "$PROBE" = 1 ] && have i2cget; then
         echo "# temperature sensors (NST175 / LM75 family): TEMP reg0, CONF reg1, THYST reg2, TOS reg3"
         echo "# an LM75-compatible chip at power-on has THYST 75 C and TOS 80 C"
         for a in 0x48 0x49 0x4a 0x4b; do
-            t=$(i2cget -y "$B6" $a 0x00 w 2>/dev/null)
+            t=$(chip_read -y "$B6" $a 0x00 w 2>/dev/null)
             if [ -z "$t" ]; then echo "i2c-$B6 $a: no answer"; continue; fi
-            c=$(i2cget -y "$B6" $a 0x01 b 2>/dev/null)
-            h=$(i2cget -y "$B6" $a 0x02 w 2>/dev/null)
-            o=$(i2cget -y "$B6" $a 0x03 w 2>/dev/null)
+            c=$(chip_read -y "$B6" $a 0x01 b 2>/dev/null)
+            h=$(chip_read -y "$B6" $a 0x02 w 2>/dev/null)
+            o=$(chip_read -y "$B6" $a 0x03 w 2>/dev/null)
+            if [ -z "$c" ] || [ -z "$h" ] || [ -z "$o" ]; then
+                echo "i2c-$B6 $a: incomplete register read temp=$t conf=$c thyst=$h tos=$o (see i2c-probe.log)"
+                continue
+            fi
             msb=$(( t & 0xff )); [ "$msb" -ge 128 ] && msb=$((msb - 256))
             half=$(( (t >> 15) & 1 ))
             echo "i2c-$B6 $a: temp=$msb.$((half * 5)) C conf=$c thyst=$(( h & 0xff )) C tos=$(( o & 0xff )) C (raw $t $h $o)"
@@ -718,7 +768,7 @@ if [ "$PROBE" = 1 ] && have i2cget; then
         r=""
         i=0
         while [ $i -lt 32 ]; do
-            v=$(i2cget -y "$B9" 0x6f $i b 2>/dev/null) || { r="no answer"; break; }
+            v=$(chip_read -y "$B9" 0x6f $i b 2>/dev/null) || { r="no answer"; break; }
             r="$r ${v#0x}"
             i=$((i + 1))
         done
@@ -726,12 +776,12 @@ if [ "$PROBE" = 1 ] && have i2cget; then
         echo
         echo "# FRU EEPROM: a 24C08 (1 KiB) answers at 0x50-0x53, a 24C02 only at 0x50"
         for a in 0x50 0x51 0x52 0x53 0x54 0x55 0x56 0x57; do
-            v=$(i2cget -y "$B10" $a 0x00 b 2>/dev/null) && echo "i2c-$B10 $a: answers (byte0=$v)"
+            v=$(chip_read -y "$B10" $a 0x00 b 2>/dev/null) && echo "i2c-$B10 $a: answers (byte0=$v)"
         done
         if [ ! -e "/sys/bus/i2c/devices/$(printf '%s-%04x' "$B10" 0x50)/eeprom" ]; then
             r=""; i=0
             while [ $i -lt 16 ]; do
-                v=$(i2cget -y "$B10" 0x50 $i b 2>/dev/null) || break
+                v=$(chip_read -y "$B10" 0x50 $i b 2>/dev/null) || break
                 r="$r ${v#0x}"; i=$((i + 1))
             done
             echo "i2c-$B10 0x50 first 16 bytes:$r  (FRU common header starts with 01)"
@@ -739,23 +789,18 @@ if [ "$PROBE" = 1 ] && have i2cget; then
         echo
         echo "# PMBus PSUs: PMBUS_REVISION 0x98, MFR_ID 0x99, MFR_MODEL 0x9a, MFR_REVISION 0x9b"
         for a in 0x58 0x59 0x5a; do
-            rev=$(i2cget -y "$B7" $a 0x98 b 2>/dev/null)
+            rev=$(chip_read -y "$B7" $a 0x98 b 2>/dev/null)
             if [ -z "$rev" ]; then echo "i2c-$B7 $a: no answer (slot empty?)"; continue; fi
-            id=$(i2cget -y "$B7" $a 0x99 s 2>/dev/null)
-            md=$(i2cget -y "$B7" $a 0x9a s 2>/dev/null)
-            mr=$(i2cget -y "$B7" $a 0x9b s 2>/dev/null)
+            id=$(chip_read -y "$B7" $a 0x99 s 2>/dev/null)
+            md=$(chip_read -y "$B7" $a 0x9a s 2>/dev/null)
+            mr=$(chip_read -y "$B7" $a 0x9b s 2>/dev/null)
             echo "i2c-$B7 $a: pmbus_rev=$rev MFR_ID='$(hex2ascii $id)' MFR_MODEL='$(hex2ascii $md)' MFR_REVISION='$(hex2ascii $mr)'"
         done
         echo
     } >> "$OUT/chips.txt" 2>&1
 fi
-# PHY identity through the MII registers (read-only ioctl), for every interface.
-if have mii-tool; then
-    for n in /sys/class/net/eth*; do
-        [ -e "$n" ] || continue
-        run chips.txt "MII registers of ${n##*/} (vendor OUI / model / revision)" mii-tool -v "${n##*/}"
-    done
-fi
+# PHY IDs are collected through sysfs above. Do not run mii-tool -v here:
+# reading all PHY registers can acknowledge latched status/interrupts.
 
 # ---------------------------------------------------------------- 14. IPMI
 say "[14/15] IPMI (if ipmitool exists on this firmware)"
@@ -956,9 +1001,479 @@ ck "power / host related processes:"
 grep -i -E 'power|chassis|host|state|ipmi|kcs|sol|console|fan|pid' "$OUT/processes.txt" 2>/dev/null \
     | grep -v -E 'grep|\[k' | head -n 40 | sed 's/^/    /' >> "$CK"
 
+# ---------------------------------------------------------------- porting configuration supplement
+say "[port-guide] memory, clocks, bus bindings, USB and board configuration"
+
+# Small text attributes only. Do not traverse arbitrary debugfs files: some
+# trigger transactions, consume trace buffers or block waiting for events.
+attr() {
+    afile=$1; shift
+    for apath in "$@"; do
+        [ -f "$apath" ] && [ -r "$apath" ] || continue
+        {
+            echo "### $apath"
+            $TMO head -c "${ATTR_LIMIT:-65536}" "$apath" 2>&1
+            echo "[bounded to ${ATTR_LIMIT:-65536} bytes per attribute]"
+            echo
+        } >> "$OUT/$afile"
+    done
+}
+
+binding() {
+    bfile=$1 bdev=$2
+    [ -d "$bdev" ] || return
+    {
+        echo "### $bdev"
+        echo "device=$(readlink -f "$bdev" 2>/dev/null)"
+        echo "driver=$(readlink -f "$bdev/driver" 2>/dev/null)"
+        echo "of_node=$(readlink -f "$bdev/of_node" 2>/dev/null)"
+    } >> "$OUT/$bfile"
+    attr "$bfile" "$bdev/uevent" "$bdev/modalias" "$bdev/resource" \
+        "$bdev/power/runtime_status"
+}
+
+for f in memory-config memory-regs clock-config mac-regs bus-bindings \
+         usb-config flash-config board-config hardware-limits; do
+    echo "bmc-hw-dump format=2: $f" > "$OUT/$f.txt"
+done
+
+attr memory-config.txt /proc/meminfo /proc/iomem /proc/buddyinfo /proc/pagetypeinfo \
+    /proc/vmstat /proc/swaps /sys/kernel/mm/cma/*/count
+attr memory-config.txt /sys/class/graphics/fb*/name \
+    /sys/class/graphics/fb*/virtual_size /sys/class/graphics/fb*/bits_per_pixel \
+    /sys/class/graphics/fb*/stride /sys/class/graphics/fb*/modes
+for d in /sys/class/drm/card*-*; do
+    attr memory-config.txt "$d/status" "$d/enabled" "$d/modes"
+    [ -r "$d/edid" ] && run memory-config.txt "cached display EDID $d" od -t x1 "$d/edid"
+done
+for d in /sys/class/video4linux/*; do
+    binding usb-config.txt "$d"
+    attr usb-config.txt "$d/name" "$d/dev" "$d/index"
+    if have v4l2-ctl; then
+        run usb-config.txt "video configuration ${d##*/} (no streaming)" \
+            v4l2-ctl --device "/dev/${d##*/}" --all
+    fi
+done
+for d in /sys/devices/system/edac/mc/mc*; do
+    binding memory-config.txt "$d"
+    attr memory-config.txt "$d/mc_name" "$d/size_mb" "$d/ce_count" "$d/ue_count" \
+        "$d/seconds_since_reset" "$d"/dimm*/dimm_label "$d"/dimm*/size \
+        "$d"/dimm*/dimm_mem_type "$d"/dimm*/dimm_dev_type
+done
+if [ -d /proc/device-tree ]; then
+    # Preserve binary cells as bytes. BusyBox od -x is supported on the vendor
+    # firmware too; include byte order explicitly rather than decoding as host.
+    find /proc/device-tree -type f 2>/dev/null | sort | while read -r p; do
+        case "$p" in
+            */memory@*/reg|*/reserved-memory/*/reg|*/reserved-memory/*/size|\
+            */chosen/aspeed,*|*/chosen/bootargs|*/chosen/stdout-path)
+                echo "### ${p#/proc/device-tree} (raw bytes; DT cells are big-endian)"
+                $TMO od -t x1 "$p" 2>&1
+                ;;
+        esac
+    done >> "$OUT/memory-config.txt"
+    find /proc/device-tree -type f 2>/dev/null | sort | while read -r p; do
+        case "${p##*/}" in
+            reg|ranges|dma-ranges|clocks|clock-frequency|assigned-*|resets|\
+            interrupts|interrupt-parent|pinctrl-[0-9]*|*gpios|bus-width|\
+            spi-*|aspeed,*|phy-handle|phy-mode|phy-connection-type|\
+            scl-*|i2c-scl-*|'#address-cells'|'#size-cells')
+                echo "### ${p#/proc/device-tree} (bytes; DT cells are big-endian)"
+                $TMO head -c 65536 "$p" | od -t x1
+                ;;
+        esac
+    done > "$OUT/dt-hardware-cells.txt"
+fi
+{
+    echo "### available collection tools"
+    for t in devmem timeout dtc gpioinfo gpiodetect i2cget i2cdetect \
+        ethtool ip busctl systemctl hwclock ipmitool journalctl; do
+        command -v "$t" 2>/dev/null || echo "SKIP: $t not installed"
+    done
+    echo "SCAN=$SCAN PROBE=$PROBE REGS=$REGS DEVMEM=${DEVMEM:-unavailable}"
+} >> "$OUT/hardware-limits.txt"
+attr clock-config.txt /sys/kernel/debug/clk/clk_summary \
+    /sys/kernel/debug/clk/clk_dump
+for d in /sys/kernel/debug/pinctrl/*; do
+    attr clock-config.txt "$d/pinconf-pins" "$d/pinconf-groups" "$d/pins" \
+        "$d/gpio-ranges" "$d/pinmux-functions"
+done
+
+if [ -n "$DEVMEM" ]; then
+    # Registers named by the pinned U-Boot sdram_ast2600.h. No DRAM contents,
+    # test activation, PHY indirect access, or writes to unlock keys.
+    dump_list memory-regs.txt "AST2600 SDRAM controller 0x1e6e0000" 0x1e6e0000 \
+        0x004:CONFIG 0x00c:REFRESH 0x010:AC_TIMING0 0x014:AC_TIMING1 \
+        0x018:AC_TIMING2 0x01c:AC_TIMING3 0x020:MR01 0x024:MR23 \
+        0x028:MR45 0x02c:MR6 0x034:POWER_CTRL 0x038:ARBITRATION \
+        0x03c:REQ_LIMIT 0x040:GRANT0 0x044:GRANT1 0x048:GRANT2 \
+        0x04c:GRANT3 0x054:ECC_RANGE 0x060:PHY_CTRL0 0x064:PHY_CTRL1 \
+        0x068:PHY_CTRL2 0x06c:PHY_CTRL3 0x080:REQ_INPUT 0x084:REQ_HIGH_PRI
+    dump_list memory-regs.txt "DDR PHY settings (pinned U-Boot register map)" 0x1e6e0100 \
+        0x030:RON_ODT 0x060:DRAM_VREF_RANGE 0x084:TRAINING_TRFC
+    dump_list memory-regs.txt "DDR PHY training results (read-only status bank)" 0x1e6e0400 \
+        0x000:TRAINING_STATUS 0x030:PU_PD 0x050:GATE_TRAINING \
+        0x068:READ_EYE_RISING 0x0c8:READ_EYE_FALLING 0x07c:WRITE_EYE \
+        0x088:READ_VREF 0x090:WRITE_VREF
+    cfg=$(rd 0x1e6e0004)
+    case "$cfg" in *-*) ;; *)
+        {
+            echo "CONFIG=$cfg"
+            echo "capacity_MiB=$((256 << (cfg & 3))) (controller encoding, not a memory test)"
+            echo "DDR4=$(((cfg >> 4) & 1)) dual_x8=$(((cfg >> 5) & 1)) ECC=$(((cfg >> 7) & 1))"
+            echo "VGA_reserve_MiB=$((8 << ((cfg >> 2) & 3)))"
+        } >> "$OUT/memory-config.txt"
+        ;;
+    esac
+    dump_list clock-config.txt "SCU PLLs and SDRAM handshake (raw; strap selects reference clock)" 0x1e6e2000 \
+        0x100:HANDSHAKE 0x200:HPLL 0x204:HPLL_EXT 0x210:APLL \
+        0x214:APLL_EXT 0x220:MPLL 0x224:MPLL_EXT 0x240:EPLL \
+        0x244:EPLL_EXT 0x260:DPLL 0x264:DPLL_EXT
+    # Four MACs: never touch poll-demand registers or initiate MDIO transfers.
+    for base in 0x1e660000 0x1e680000 0x1e670000 0x1e690000; do
+        dump_list mac-regs.txt "FTGMAC100 $base configuration" "$base" \
+            0x004:IER 0x008:MAC_MADR 0x00c:MAC_LADR 0x010:HASH0 0x014:HASH1 \
+            0x020:TX_RING 0x024:RX_RING 0x02c:HIGH_TX_RING 0x030:INT_TIMER \
+            0x034:AUTO_POLL 0x038:DMA_BURST 0x040:REVISION 0x044:FEATURE \
+            0x048:TX_ARB 0x04c:RX_BUF_SIZE 0x050:MACCR 0x060:PHYCR 0x068:FLOW_CTRL
+    done
+    dump_list usb-config.txt "USB vHub global configuration (no endpoint/setup buffers)" 0x1e6a0000 \
+        0x000:CTRL 0x004:CONF 0x008:IER 0x010:EP_ACK_IER 0x014:EP_NACK_IER
+    dump_list flash-config.txt "SPI2 reserved interface configuration" 0x1e631000 \
+        0x000:CONFIG 0x004:CE_CTRL 0x010:CS0_CTRL 0x030:CS0_SEGMENT
+    # Offset 0 is function control and offset 4 is clock timing in both
+    # AST2600 legacy and new I2C bus register layouts. Skip command/data/status.
+    b=0
+    while [ "$b" -lt 16 ]; do
+        dump_list bus-bindings.txt "I2C$((b + 1)) function/clock (controller index $b)" \
+            $((0x1e78a080 + b * 0x80)) 0x000:FUNCTION_CTRL 0x004:CLOCK_TIMING
+        b=$((b + 1))
+    done
+else
+    echo "SKIP: AST2600 MMIO unavailable or disabled (-R); use DT/sysfs evidence." \
+        >> "$OUT/memory-regs.txt"
+    echo "SKIP: AST2600 MMIO unavailable or disabled (-R)." >> "$OUT/mac-regs.txt"
+fi
+
+# Inventory includes unbound devices; the old inventory only listed bindings.
+# I2C mux links make Linux numbering distinguishable from schematic I2C1..16.
+for bus in platform i2c spi mdio_bus i3c peci auxiliary usb; do
+    echo "### bus=$bus" >> "$OUT/bus-bindings.txt"
+    bcount=0
+    for d in /sys/bus/"$bus"/devices/*; do
+        [ -d "$d" ] || continue
+        bcount=$((bcount + 1))
+        binding bus-bindings.txt "$d"
+        case "$bus" in
+            i2c)
+                attr bus-bindings.txt "$d/name"
+                for link in "$d/mux_device" "$d"/channel-*; do
+                    [ -L "$link" ] && echo "$link -> $(readlink -f "$link")" >> "$OUT/bus-bindings.txt"
+                done
+                ;;
+            i3c)
+                attr bus-bindings.txt "$d/pid" "$d/bcr" "$d/dcr" \
+                    "$d/dynamic_address" "$d/hdrcap"
+                ;;
+        esac
+    done
+    [ "$bcount" -gt 0 ] || echo "SKIP: no devices exposed on bus $bus" >> "$OUT/bus-bindings.txt"
+done
+for n in /sys/class/net/*; do
+    [ -d "$n" ] || continue
+    attr network.txt "$n/addr_assign_type" "$n/operstate" "$n/mtu" \
+        "$n/duplex" "$n/phydev/phy_id" "$n/phydev/phy_interface" \
+        "$n/phydev/attached_dev" "$n"/statistics/*
+    if have ethtool && [ "${n##*/}" != lo ]; then
+        run network.txt "permanent MAC ${n##*/}" ethtool -P "${n##*/}"
+        run network.txt "link statistics ${n##*/}" ethtool -S "${n##*/}"
+    fi
+done
+# No PHY register dump: latched status can be cleared by MDIO reads.
+for d in /sys/class/udc/*; do
+    binding usb-config.txt "$d"
+    attr usb-config.txt "$d/state" "$d/current_speed" "$d/maximum_speed" \
+        "$d/is_otg" "$d/function" "$d/uevent"
+done
+for g in /sys/kernel/config/usb_gadget/*; do
+    [ -d "$g" ] || continue
+    attr usb-config.txt "$g/UDC" "$g/idVendor" "$g/idProduct" "$g/bcdUSB" \
+        "$g/bcdDevice" "$g"/strings/*/manufacturer "$g"/strings/*/product \
+        "$g"/strings/*/serialnumber "$g"/configs/*/MaxPower "$g"/configs/*/bmAttributes
+    for f in "$g"/functions/*; do
+        [ -d "$f" ] || continue
+        attr usb-config.txt "$f/protocol" "$f/subclass" "$f/report_length" \
+            "$f"/lun.*/file "$f"/lun.*/ro "$f"/lun.*/removable \
+            "$f"/lun.*/cdrom "$f"/lun.*/nofua
+        if [ -r "$f/report_desc" ]; then
+            run usb-config.txt "HID descriptor $f" od -t x1 "$f/report_desc"
+        fi
+    done
+    run usb-config.txt "gadget function bindings $g" ls -l "$g"/configs/*/
+done
+for d in /sys/bus/usb/devices/*; do
+    attr usb-config.txt "$d/idVendor" "$d/idProduct" "$d/product" \
+        "$d/manufacturer" "$d/speed" "$d/bConfigurationValue" "$d/bInterfaceClass"
+done
+for d in /sys/block/nbd*; do
+    attr usb-config.txt "$d/size" "$d/pid" "$d/ro" "$d/queue/logical_block_size"
+done
+for m in /sys/class/mtd/mtd*; do
+    case "$m" in *ro) continue ;; esac
+    attr flash-config.txt "$m/name" "$m/type" "$m/size" "$m/offset" \
+        "$m/erasesize" "$m/writesize" "$m/flags" "$m/ecc_strength" \
+        "$m/corrected_bits" "$m/ecc_failures"
+done
+for d in /sys/bus/spi/devices/*; do
+    attr flash-config.txt "$d/modalias" "$d/spi-nor/jedec_id" \
+        "$d/spi-nor/partname" "$d/spi-nor/manufacturer"
+    if [ -r "$d/spi-nor/sfdp" ]; then
+        run flash-config.txt "SFDP $d (first 4 KiB)" sh -c 'head -c 4096 "$1" | od -t x1' sh "$d/spi-nor/sfdp"
+    fi
+done
+attr flash-config.txt /etc/fw_env.config
+
+# Capture installed configuration rather than assuming vendor file names.
+# Do not traverse credential directories, full /etc or firmware image payloads.
+ATTR_LIMIT=262144
+for f in /etc/ceb-gnrd-hardware-contract.yaml \
+         /usr/share/ceb-gnrd/ceb-gnrd-hardware-contract.yaml \
+         /usr/share/entity-manager/configurations/*.json \
+         /usr/share/swampd/*.json /usr/share/phosphor-pid-control/*.json \
+         /etc/phosphor-pid-control/*.json /etc/default/obmc-console* \
+         /usr/share/x86-power-control/*.json /etc/x86-power-control/*.json \
+         /usr/share/phosphor-led-manager/*.json /usr/share/phosphor-led-manager/*.yaml \
+         /etc/ntp.conf \
+         /etc/systemd/timesyncd.conf /etc/systemd/timesyncd.conf.d/*.conf; do
+    attr board-config.txt "$f"
+done
+ATTR_LIMIT=65536
+attr board-config.txt /usr/share/ipmi-providers/dev_id.json \
+    /usr/share/ipmi-providers/dcmi_sensors.json /usr/share/ipmi-providers/power_reading.json
+for w in /sys/class/watchdog/watchdog*; do
+    attr watchdog.txt "$w/timeleft" "$w/nowayout" "$w/status" \
+        "$w/pretimeout" "$w/pretimeout_governor"
+done
+for r in /sys/class/rtc/rtc*; do
+    attr rtc-values.txt "$r/date" "$r/time" "$r/since_epoch" \
+        "$r/max_user_freq" "$r/range" "$r/offset"
+done
+for p in /var/lib/power-control /var/lib/ceb-gnrd; do
+    [ -d "$p" ] && run board-config.txt "state file inventory $p (contents omitted)" ls -l "$p"
+done
+if have busctl; then
+    run board-config.txt "host state" busctl --system get-property \
+        xyz.openbmc_project.State.Host /xyz/openbmc_project/state/host0 \
+        xyz.openbmc_project.State.Host CurrentHostState
+    run board-config.txt "chassis state" busctl --system get-property \
+        xyz.openbmc_project.State.Chassis /xyz/openbmc_project/state/chassis0 \
+        xyz.openbmc_project.State.Chassis CurrentPowerState
+    run board-config.txt "sensor service paths" busctl --system call \
+        xyz.openbmc_project.ObjectMapper /xyz/openbmc_project/object_mapper \
+        xyz.openbmc_project.ObjectMapper GetSubTreePaths sias \
+        /xyz/openbmc_project/sensors 0 1 xyz.openbmc_project.Sensor.Value
+fi
+have systemctl && run board-config.txt "hardware service status" systemctl --no-pager --full status \
+    xyz.openbmc_project.EntityManager.service phosphor-pid-control.service \
+    ceb-gnrd-temp-max.service ceb-gnrd-fan-owner.service ceb-gnrd-alert-led.service \
+    ceb-gnrd-ncsi.service ceb-gnrd-espi-heartbeat.service obmc-console@ttyS2.service
+cat >> "$OUT/hardware-limits.txt" <<'LIMITS'
+This is a live snapshot, not a validation or stress test. Values can change
+during collection. Compare vendor/new firmware with the same host power state.
+Missing attributes/tools and command errors mean unavailable, not zero or PASS.
+DT includes disabled and reserved controllers; a declaration is not proof that
+a device is fitted. Bus bindings identify controllers and unbound devices.
+DDR chip marking, rated speed, PCB routing, voltage, resistor values, strap
+resistors and actual clock waveforms cannot be determined reliably by software.
+DDR MR values here are controller programming, not a fresh read from the DRAM.
+Unknown CPLD/PROM/mux register maps are not probed. No mux or PMBus PAGE writes.
+No debugfs mount, driver bind/unbind, network reconfiguration, flash ownership
+change, flash payload read, /dev/watchdog open, KCS/SOL FIFO read, HID/NBD read,
+USB re-enumeration, PHY page selection, DDR training or memory test is performed.
+Direct I2C access can be refused while a driver owns a chip. No -f is used.
+I2C scans are opt-in (-s); use -n -R for sysfs/DT-only collection.
+Individual commands use timeout when available; kernel uninterruptible I/O
+cannot always be cancelled. Old firmware without timeout has no such bound.
+Archive can contain serial numbers, MAC/IP addresses and U-Boot environment.
+LIMITS
+
+# Embedded snapshot: standalone copies of this script retain the port guide.
+# Regenerate this table when meta-ctopai/port_guide.xlsx changes.
+cat > "$OUT/port-guide-coverage.txt" <<'PORT_GUIDE'
+Source: meta-ctopai/port_guide.xlsx (hardware rows and clarification items)
+SHA256: da730d578f72dd8fbe7596fb5fa3590ad373e9636cd10564fe0989967497f6c2
+Evidence paths below are snapshot locations, not PASS results. Disabled,
+reserved, unbound or unreadable interfaces must be checked in those files.
+Ball/net/chip columns describe the guide, not hardware auto-detection.
+Row	Category	Interface	SoC pin/block	Ball/address	Board signal	Device	Evidence
+5	GPIO/状态线	BMC_SYS_ALERT_LED	GPIOI5	E16	SYS_ALERT_GLED	系统告警 LED	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+6	GPIO/状态线	BMC_FAN_BMC_OVERRIDE_N	GPIOI6	B16	CPLD 风扇 PWM 接管选择 / PBI#	高电平：BMC 接管风扇 PWM；低电平：CPLD 控制	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+7	GPIO/状态线	BMC_HBLED_N / HEARTBEAT	GPIOP7	Y23	CPLD BMC health heartbeat input	BMC 心跳输出，eSPI Peripheral 驱动 SW_READY 后启用	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+8	GPIO/状态线	BMC_BIOS_FLASH_SELECT	GPIOM1	B13	BIOS Flash 控制选择	CPU/BMC SPI1 BIOS Flash 切换	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+9	GPIO/状态线	BMC_POWER_BUTTON_INPUT	GPIOM2	A12	Power button 输入	检测机箱电源按键	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+10	GPIO/状态线	BMC_BIOS_BOOT_OK	GPIOM7	D13	BIOS POST/启动完成	检测 BIOS boot OK	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+11	GPIO/状态线	PCB_VER0	GPIOS4	R26	PCB_VER0 strap	主板硬件版本 bit0	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+12	GPIO/状态线	PCB_VER1	GPIOS5	P24	PCB_VER1 strap	主板硬件版本 bit1	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+13	GPIO/状态线	PCB_VER2	GPIOS6	P23	PCB_VER2 strap	主板硬件版本 bit2	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+14	GPIO/状态线	CFG_VER0	GPIOS7	T24	配置版本 strap	额外配置 strap；合同标记非 PCB revision	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+15	GPIO/状态线	BMC_UID_BUTTON_N	GPIOV0	AB15	UID button 输入	机箱 UID 按键	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+16	GPIO/状态线	BMC_UID_LED	GPIOV1	AF14	UID LED 输出	前面板 UID 指示灯	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+17	GPIO/状态线	BMC_CPU_POWER_BUTTON	GPIOV2	AD14	CPU Power button 控制	向 CPU/CPLD 输出开关机脉冲	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+18	GPIO/状态线	BMC_CPU_RESET	GPIOV3	AC15	CPU Reset 控制	向 CPU 输出 reset	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+19	GPIO/状态线	BMC_CPU_PWRGD	GPIOV4	AE15	CPU PWRGD 输入	判断 CPU/主机上电状态	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+20	GPIO/状态线	CHASI# chassis intrusion	AST2600 dedicated CHASI# input (non-GPIO)	AB21	机箱开盖检测输入	读取 AST2600 chassis intrusion latch	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+21	GPIO/状态线	BMC_FRU_WP	GPIOG6_TXD9_SD2CD#_SALT15	D21	BMC_FRU_WP	FM24C08D；24C02 封装	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+22	ADC 电压	ADC0 channel 0	ADC0 analog pad	AD20	P12V_SYS_ADC0	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+23	ADC 电压	ADC0 channel 1	ADC1 analog pad	AC18	P5V0_SYS_ADC1	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+24	ADC 电压	ADC0 channel 2	ADC2 analog pad	AE19	P3V3_SYS_ADC2	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+25	ADC 电压	ADC0 channel 3	ADC3 analog pad	AD19	PVCCIN_CPU_ADC3	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+26	ADC 电压	ADC0 channel 4	ADC4 analog pad	AC19	PVNN_NAC_CPU_ADC4	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+27	ADC 电压	ADC0 channel 5	ADC5 analog pad	AB19	PVCCD0_HV_CPU_ADC5	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+28	ADC 电压	ADC0 channel 6	ADC6 analog pad	AB18	PVCCINF_CPU_ADC6	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+29	ADC 电压	ADC0 channel 7	ADC7 analog pad	AE18	PVNN_MAIN_CPU_ADC7	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+30	ADC 电压	ADC1 channel 0	ADC8 analog pad	AB16	PVCCFA_EHV_CPU_ADC8	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+31	ADC 电压	ADC1 channel 1	ADC9 analog pad	AA17	PVCCD1_HV_CPU_ADC9	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+32	ADC 电压	ADC1 channel 2	ADC10 analog pad	AB17	PVCCINF_EHV_FIVRA_CPU_ADC10	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+33	ADC 电压	ADC1 channel 3	ADC11 analog pad	AE16	P3V3_STBY_ADC11	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+34	ADC 电压	ADC1 channel 4	ADC12 analog pad	AC16	P1V8_STBY_ADC12	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+35	ADC 电压	ADC1 channel 5	ADC13 analog pad	AA16	P1V2_STBY_ADC13	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+36	ADC 电压	ADC1 channel 6	ADC14 analog pad	AD16	P1V0_STBY_ADC14	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+37	ADC 电压	ADC1 channel 7	ADC15 analog pad	AC17	D3V0_BAT0_ADC15	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
+38	风扇 PWM	PWM0 / BMC_FAN0_PWM	GPIOO0	AD26	BMC_FAN0_PWM	CPLD PWM 通路 -> 风扇 FAN0	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+39	风扇 TACH	TACH0 / SYS_FAN0_TACH	GPIOQ0	AA25	SYS_FAN0_TACH	风扇插座 FAN0	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+40	风扇 PWM	PWM1 / BMC_FAN1_PWM	GPIOO1	AD22	BMC_FAN1_PWM	CPLD PWM 通路 -> 风扇 FAN1	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+41	风扇 TACH	TACH1 / SYS_FAN1_TACH	GPIOQ1	AB25	SYS_FAN1_TACH	风扇插座 FAN1	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+42	风扇 PWM	PWM2 / BMC_FAN2_PWM	GPIOO2	AD23	BMC_FAN2_PWM	CPLD PWM 通路 -> 风扇 FAN2	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+43	风扇 TACH	TACH2 / SYS_FAN2_TACH	GPIOQ2	Y24	SYS_FAN2_TACH	风扇插座 FAN2	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+44	风扇 PWM	PWM3 / BMC_FAN3_PWM	GPIOO3	AD24	BMC_FAN3_PWM	CPLD PWM 通路 -> 风扇 FAN3	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+45	风扇 TACH	TACH3 / SYS_FAN3_TACH	GPIOQ3	AB26	SYS_FAN3_TACH	风扇插座 FAN3	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+46	风扇 PWM	PWM4 / BMC_FAN4_PWM	GPIOO4	AD25	BMC_FAN4_PWM	CPLD PWM 通路 -> 风扇 FAN4	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+47	风扇 TACH	TACH4 / SYS_FAN4_TACH	GPIOQ4	Y26	SYS_FAN4_TACH	风扇插座 FAN4	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+48	风扇 PWM	PWM5 / BMC_FAN5_PWM	GPIOO5	AC22	BMC_FAN5_PWM	CPLD PWM 通路 -> 风扇 FAN5	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+49	风扇 TACH	TACH5 / SYS_FAN5_TACH	GPIOQ5	AC26	SYS_FAN5_TACH	风扇插座 FAN5	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
+50	I2C	I2C1 SCL1 (SCL)	GPIOJ0	B20	BMC_SLOT1_I2C1 / AST I2C1	PCIe x8 slot 1	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+51	I2C	I2C1 SDA1 (SDA)	GPIOJ1	A20	BMC_SLOT1_I2C1 / AST I2C1	PCIe x8 slot 1	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+52	I2C	I2C2 SCL2 (SCL)	GPIOJ2	E19	BMC_SLOT3_I2C2 / AST I2C2	PCIe x16 slot 3	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+53	I2C	I2C2 SDA2 (SDA)	GPIOJ3	D20	BMC_SLOT3_I2C2 / AST I2C2	PCIe x16 slot 3	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+54	I2C	I2C3 SCL3 (SCL)	GPIOJ4	C19	BMC_SLOT4_I2C3 / AST I2C3	PCIe x8 slot 4	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+55	I2C	I2C3 SDA3 (SDA)	GPIOJ5	A19	BMC_SLOT4_I2C3 / AST I2C3	PCIe x8 slot 4	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+56	I2C	I2C4 SCL4 (SCL)	GPIOJ6	C20	BMC_SLOT5_I2C4 / AST I2C4	PCIe x8 slot 5	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+57	I2C	I2C4 SDA4 (SDA)	GPIOJ7	D19	BMC_SLOT5_I2C4 / AST I2C4	PCIe x8 slot 5	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+58	I2C	I2C5 SCL5 (SCL)	GPIOK0	A11	BMC_SLOT6_I2C5 / AST I2C5	PCIe x16 slot 6	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+59	I2C	I2C5 SDA5 (SDA)	GPIOK1	C11	BMC_SLOT6_I2C5 / AST I2C5	PCIe x16 slot 6	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+60	I2C	I2C6 SCL6 (SCL)	GPIOK2	D12	BMC_SLOT7_I2C6 / AST I2C6	PCIe x8 slot 7	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+61	I2C	I2C6 SDA6 (SDA)	GPIOK3	E13	BMC_SLOT7_I2C6 / AST I2C6	PCIe x8 slot 7	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+62	I2C	I2C7 SCL7 (SCL)	GPIOK4	D11	BMC_SENSOR_I2C7 / AST I2C7	4 x NST175H-QSPR	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+63	I2C	I2C7 SDA7 (SDA)	GPIOK5	E11	BMC_SENSOR_I2C7 / AST I2C7	4 x NST175H-QSPR	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+64	I2C	I2C8 SCL8 (SCL)	GPIOK6	F13	BMC_CPRS_I2C8 / AST I2C8	CRPS PMBus PSU	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+65	I2C	I2C8 SDA8 (SDA)	GPIOK7	E12	BMC_CPRS_I2C8 / AST I2C8	CRPS PMBus PSU	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+66	I2C	I2C9 SCL9 (SCL)	GPIOL0	D15	BMC_CPLD_I2C9 / AST I2C9	CPLD (reserved)	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+67	I2C	I2C9 SDA9 (SDA)	GPIOL1	A14	BMC_CPLD_I2C9 / AST I2C9	CPLD (reserved)	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+68	I2C	I2C10 SCL10 (SCL)	GPIOL2	E15	BMC_RTC_I2C10 / AST I2C10	NCT3015Y-R	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+69	I2C	I2C10 SDA10 (SDA)	GPIOL3	A13	BMC_RTC_I2C10 / AST I2C10	NCT3015Y-R	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+70	I2C	I2C11 SCL11 (SCL)	GPIOA0	M24	BMC_FRU_I2C11 / AST I2C11	FM24C08D; 8 Kbit / 1 KiB; 24C02 package outline	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+71	I2C	I2C11 SDA11 (SDA)	GPIOA1	M25	BMC_FRU_I2C11 / AST I2C11	FM24C08D; 8 Kbit / 1 KiB; 24C02 package outline	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+72	I2C	I2C12 SCL12 (SCL)	GPIOA2	L26	BMC_TCA9546_I2C12 / AST I2C12	TCA9546A mux（I2C12 预留）	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+73	I2C	I2C12 SDA12 (SDA)	GPIOA3	K24	BMC_TCA9546_I2C12 / AST I2C12	TCA9546A mux（I2C12 预留）	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+74	I2C	I2C13 SCL13 (SCL)	GPIOA4	K26	BMC_MCIO_I2C13 / AST I2C13	MCIO x8 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+75	I2C	I2C13 SDA13 (SDA)	GPIOA5	L24	BMC_MCIO_I2C13 / AST I2C13	MCIO x8 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+76	I2C	I2C14 SCL14 (SCL)	GPIOA6	L23	BMC_MCIO_I2C14 / AST I2C14	Reserved / MCIO	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+77	I2C	I2C14 SDA14 (SDA)	GPIOA7	K25	BMC_MCIO_I2C14 / AST I2C14	Reserved / MCIO	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+78	I2C	I2C15 SCL15 (SCL)	GPIOH4	D18	BMC_PROM_SCL/SDA / AST I2C15	CPU SMBUS_HOST PROM	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+79	I2C	I2C15 SDA15 (SDA)	GPIOH5	B17	BMC_PROM_SCL/SDA / AST I2C15	CPU SMBUS_HOST PROM	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+80	I2C	I2C16 SCL16 (SCL)	GPIOH6	C17	MIPI60_I2C / AST I2C16	MIPI60 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+81	I2C	I2C16 SDA16 (SDA)	GPIOH7	E18	MIPI60_I2C / AST I2C16	MIPI60 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
+82	eSPI Peripheral	LAD0 / ESPID0	GPIOW0	AB7	CPU_ESPI_IO0	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+83	eSPI Peripheral	LAD1 / ESPID1	GPIOW1	AB8	CPU_ESPI_IO1	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+84	eSPI Peripheral	LAD2 / ESPID2	GPIOW2	AC8	CPU_ESPI_IO2	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+85	eSPI Peripheral	LAD3 / ESPID3	GPIOW3	AC7	CPU_ESPI_IO3	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+86	eSPI Peripheral	LCLK / ESPICK	GPIOW4	AE7	CPU_ESPI_CLK	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+87	eSPI Peripheral	LFRAME# / ESPICS#	GPIOW5	AF7	CPU_ESPI_CS0	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+88	eSPI Peripheral	LSIRQ# / ESPIALT#	GPIOW6	AD7	CPU_ESPI_ALT	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+89	eSPI Peripheral	LPCRST# / ESPIRST#	GPIOW7	AD8	CPU_ESPI_RSTN	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
+90	UART / SOL	TXD3	GPIOL4	C15	BMC_CPU_SOL_TXD	CPU debug/console UART	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
+91	UART / SOL	RXD3	GPIOL5	F15	BMC_CPU_SOL_RXD	CPU debug/console UART	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
+92	UART / Debug	TXD5	UART5 TXD5	C8	BMC_UART5_DEBUG_TXD	BMC debug header / serial console	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
+93	UART / Debug	RXD5	UART5 RXD5	D8	BMC_UART5_DEBUG_RXD	BMC debug header / serial console	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
+94	VGA / KVM	VGAHS	GPIOL6	B14	BMC_VGA_HSYNC	CPU console VGA display output	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
+95	VGA / KVM	VGAVS	GPIOL7	C14	BMC_VGA_VSYNC	CPU console VGA display output	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
+96	VGA / KVM	DDCCLK	DDCCLK fixed VGA pad	B8	BMC_VGA_DDCCLK	Display DDC clock	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
+97	VGA / KVM	DDCDATA	DDCDAT fixed VGA pad	A8	BMC_VGA_DDCDATA	Display DDC data	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
+98	USB / KVM HID	USB2ADDP	USB2A	A4	VL805_USB2_P4_DP	VL805 USB port 4 / Host USB	usb-config.txt bus-bindings.txt scu-regs.txt
+99	USB / KVM HID	USB2ADDN	USB2A	B4	VL805_USB2_P4_DM	VL805 USB port 4 / Host USB	usb-config.txt bus-bindings.txt scu-regs.txt
+100	Ethernet MAC2	RGMII2RXCK	GPIO18C2	D2	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+101	Ethernet MAC2	RGMII2RXCTL	GPIO18C3	E3	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+102	Ethernet MAC2	RGMII2RXD0	GPIO18C4	D1	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+103	Ethernet MAC2	RGMII2RXD1	GPIO18C5	F4	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+104	Ethernet MAC2	RGMII2RXD2	GPIO18C6	E2	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+105	Ethernet MAC2	RGMII2RXD3	GPIO18C7	E1	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+106	Ethernet MAC2	RGMII2TXCK	GPIO18B4	D4	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+107	Ethernet MAC2	RGMII2TXCTL	GPIO18B5	C2	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+108	Ethernet MAC2	RGMII2TXD0	GPIO18B6	C1	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+109	Ethernet MAC2	RGMII2TXD1	GPIO18B7	D3	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+110	Ethernet MAC2	RGMII2TXD2	GPIO18C0	E4	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+111	Ethernet MAC2	RGMII2TXD3	GPIO18C1	F5	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+112	Ethernet PHY 管理	MDC2	GPIOB4	J23	Physical MAC2 PHY management	RTL8211FS-CG PHY	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+113	Ethernet PHY 管理	MDIO2	GPIOB5	G26	Physical MAC2 PHY management	RTL8211FS-CG PHY	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+114	Ethernet MAC3 / NC-SI	RGMII3TXCTL / NCSI TXEN	GPIOC1	J22	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+115	Ethernet MAC3 / NC-SI	RGMII3TXD0 / NCSI TXD0	GPIOC2	H22	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+116	Ethernet MAC3 / NC-SI	RGMII3TXD1 / NCSI TXD1	GPIOC3	H23	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+117	Ethernet MAC3 / NC-SI	RGMII3RXCK / NCSI RXCLK	GPIOC6	G23	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+118	Ethernet MAC3 / NC-SI	RGMII3RXD0 / NCSI RXD0	GPIOD0	F23	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+119	Ethernet MAC3 / NC-SI	RGMII3RXD1 / NCSI RXD1	GPIOD1	F26	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+120	Ethernet MAC3 / NC-SI	RGMII3RXD2 / NCSI CRS_DV	GPIOD2	F25	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+121	Ethernet MAC3 / NC-SI	RGMII3RXD3 / NCSI RXER	GPIOD3	E26	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
+122	SPI1 / BIOS Flash	SPI1CK	GPIOZ3	AB11	AST2600 SPI1 CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+123	SPI1 / BIOS Flash	SPI1MOSI	GPIOZ4	AC11	AST2600 SPI1 CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+124	SPI1 / BIOS Flash	SPI1MISO	GPIOZ5	AA11	AST2600 SPI1 CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+125	SPI1 / BIOS Flash	SPI1DQ2 (x1 模式未用)	GPIOZ6 / SPI1DQ2	AD11	STARP_BMC_GPIOZ6 (原理图网络)	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+126	SPI1 / BIOS Flash	SPI1DQ3 (x1 模式未用)	GPIOZ7 / SPI1DQ3	AF10	STARP_BMC_GPIOZ7 (原理图网络)	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+127	SPI1 / BIOS Flash	SPI1CS0#	Dedicated SPI1 CS0 pad	AD13	BMC_SPI1_CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+128	Firmware SPI / BMC Flash	FWSPICS0#	Dedicated Firmware SPI CS0	AB14	BMC_FLASH_SPI_CS0	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+129	Firmware SPI / BMC Flash	FWSPICK	Dedicated Firmware SPI clock	AF13	BMC_FLASH_SPI_SCK	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+130	Firmware SPI / BMC Flash	FWSPIMOSI	Dedicated Firmware SPI MOSI	AC14	BMC_FLASH_SPI_MOSI	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+131	Firmware SPI / BMC Flash	FWSPIMISO	Dedicated Firmware SPI MISO	AB13	BMC_FLASH_SPI_MISO	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+132	Firmware SPI / BMC Flash	FWSPIQ2	GPIOY4 / Firmware SPI DQ2	AE12	BMC_FLASH_SPI_DQ2	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+133	Firmware SPI / BMC Flash	FWSPIQ3	GPIOY5 / Firmware SPI DQ3	AF12	BMC_FLASH_SPI_DQ3	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+134	SPI2	SPI2 / CS0	SPI2 controller	AE8 (CS0) / AF8 (SCK) / AB9 (MOSI) / AD9 (MISO) / AF9 (DQ2) / AB10 (DQ3)	FLASH_SPI2_SCK / MOSI / MISO / DQ2 / DQ3（预留，未使用）	无（本板未使用）	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
+135	PECI	PECI0	PECI controller	AT29	BMC_CPU_PECI	Intel Xeon 6 CPU	bus-bindings.txt hwmon-layout.txt hwmon-values.txt block-regs.txt dt-properties.txt
+136	I3C	AST2600 I3C1-4（仅 I3C3 启用）	I3C master controllers	I3C1/2/4: 未启用；I3C3: SoC pinctrl group	I3C1/2 未启用；I3C3SCL_FSI1CLK / I3C3SDA_FSI1DATA 接 CPU I3C_MNG_SCL/SDA；I3C4 未启用	Xeon 6 CPU management interface (I3C3); no I3C DIMM temperature devices	bus-bindings.txt hwmon-layout.txt hwmon-values.txt block-regs.txt dt-properties.txt
+139	待澄清	D3V0_BAT0 分压	ADC1 channel 7 / ADC15	AC17		EE / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+140	待澄清	BIOS 与 BMC 的 eSPI SIO 访问	eSPI Peripheral 通道 / 端口 0x2E 0x2F	CPU_ESPI_IO0-3、CLK、CS0、ALERT、RSTN		BIOS / 软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+141	待澄清	管理网口 PHY	MAC2 / RGMII2 / RTL8211FS-CG	MDIO 地址、复位、延时		EE / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+142	待澄清	RTC 驱动兼容性	I2C10 / 0x6F	NCT3015Y-R		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+143	待澄清	告警 LED 服务	BMC_SYS_ALERT_LED	GPIOI5		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+144	待澄清	风扇控制配置	6 路风扇 / 网页 Fan control	PWM0-5、TACH0-5		软件 / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+145	待澄清	PSU 在位检测	I2C8 / 0x58 0x59 0x5A	CRPS PMBus		软件 / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+146	待澄清	mc info 与 BMC 状态	IPMI Get Device ID	Device Available / Firmware Revision		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+147	待澄清	IPMI 传感器暴露	ipmitool sensor / Web 传感器	ADC、温度、风扇、CPU、DIMM		产品 / 软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+148	待澄清	构建与验证状态	内核 / U-Boot / 网页 / IPMI / 电源控制	—		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+149	待澄清	U-Boot 网络启动与 netupdate	bootcmd / netupdate / serverip	AST2600 MAC2 + RTL8211FS（U-Boot 里只用该口）		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+150	待澄清	主机 KCS 通道	kcs3 / ipmi-kcs3	AST2600 LPC KCS3，I/O 端口 0xCA2		硬件 + 软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+151	待澄清	NC-SI 网口（eth1）拉起与重试	eth1 / ceb-gnrd-ncsi	AST2600 MAC3 + Intel E810（无待机供电）		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+152	待澄清	SEL 记录与 rollover	ipmi_sel / sel-logger	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+153	待澄清	网页补丁和 bmcweb 选项	webui 0009-0011；redfish-dump-log	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+154	待澄清	DCMI 与 IPMI 常规命令	dcmi / power_reading.json / dcmi_sensors.json	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+155	待澄清	风扇 OEM 命令（netfn 0x30）	ceb-gnrd-ipmi-fan / fan_oem.cpp / ceb-gnrd-fan-settings.py	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+156	待澄清	风扇写 Entity-Manager 报 InvalidArgs（已解决）	ceb-gnrd-fan-settings.py / ceb-gnrd.json（Pid 改名 Fan<n> Control）	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+157	待澄清	开机后一分钟内 ipmitool sensor 只有 2 个（已解决）	phosphor-ipmi-host drop-in 10-ceb-gnrd-wait-sensors.conf	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+158	待澄清	Redfish FirmwareVersion 为空 / 网页 BMC 版本 --	bmcweb_%.bbappend	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+159	待澄清	BMC 转储列表为空（已解决）	phosphor-debug-collector / bmcweb redfish-dump-log	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+160	待澄清	SD/eMMC 禁用与 BMC 硬件看门狗	aspeed-ceb-gnrd.dts / ast2600-ceb-gnrd.dts（U-Boot）/ espi-peci.cfg	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+161	待澄清	板级自检脚本 ceb-gnrd-check	recipes-phosphor/utils/ceb-gnrd-check.bb	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+162	待澄清	策略页与固件页精简	0010、0012 网页补丁	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+163	待澄清	与 OpenBMC 惯例对齐的改动	conf/machine/ceb-gnrd.conf；ctopai-openbmc.conf；补丁文件	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
+Supplement: DDR -> memory-config.txt memory-regs.txt clock-config.txt
+Supplement: reset reason -> memory-config.txt scu-regs.txt
+Supplement: NBD/virtual media -> usb-config.txt journal.txt
+PORT_GUIDE
+
 # ---------------------------------------------------------------- archive
 rm -f "$NAMES"
-cd "$OUTBASE" && tar -czf "$NAME.tar.gz" "$NAME" 2>>"$LOG"
+if ! (cd "$OUTBASE" && tar -czf "$NAME.tar.gz" "$NAME" 2>>"$LOG"); then
+    say "ERROR: archive creation failed; raw output remains in $OUT"
+    exit 1
+fi
 say ""
 say "done: $OUTBASE/$NAME.tar.gz  ($(du -k "$OUTBASE/$NAME.tar.gz" 2>/dev/null | cut -f1) KiB)"
 say "copy it off the BMC (scp) and compare with the dump of the other firmware:"
