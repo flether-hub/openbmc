@@ -31,8 +31,8 @@ sh /tmp/bmc-hw-dump.sh -n -R
 | PECI、辅助设备、I3C、未绑定设备 | `bus-bindings.txt`、`dev-nodes.txt` |
 | 电源/风扇/传感器配置、LED、watchdog、复位原因 | `board-config.txt`、`leds.txt`、`watchdog.txt`、`memory-config.txt` |
 
-`port-guide-coverage.txt` 内嵌当前 `meta-ctopai/port_guide.xlsx` 的 157 个硬件和待澄清条目，
-包含原表行号、管脚、球位、网络、器件和采集文件索引。更新 guide 后需要同步脚本内的表格与 SHA256。
+`port-guide-coverage.txt` 内嵌当前 `meta-ctopai/port_guide.xlsx` 的 159 个硬件配置与用途条目，
+包含表格行号、SoC 资源/球位、器件/连接、地址/通道和采集文件索引。更新 guide 后需要同步脚本内的表格与 SHA256。
 索引表示采集位置，不表示接口已经验证通过。新增移植参数的二进制属性统一看 `dt-hardware-cells.txt`。
 
 ## 边界

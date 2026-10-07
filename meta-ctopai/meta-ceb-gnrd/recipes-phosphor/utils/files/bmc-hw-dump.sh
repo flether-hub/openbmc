@@ -1300,172 +1300,170 @@ LIMITS
 # Embedded snapshot: standalone copies of this script retain the port guide.
 # Regenerate this table when meta-ctopai/port_guide.xlsx changes.
 cat > "$OUT/port-guide-coverage.txt" <<'PORT_GUIDE'
-Source: meta-ctopai/port_guide.xlsx (hardware rows and clarification items)
-SHA256: da730d578f72dd8fbe7596fb5fa3590ad373e9636cd10564fe0989967497f6c2
-Evidence paths below are snapshot locations, not PASS results. Disabled,
-reserved, unbound or unreadable interfaces must be checked in those files.
-Ball/net/chip columns describe the guide, not hardware auto-detection.
-Row	Category	Interface	SoC pin/block	Ball/address	Board signal	Device	Evidence
-5	GPIO/状态线	BMC_SYS_ALERT_LED	GPIOI5	E16	SYS_ALERT_GLED	系统告警 LED	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-6	GPIO/状态线	BMC_FAN_BMC_OVERRIDE_N	GPIOI6	B16	CPLD 风扇 PWM 接管选择 / PBI#	高电平：BMC 接管风扇 PWM；低电平：CPLD 控制	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-7	GPIO/状态线	BMC_HBLED_N / HEARTBEAT	GPIOP7	Y23	CPLD BMC health heartbeat input	BMC 心跳输出，eSPI Peripheral 驱动 SW_READY 后启用	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-8	GPIO/状态线	BMC_BIOS_FLASH_SELECT	GPIOM1	B13	BIOS Flash 控制选择	CPU/BMC SPI1 BIOS Flash 切换	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-9	GPIO/状态线	BMC_POWER_BUTTON_INPUT	GPIOM2	A12	Power button 输入	检测机箱电源按键	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-10	GPIO/状态线	BMC_BIOS_BOOT_OK	GPIOM7	D13	BIOS POST/启动完成	检测 BIOS boot OK	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-11	GPIO/状态线	PCB_VER0	GPIOS4	R26	PCB_VER0 strap	主板硬件版本 bit0	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-12	GPIO/状态线	PCB_VER1	GPIOS5	P24	PCB_VER1 strap	主板硬件版本 bit1	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-13	GPIO/状态线	PCB_VER2	GPIOS6	P23	PCB_VER2 strap	主板硬件版本 bit2	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-14	GPIO/状态线	CFG_VER0	GPIOS7	T24	配置版本 strap	额外配置 strap；合同标记非 PCB revision	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-15	GPIO/状态线	BMC_UID_BUTTON_N	GPIOV0	AB15	UID button 输入	机箱 UID 按键	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-16	GPIO/状态线	BMC_UID_LED	GPIOV1	AF14	UID LED 输出	前面板 UID 指示灯	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-17	GPIO/状态线	BMC_CPU_POWER_BUTTON	GPIOV2	AD14	CPU Power button 控制	向 CPU/CPLD 输出开关机脉冲	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-18	GPIO/状态线	BMC_CPU_RESET	GPIOV3	AC15	CPU Reset 控制	向 CPU 输出 reset	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-19	GPIO/状态线	BMC_CPU_PWRGD	GPIOV4	AE15	CPU PWRGD 输入	判断 CPU/主机上电状态	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-20	GPIO/状态线	CHASI# chassis intrusion	AST2600 dedicated CHASI# input (non-GPIO)	AB21	机箱开盖检测输入	读取 AST2600 chassis intrusion latch	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-21	GPIO/状态线	BMC_FRU_WP	GPIOG6_TXD9_SD2CD#_SALT15	D21	BMC_FRU_WP	FM24C08D；24C02 封装	gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
-22	ADC 电压	ADC0 channel 0	ADC0 analog pad	AD20	P12V_SYS_ADC0	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-23	ADC 电压	ADC0 channel 1	ADC1 analog pad	AC18	P5V0_SYS_ADC1	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-24	ADC 电压	ADC0 channel 2	ADC2 analog pad	AE19	P3V3_SYS_ADC2	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-25	ADC 电压	ADC0 channel 3	ADC3 analog pad	AD19	PVCCIN_CPU_ADC3	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-26	ADC 电压	ADC0 channel 4	ADC4 analog pad	AC19	PVNN_NAC_CPU_ADC4	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-27	ADC 电压	ADC0 channel 5	ADC5 analog pad	AB19	PVCCD0_HV_CPU_ADC5	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-28	ADC 电压	ADC0 channel 6	ADC6 analog pad	AB18	PVCCINF_CPU_ADC6	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-29	ADC 电压	ADC0 channel 7	ADC7 analog pad	AE18	PVNN_MAIN_CPU_ADC7	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-30	ADC 电压	ADC1 channel 0	ADC8 analog pad	AB16	PVCCFA_EHV_CPU_ADC8	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-31	ADC 电压	ADC1 channel 1	ADC9 analog pad	AA17	PVCCD1_HV_CPU_ADC9	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-32	ADC 电压	ADC1 channel 2	ADC10 analog pad	AB17	PVCCINF_EHV_FIVRA_CPU_ADC10	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-33	ADC 电压	ADC1 channel 3	ADC11 analog pad	AE16	P3V3_STBY_ADC11	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-34	ADC 电压	ADC1 channel 4	ADC12 analog pad	AC16	P1V8_STBY_ADC12	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-35	ADC 电压	ADC1 channel 5	ADC13 analog pad	AA16	P1V2_STBY_ADC13	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-36	ADC 电压	ADC1 channel 6	ADC14 analog pad	AD16	P1V0_STBY_ADC14	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-37	ADC 电压	ADC1 channel 7	ADC15 analog pad	AC17	D3V0_BAT0_ADC15	板上分压电阻/电源 rail	hwmon-values.txt iio-values.txt block-regs.txt board-config.txt
-38	风扇 PWM	PWM0 / BMC_FAN0_PWM	GPIOO0	AD26	BMC_FAN0_PWM	CPLD PWM 通路 -> 风扇 FAN0	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-39	风扇 TACH	TACH0 / SYS_FAN0_TACH	GPIOQ0	AA25	SYS_FAN0_TACH	风扇插座 FAN0	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-40	风扇 PWM	PWM1 / BMC_FAN1_PWM	GPIOO1	AD22	BMC_FAN1_PWM	CPLD PWM 通路 -> 风扇 FAN1	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-41	风扇 TACH	TACH1 / SYS_FAN1_TACH	GPIOQ1	AB25	SYS_FAN1_TACH	风扇插座 FAN1	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-42	风扇 PWM	PWM2 / BMC_FAN2_PWM	GPIOO2	AD23	BMC_FAN2_PWM	CPLD PWM 通路 -> 风扇 FAN2	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-43	风扇 TACH	TACH2 / SYS_FAN2_TACH	GPIOQ2	Y24	SYS_FAN2_TACH	风扇插座 FAN2	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-44	风扇 PWM	PWM3 / BMC_FAN3_PWM	GPIOO3	AD24	BMC_FAN3_PWM	CPLD PWM 通路 -> 风扇 FAN3	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-45	风扇 TACH	TACH3 / SYS_FAN3_TACH	GPIOQ3	AB26	SYS_FAN3_TACH	风扇插座 FAN3	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-46	风扇 PWM	PWM4 / BMC_FAN4_PWM	GPIOO4	AD25	BMC_FAN4_PWM	CPLD PWM 通路 -> 风扇 FAN4	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-47	风扇 TACH	TACH4 / SYS_FAN4_TACH	GPIOQ4	Y26	SYS_FAN4_TACH	风扇插座 FAN4	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-48	风扇 PWM	PWM5 / BMC_FAN5_PWM	GPIOO5	AC22	BMC_FAN5_PWM	CPLD PWM 通路 -> 风扇 FAN5	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-49	风扇 TACH	TACH5 / SYS_FAN5_TACH	GPIOQ5	AC26	SYS_FAN5_TACH	风扇插座 FAN5	hwmon-values.txt block-regs.txt gpio-pins.txt board-config.txt
-50	I2C	I2C1 SCL1 (SCL)	GPIOJ0	B20	BMC_SLOT1_I2C1 / AST I2C1	PCIe x8 slot 1	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-51	I2C	I2C1 SDA1 (SDA)	GPIOJ1	A20	BMC_SLOT1_I2C1 / AST I2C1	PCIe x8 slot 1	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-52	I2C	I2C2 SCL2 (SCL)	GPIOJ2	E19	BMC_SLOT3_I2C2 / AST I2C2	PCIe x16 slot 3	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-53	I2C	I2C2 SDA2 (SDA)	GPIOJ3	D20	BMC_SLOT3_I2C2 / AST I2C2	PCIe x16 slot 3	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-54	I2C	I2C3 SCL3 (SCL)	GPIOJ4	C19	BMC_SLOT4_I2C3 / AST I2C3	PCIe x8 slot 4	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-55	I2C	I2C3 SDA3 (SDA)	GPIOJ5	A19	BMC_SLOT4_I2C3 / AST I2C3	PCIe x8 slot 4	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-56	I2C	I2C4 SCL4 (SCL)	GPIOJ6	C20	BMC_SLOT5_I2C4 / AST I2C4	PCIe x8 slot 5	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-57	I2C	I2C4 SDA4 (SDA)	GPIOJ7	D19	BMC_SLOT5_I2C4 / AST I2C4	PCIe x8 slot 5	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-58	I2C	I2C5 SCL5 (SCL)	GPIOK0	A11	BMC_SLOT6_I2C5 / AST I2C5	PCIe x16 slot 6	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-59	I2C	I2C5 SDA5 (SDA)	GPIOK1	C11	BMC_SLOT6_I2C5 / AST I2C5	PCIe x16 slot 6	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-60	I2C	I2C6 SCL6 (SCL)	GPIOK2	D12	BMC_SLOT7_I2C6 / AST I2C6	PCIe x8 slot 7	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-61	I2C	I2C6 SDA6 (SDA)	GPIOK3	E13	BMC_SLOT7_I2C6 / AST I2C6	PCIe x8 slot 7	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-62	I2C	I2C7 SCL7 (SCL)	GPIOK4	D11	BMC_SENSOR_I2C7 / AST I2C7	4 x NST175H-QSPR	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-63	I2C	I2C7 SDA7 (SDA)	GPIOK5	E11	BMC_SENSOR_I2C7 / AST I2C7	4 x NST175H-QSPR	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-64	I2C	I2C8 SCL8 (SCL)	GPIOK6	F13	BMC_CPRS_I2C8 / AST I2C8	CRPS PMBus PSU	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-65	I2C	I2C8 SDA8 (SDA)	GPIOK7	E12	BMC_CPRS_I2C8 / AST I2C8	CRPS PMBus PSU	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-66	I2C	I2C9 SCL9 (SCL)	GPIOL0	D15	BMC_CPLD_I2C9 / AST I2C9	CPLD (reserved)	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-67	I2C	I2C9 SDA9 (SDA)	GPIOL1	A14	BMC_CPLD_I2C9 / AST I2C9	CPLD (reserved)	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-68	I2C	I2C10 SCL10 (SCL)	GPIOL2	E15	BMC_RTC_I2C10 / AST I2C10	NCT3015Y-R	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-69	I2C	I2C10 SDA10 (SDA)	GPIOL3	A13	BMC_RTC_I2C10 / AST I2C10	NCT3015Y-R	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-70	I2C	I2C11 SCL11 (SCL)	GPIOA0	M24	BMC_FRU_I2C11 / AST I2C11	FM24C08D; 8 Kbit / 1 KiB; 24C02 package outline	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-71	I2C	I2C11 SDA11 (SDA)	GPIOA1	M25	BMC_FRU_I2C11 / AST I2C11	FM24C08D; 8 Kbit / 1 KiB; 24C02 package outline	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-72	I2C	I2C12 SCL12 (SCL)	GPIOA2	L26	BMC_TCA9546_I2C12 / AST I2C12	TCA9546A mux（I2C12 预留）	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-73	I2C	I2C12 SDA12 (SDA)	GPIOA3	K24	BMC_TCA9546_I2C12 / AST I2C12	TCA9546A mux（I2C12 预留）	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-74	I2C	I2C13 SCL13 (SCL)	GPIOA4	K26	BMC_MCIO_I2C13 / AST I2C13	MCIO x8 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-75	I2C	I2C13 SDA13 (SDA)	GPIOA5	L24	BMC_MCIO_I2C13 / AST I2C13	MCIO x8 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-76	I2C	I2C14 SCL14 (SCL)	GPIOA6	L23	BMC_MCIO_I2C14 / AST I2C14	Reserved / MCIO	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-77	I2C	I2C14 SDA14 (SDA)	GPIOA7	K25	BMC_MCIO_I2C14 / AST I2C14	Reserved / MCIO	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-78	I2C	I2C15 SCL15 (SCL)	GPIOH4	D18	BMC_PROM_SCL/SDA / AST I2C15	CPU SMBUS_HOST PROM	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-79	I2C	I2C15 SDA15 (SDA)	GPIOH5	B17	BMC_PROM_SCL/SDA / AST I2C15	CPU SMBUS_HOST PROM	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-80	I2C	I2C16 SCL16 (SCL)	GPIOH6	C17	MIPI60_I2C / AST I2C16	MIPI60 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-81	I2C	I2C16 SDA16 (SDA)	GPIOH7	E18	MIPI60_I2C / AST I2C16	MIPI60 connector	i2c-devices.txt bus-bindings.txt chips.txt dt-properties.txt i2c-scan.txt(-s)
-82	eSPI Peripheral	LAD0 / ESPID0	GPIOW0	AB7	CPU_ESPI_IO0	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-83	eSPI Peripheral	LAD1 / ESPID1	GPIOW1	AB8	CPU_ESPI_IO1	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-84	eSPI Peripheral	LAD2 / ESPID2	GPIOW2	AC8	CPU_ESPI_IO2	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-85	eSPI Peripheral	LAD3 / ESPID3	GPIOW3	AC7	CPU_ESPI_IO3	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-86	eSPI Peripheral	LCLK / ESPICK	GPIOW4	AE7	CPU_ESPI_CLK	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-87	eSPI Peripheral	LFRAME# / ESPICS#	GPIOW5	AF7	CPU_ESPI_CS0	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-88	eSPI Peripheral	LSIRQ# / ESPIALT#	GPIOW6	AD7	CPU_ESPI_ALT	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-89	eSPI Peripheral	LPCRST# / ESPIRST#	GPIOW7	AD8	CPU_ESPI_RSTN	Intel Xeon 6 CPU	espi-regs.txt lpc-regs.txt bus-bindings.txt scu-regs.txt
-90	UART / SOL	TXD3	GPIOL4	C15	BMC_CPU_SOL_TXD	CPU debug/console UART	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
-91	UART / SOL	RXD3	GPIOL5	F15	BMC_CPU_SOL_RXD	CPU debug/console UART	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
-92	UART / Debug	TXD5	UART5 TXD5	C8	BMC_UART5_DEBUG_TXD	BMC debug header / serial console	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
-93	UART / Debug	RXD5	UART5 RXD5	D8	BMC_UART5_DEBUG_RXD	BMC debug header / serial console	serial.txt console-vga.txt vuart-regs.txt scu-regs.txt
-94	VGA / KVM	VGAHS	GPIOL6	B14	BMC_VGA_HSYNC	CPU console VGA display output	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
-95	VGA / KVM	VGAVS	GPIOL7	C14	BMC_VGA_VSYNC	CPU console VGA display output	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
-96	VGA / KVM	DDCCLK	DDCCLK fixed VGA pad	B8	BMC_VGA_DDCCLK	Display DDC clock	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
-97	VGA / KVM	DDCDATA	DDCDAT fixed VGA pad	A8	BMC_VGA_DDCDATA	Display DDC data	console-vga.txt memory-config.txt block-regs.txt clock-config.txt
-98	USB / KVM HID	USB2ADDP	USB2A	A4	VL805_USB2_P4_DP	VL805 USB port 4 / Host USB	usb-config.txt bus-bindings.txt scu-regs.txt
-99	USB / KVM HID	USB2ADDN	USB2A	B4	VL805_USB2_P4_DM	VL805 USB port 4 / Host USB	usb-config.txt bus-bindings.txt scu-regs.txt
-100	Ethernet MAC2	RGMII2RXCK	GPIO18C2	D2	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-101	Ethernet MAC2	RGMII2RXCTL	GPIO18C3	E3	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-102	Ethernet MAC2	RGMII2RXD0	GPIO18C4	D1	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-103	Ethernet MAC2	RGMII2RXD1	GPIO18C5	F4	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-104	Ethernet MAC2	RGMII2RXD2	GPIO18C6	E2	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-105	Ethernet MAC2	RGMII2RXD3	GPIO18C7	E1	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-106	Ethernet MAC2	RGMII2TXCK	GPIO18B4	D4	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-107	Ethernet MAC2	RGMII2TXCTL	GPIO18B5	C2	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-108	Ethernet MAC2	RGMII2TXD0	GPIO18B6	C1	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-109	Ethernet MAC2	RGMII2TXD1	GPIO18B7	D3	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-110	Ethernet MAC2	RGMII2TXD2	GPIO18C0	E4	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-111	Ethernet MAC2	RGMII2TXD3	GPIO18C1	F5	Physical MAC2 / RGMII2 / 1.8 V I/O	RTL8211FS-CG PHY / 独立 RJ45	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-112	Ethernet PHY 管理	MDC2	GPIOB4	J23	Physical MAC2 PHY management	RTL8211FS-CG PHY	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-113	Ethernet PHY 管理	MDIO2	GPIOB5	G26	Physical MAC2 PHY management	RTL8211FS-CG PHY	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-114	Ethernet MAC3 / NC-SI	RGMII3TXCTL / NCSI TXEN	GPIOC1	J22	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-115	Ethernet MAC3 / NC-SI	RGMII3TXD0 / NCSI TXD0	GPIOC2	H22	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-116	Ethernet MAC3 / NC-SI	RGMII3TXD1 / NCSI TXD1	GPIOC3	H23	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-117	Ethernet MAC3 / NC-SI	RGMII3RXCK / NCSI RXCLK	GPIOC6	G23	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-118	Ethernet MAC3 / NC-SI	RGMII3RXD0 / NCSI RXD0	GPIOD0	F23	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-119	Ethernet MAC3 / NC-SI	RGMII3RXD1 / NCSI RXD1	GPIOD1	F26	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-120	Ethernet MAC3 / NC-SI	RGMII3RXD2 / NCSI CRS_DV	GPIOD2	F25	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-121	Ethernet MAC3 / NC-SI	RGMII3RXD3 / NCSI RXER	GPIOD3	E26	Physical MAC3 / NCSI3 pads	Intel E810 NC-SI interface	network.txt net-layout.txt mac-regs.txt clock-config.txt chips.txt
-122	SPI1 / BIOS Flash	SPI1CK	GPIOZ3	AB11	AST2600 SPI1 CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-123	SPI1 / BIOS Flash	SPI1MOSI	GPIOZ4	AC11	AST2600 SPI1 CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-124	SPI1 / BIOS Flash	SPI1MISO	GPIOZ5	AA11	AST2600 SPI1 CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-125	SPI1 / BIOS Flash	SPI1DQ2 (x1 模式未用)	GPIOZ6 / SPI1DQ2	AD11	STARP_BMC_GPIOZ6 (原理图网络)	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-126	SPI1 / BIOS Flash	SPI1DQ3 (x1 模式未用)	GPIOZ7 / SPI1DQ3	AF10	STARP_BMC_GPIOZ7 (原理图网络)	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-127	SPI1 / BIOS Flash	SPI1CS0#	Dedicated SPI1 CS0 pad	AD13	BMC_SPI1_CS0	Macronix MX25U51245GMI00, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-128	Firmware SPI / BMC Flash	FWSPICS0#	Dedicated Firmware SPI CS0	AB14	BMC_FLASH_SPI_CS0	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-129	Firmware SPI / BMC Flash	FWSPICK	Dedicated Firmware SPI clock	AF13	BMC_FLASH_SPI_SCK	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-130	Firmware SPI / BMC Flash	FWSPIMOSI	Dedicated Firmware SPI MOSI	AC14	BMC_FLASH_SPI_MOSI	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-131	Firmware SPI / BMC Flash	FWSPIMISO	Dedicated Firmware SPI MISO	AB13	BMC_FLASH_SPI_MISO	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-132	Firmware SPI / BMC Flash	FWSPIQ2	GPIOY4 / Firmware SPI DQ2	AE12	BMC_FLASH_SPI_DQ2	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-133	Firmware SPI / BMC Flash	FWSPIQ3	GPIOY5 / Firmware SPI DQ3	AF12	BMC_FLASH_SPI_DQ3	Winbond W25Q512JVFIQ, 64 MiB	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-134	SPI2	SPI2 / CS0	SPI2 controller	AE8 (CS0) / AF8 (SCK) / AB9 (MOSI) / AD9 (MISO) / AF9 (DQ2) / AB10 (DQ3)	FLASH_SPI2_SCK / MOSI / MISO / DQ2 / DQ3（预留，未使用）	无（本板未使用）	flash-config.txt mtd.txt block-regs.txt gpio-pins.txt scu-regs.txt
-135	PECI	PECI0	PECI controller	AT29	BMC_CPU_PECI	Intel Xeon 6 CPU	bus-bindings.txt hwmon-layout.txt hwmon-values.txt block-regs.txt dt-properties.txt
-136	I3C	AST2600 I3C1-4（仅 I3C3 启用）	I3C master controllers	I3C1/2/4: 未启用；I3C3: SoC pinctrl group	I3C1/2 未启用；I3C3SCL_FSI1CLK / I3C3SDA_FSI1DATA 接 CPU I3C_MNG_SCL/SDA；I3C4 未启用	Xeon 6 CPU management interface (I3C3); no I3C DIMM temperature devices	bus-bindings.txt hwmon-layout.txt hwmon-values.txt block-regs.txt dt-properties.txt
-139	待澄清	D3V0_BAT0 分压	ADC1 channel 7 / ADC15	AC17		EE / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-140	待澄清	BIOS 与 BMC 的 eSPI SIO 访问	eSPI Peripheral 通道 / 端口 0x2E 0x2F	CPU_ESPI_IO0-3、CLK、CS0、ALERT、RSTN		BIOS / 软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-141	待澄清	管理网口 PHY	MAC2 / RGMII2 / RTL8211FS-CG	MDIO 地址、复位、延时		EE / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-142	待澄清	RTC 驱动兼容性	I2C10 / 0x6F	NCT3015Y-R		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-143	待澄清	告警 LED 服务	BMC_SYS_ALERT_LED	GPIOI5		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-144	待澄清	风扇控制配置	6 路风扇 / 网页 Fan control	PWM0-5、TACH0-5		软件 / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-145	待澄清	PSU 在位检测	I2C8 / 0x58 0x59 0x5A	CRPS PMBus		软件 / 硬件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-146	待澄清	mc info 与 BMC 状态	IPMI Get Device ID	Device Available / Firmware Revision		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-147	待澄清	IPMI 传感器暴露	ipmitool sensor / Web 传感器	ADC、温度、风扇、CPU、DIMM		产品 / 软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-148	待澄清	构建与验证状态	内核 / U-Boot / 网页 / IPMI / 电源控制	—		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-149	待澄清	U-Boot 网络启动与 netupdate	bootcmd / netupdate / serverip	AST2600 MAC2 + RTL8211FS（U-Boot 里只用该口）		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-150	待澄清	主机 KCS 通道	kcs3 / ipmi-kcs3	AST2600 LPC KCS3，I/O 端口 0xCA2		硬件 + 软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-151	待澄清	NC-SI 网口（eth1）拉起与重试	eth1 / ceb-gnrd-ncsi	AST2600 MAC3 + Intel E810（无待机供电）		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-152	待澄清	SEL 记录与 rollover	ipmi_sel / sel-logger	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-153	待澄清	网页补丁和 bmcweb 选项	webui 0009-0011；redfish-dump-log	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-154	待澄清	DCMI 与 IPMI 常规命令	dcmi / power_reading.json / dcmi_sensors.json	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-155	待澄清	风扇 OEM 命令（netfn 0x30）	ceb-gnrd-ipmi-fan / fan_oem.cpp / ceb-gnrd-fan-settings.py	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-156	待澄清	风扇写 Entity-Manager 报 InvalidArgs（已解决）	ceb-gnrd-fan-settings.py / ceb-gnrd.json（Pid 改名 Fan<n> Control）	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-157	待澄清	开机后一分钟内 ipmitool sensor 只有 2 个（已解决）	phosphor-ipmi-host drop-in 10-ceb-gnrd-wait-sensors.conf	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-158	待澄清	Redfish FirmwareVersion 为空 / 网页 BMC 版本 --	bmcweb_%.bbappend	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-159	待澄清	BMC 转储列表为空（已解决）	phosphor-debug-collector / bmcweb redfish-dump-log	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-160	待澄清	SD/eMMC 禁用与 BMC 硬件看门狗	aspeed-ceb-gnrd.dts / ast2600-ceb-gnrd.dts（U-Boot）/ espi-peci.cfg	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-161	待澄清	板级自检脚本 ceb-gnrd-check	recipes-phosphor/utils/ceb-gnrd-check.bb	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-162	待澄清	策略页与固件页精简	0010、0012 网页补丁	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-163	待澄清	与 OpenBMC 惯例对齐的改动	conf/machine/ceb-gnrd.conf；ctopai-openbmc.conf；补丁文件	BMC 软件		软件	ceb-gnrd-checklist.txt board-config.txt hardware-limits.txt (requires item-specific verification)
-Supplement: DDR -> memory-config.txt memory-regs.txt clock-config.txt
-Supplement: reset reason -> memory-config.txt scu-regs.txt
-Supplement: NBD/virtual media -> usb-config.txt journal.txt
+Source: meta-ctopai/port_guide.xlsx (hardware configuration and purposes only)
+SHA256: 41c9905ef5bacd8f8044ad2ca6e233d562599f501d26ac867442b23a3140085e
+Evidence paths below are snapshot locations, not PASS results.
+Pin/chip columns describe configured metadata, not hardware auto-detection.
+Row	Category	Interface	SoC resource/pin	Device/connection	Address/channel	Evidence
+5	GPIO / 状态线	BMC_SYS_ALERT_LED	GPIOI5；球位 E16	SYS_ALERT_GLED		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+6	GPIO / 状态线	BMC_FAN_BMC_OVERRIDE_N	GPIOI6；球位 B16	CPLD 风扇 PWM 接管选择 / PBI#		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+7	GPIO / 状态线	BMC_HBLED_N / HEARTBEAT	GPIOP7；球位 Y23	CPLD BMC health heartbeat input		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+8	GPIO / 状态线	BMC_BIOS_FLASH_SELECT	GPIOM1；球位 B13	BIOS Flash 控制选择		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+9	GPIO / 状态线	BMC_POWER_BUTTON_INPUT	GPIOM2；球位 A12	Power button 输入		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+10	GPIO / 状态线	BMC_BIOS_BOOT_OK	GPIOM7；球位 D13	BIOS POST/启动完成		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+11	GPIO / 状态线	PCB_VER0	GPIOS4；球位 R26	PCB_VER0 strap		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+12	GPIO / 状态线	PCB_VER1	GPIOS5；球位 P24	PCB_VER1 strap		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+13	GPIO / 状态线	PCB_VER2	GPIOS6；球位 P23	PCB_VER2 strap		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+14	GPIO / 状态线	CFG_VER0	GPIOS7；球位 T24	配置版本 strap		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+15	GPIO / 状态线	BMC_UID_BUTTON_N	GPIOV0；球位 AB15	UID button 输入		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+16	GPIO / 状态线	BMC_UID_LED	GPIOV1；球位 AF14	UID LED 输出		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+17	GPIO / 状态线	BMC_CPU_POWER_BUTTON	GPIOV2；球位 AD14	CPU Power button 控制		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+18	GPIO / 状态线	BMC_CPU_RESET	GPIOV3；球位 AC15	CPU Reset 控制		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+19	GPIO / 状态线	BMC_CPU_PWRGD	GPIOV4；球位 AE15	CPU PWRGD 输入		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+20	GPIO / 状态线	CHASI# chassis intrusion	AST2600 dedicated CHASI# input (non-GPIO)；球位 AB21	机箱开盖检测输入		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+21	GPIO / 状态线	BMC_FRU_WP	GPIOG6_TXD9_SD2CD#_SALT15；球位 D21	BMC_FRU_WP		gpio-pins.txt gpio-regs.txt gpio-kernel.txt scu-regs.txt leds.txt board-config.txt
+22	ADC 电压	P12V_SYS	ADC0 analog pad；球位 AD20	板级电压采样	ADC0 channel 0 / Index 0	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+23	ADC 电压	P5V0_SYS	ADC1 analog pad；球位 AC18	板级电压采样	ADC0 channel 1 / Index 1	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+24	ADC 电压	P3V3_SYS	ADC2 analog pad；球位 AE19	板级电压采样	ADC0 channel 2 / Index 2	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+25	ADC 电压	PVCCIN_CPU	ADC3 analog pad；球位 AD19	板级电压采样	ADC0 channel 3 / Index 3	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+26	ADC 电压	PVNN_NAC_CPU	ADC4 analog pad；球位 AC19	板级电压采样	ADC0 channel 4 / Index 4	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+27	ADC 电压	PVCCD0_HV_CPU	ADC5 analog pad；球位 AB19	板级电压采样	ADC0 channel 5 / Index 5	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+28	ADC 电压	PVCCINF_CPU	ADC6 analog pad；球位 AB18	板级电压采样	ADC0 channel 6 / Index 6	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+29	ADC 电压	PVNN_MAIN_CPU	ADC7 analog pad；球位 AE18	板级电压采样	ADC0 channel 7 / Index 7	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+30	ADC 电压	PVCCFA_EHV_CPU	ADC8 analog pad；球位 AB16	板级电压采样	ADC1 channel 0 / Index 8	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+31	ADC 电压	PVCCD1_HV_CPU	ADC9 analog pad；球位 AA17	板级电压采样	ADC1 channel 1 / Index 9	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+32	ADC 电压	PVCCINF_EHV_FIVRA_CPU	ADC10 analog pad；球位 AB17	板级电压采样	ADC1 channel 2 / Index 10	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+33	ADC 电压	P3V3_STBY	ADC11 analog pad；球位 AE16	板级电压采样	ADC1 channel 3 / Index 11	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+34	ADC 电压	P1V8_STBY	ADC12 analog pad；球位 AC16	板级电压采样	ADC1 channel 4 / Index 12	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+35	ADC 电压	P1V2_STBY	ADC13 analog pad；球位 AA16	板级电压采样	ADC1 channel 5 / Index 13	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+36	ADC 电压	P1V0_STBY	ADC14 analog pad；球位 AD16	板级电压采样	ADC1 channel 6 / Index 14	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+37	ADC 电压	D3V0_BAT0	ADC15 analog pad；球位 AC17	板级电压采样	ADC1 channel 7 / Index 15	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+38	风扇 PWM / TACH	PWM0 / BMC_FAN0_PWM	GPIOO0；球位 AD26	风扇 0	0	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+39	风扇 PWM / TACH	TACH0 / SYS_FAN0_TACH	GPIOQ0；球位 AA25	风扇 0	0	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+40	风扇 PWM / TACH	PWM1 / BMC_FAN1_PWM	GPIOO1；球位 AD22	风扇 1	1	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+41	风扇 PWM / TACH	TACH1 / SYS_FAN1_TACH	GPIOQ1；球位 AB25	风扇 1	1	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+42	风扇 PWM / TACH	PWM2 / BMC_FAN2_PWM	GPIOO2；球位 AD23	风扇 2	2	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+43	风扇 PWM / TACH	TACH2 / SYS_FAN2_TACH	GPIOQ2；球位 Y24	风扇 2	2	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+44	风扇 PWM / TACH	PWM3 / BMC_FAN3_PWM	GPIOO3；球位 AD24	风扇 3	3	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+45	风扇 PWM / TACH	TACH3 / SYS_FAN3_TACH	GPIOQ3；球位 AB26	风扇 3	3	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+46	风扇 PWM / TACH	PWM4 / BMC_FAN4_PWM	GPIOO4；球位 AD25	风扇 4	4	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+47	风扇 PWM / TACH	TACH4 / SYS_FAN4_TACH	GPIOQ4；球位 Y26	风扇 4	4	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+48	风扇 PWM / TACH	PWM5 / BMC_FAN5_PWM	GPIOO5；球位 AC22	风扇 5	5	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+49	风扇 PWM / TACH	TACH5 / SYS_FAN5_TACH	GPIOQ5；球位 AC26	风扇 5	5	hwmon-*.txt iio-*.txt block-regs.txt board-config.txt
+50	I2C	I2C1 SCL1 (SCL)	GPIOJ0；球位 B20	PCIe x8 slot 1	物理 I2C1 = DT i2c0	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+51	I2C	I2C1 SDA1 (SDA)	GPIOJ1；球位 A20	PCIe x8 slot 1	物理 I2C1 = DT i2c0	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+52	I2C	I2C2 SCL2 (SCL)	GPIOJ2；球位 E19	PCIe x16 slot 3	物理 I2C2 = DT i2c1	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+53	I2C	I2C2 SDA2 (SDA)	GPIOJ3；球位 D20	PCIe x16 slot 3	物理 I2C2 = DT i2c1	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+54	I2C	I2C3 SCL3 (SCL)	GPIOJ4；球位 C19	PCIe x8 slot 4	物理 I2C3 = DT i2c2	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+55	I2C	I2C3 SDA3 (SDA)	GPIOJ5；球位 A19	PCIe x8 slot 4	物理 I2C3 = DT i2c2	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+56	I2C	I2C4 SCL4 (SCL)	GPIOJ6；球位 C20	PCIe x8 slot 5	物理 I2C4 = DT i2c3	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+57	I2C	I2C4 SDA4 (SDA)	GPIOJ7；球位 D19	PCIe x8 slot 5	物理 I2C4 = DT i2c3	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+58	I2C	I2C5 SCL5 (SCL)	GPIOK0；球位 A11	PCIe x16 slot 6	物理 I2C5 = DT i2c4	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+59	I2C	I2C5 SDA5 (SDA)	GPIOK1；球位 C11	PCIe x16 slot 6	物理 I2C5 = DT i2c4	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+60	I2C	I2C6 SCL6 (SCL)	GPIOK2；球位 D12	PCIe x8 slot 7	物理 I2C6 = DT i2c5	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+61	I2C	I2C6 SDA6 (SDA)	GPIOK3；球位 E13	PCIe x8 slot 7	物理 I2C6 = DT i2c5	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+62	I2C	I2C7 SCL7 (SCL)	GPIOK4；球位 D11	4 x NST175H-QSPR	物理 I2C7 = DT i2c6；0x48 / 0x49 / 0x4a / 0x4b	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+63	I2C	I2C7 SDA7 (SDA)	GPIOK5；球位 E11	4 x NST175H-QSPR	物理 I2C7 = DT i2c6；0x48 / 0x49 / 0x4a / 0x4b	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+64	I2C	I2C8 SCL8 (SCL)	GPIOK6；球位 F13	CRPS PMBus PSU	物理 I2C8 = DT i2c7；0x58 / 0x59 / 0x5a	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+65	I2C	I2C8 SDA8 (SDA)	GPIOK7；球位 E12	CRPS PMBus PSU	物理 I2C8 = DT i2c7；0x58 / 0x59 / 0x5a	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+66	I2C	I2C9 SCL9 (SCL)	GPIOL0；球位 D15	CPLD (reserved)	物理 I2C9 = DT i2c8	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+67	I2C	I2C9 SDA9 (SDA)	GPIOL1；球位 A14	CPLD (reserved)	物理 I2C9 = DT i2c8	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+68	I2C	I2C10 SCL10 (SCL)	GPIOL2；球位 E15	NCT3015Y-R	物理 I2C10 = DT i2c9；0x6f	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+69	I2C	I2C10 SDA10 (SDA)	GPIOL3；球位 A13	NCT3015Y-R	物理 I2C10 = DT i2c9；0x6f	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+70	I2C	I2C11 SCL11 (SCL)	GPIOA0；球位 M24	FM24C08D（1 KiB）	物理 I2C11 = DT i2c10；0x50–0x53	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+71	I2C	I2C11 SDA11 (SDA)	GPIOA1；球位 M25	FM24C08D（1 KiB）	物理 I2C11 = DT i2c10；0x50–0x53	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+72	I2C	I2C12 SCL12 (SCL)	GPIOA2；球位 L26	预留 TCA9546A；未实例化 mux	物理 I2C12 = DT i2c11	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+73	I2C	I2C12 SDA12 (SDA)	GPIOA3；球位 K24	预留 TCA9546A；未实例化 mux	物理 I2C12 = DT i2c11	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+74	I2C	I2C13 SCL13 (SCL)	GPIOA4；球位 K26	MCIO x8 connector	物理 I2C13 = DT i2c12	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+75	I2C	I2C13 SDA13 (SDA)	GPIOA5；球位 L24	MCIO x8 connector	物理 I2C13 = DT i2c12	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+76	I2C	I2C14 SCL14 (SCL)	GPIOA6；球位 L23	Reserved / MCIO	物理 I2C14 = DT i2c13	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+77	I2C	I2C14 SDA14 (SDA)	GPIOA7；球位 K25	Reserved / MCIO	物理 I2C14 = DT i2c13	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+78	I2C	I2C15 SCL15 (SCL)	GPIOH4；球位 D18	CPU SMBUS_HOST PROM	物理 I2C15 = DT i2c14	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+79	I2C	I2C15 SDA15 (SDA)	GPIOH5；球位 B17	CPU SMBUS_HOST PROM	物理 I2C15 = DT i2c14	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+80	I2C	I2C16 SCL16 (SCL)	GPIOH6；球位 C17	MIPI60 connector	物理 I2C16 = DT i2c15	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+81	I2C	I2C16 SDA16 (SDA)	GPIOH7；球位 E18	MIPI60 connector	物理 I2C16 = DT i2c15	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+82	eSPI	LAD0 / ESPID0	GPIOW0；球位 AB7	Intel Xeon 6	CPU_ESPI_IO0	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+83	eSPI	LAD1 / ESPID1	GPIOW1；球位 AB8	Intel Xeon 6	CPU_ESPI_IO1	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+84	eSPI	LAD2 / ESPID2	GPIOW2；球位 AC8	Intel Xeon 6	CPU_ESPI_IO2	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+85	eSPI	LAD3 / ESPID3	GPIOW3；球位 AC7	Intel Xeon 6	CPU_ESPI_IO3	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+86	eSPI	LCLK / ESPICK	GPIOW4；球位 AE7	Intel Xeon 6	CPU_ESPI_CLK	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+87	eSPI	LFRAME# / ESPICS#	GPIOW5；球位 AF7	Intel Xeon 6	CPU_ESPI_CS0	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+88	eSPI	LSIRQ# / ESPIALT#	GPIOW6；球位 AD7	Intel Xeon 6	CPU_ESPI_ALT	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+89	eSPI	LPCRST# / ESPIRST#	GPIOW7；球位 AD8	Intel Xeon 6	CPU_ESPI_RSTN	espi-regs.txt scu-regs.txt dt-hardware-cells.txt
+90	UART	TXD3	GPIOL4；球位 C15	主机串口引脚	BMC_CPU_SOL_TXD	serial.txt vuart-regs.txt lpc-regs.txt espi-regs.txt
+91	UART	RXD3	GPIOL5；球位 F15	主机串口引脚	BMC_CPU_SOL_RXD	serial.txt vuart-regs.txt lpc-regs.txt espi-regs.txt
+92	UART	TXD5	UART5 TXD5；球位 C8	BMC 调试串口	BMC_UART5_DEBUG_TXD	serial.txt vuart-regs.txt lpc-regs.txt espi-regs.txt
+93	UART	RXD5	UART5 RXD5；球位 D8	BMC 调试串口	BMC_UART5_DEBUG_RXD	serial.txt vuart-regs.txt lpc-regs.txt espi-regs.txt
+94	VGA	VGAHS	GPIOL6；球位 B14	VGA 显示接口	BMC_VGA_HSYNC	console-vga.txt usb-config.txt dt-hardware-cells.txt
+95	VGA	VGAVS	GPIOL7；球位 C14	VGA 显示接口	BMC_VGA_VSYNC	console-vga.txt usb-config.txt dt-hardware-cells.txt
+96	USB	USB2ADDP	USB2A；球位 A4	VL805 USB port 4	VL805_USB2_P4_DP	console-vga.txt usb-config.txt dt-hardware-cells.txt
+97	USB	USB2ADDN	USB2A；球位 B4	VL805 USB port 4	VL805_USB2_P4_DM	console-vga.txt usb-config.txt dt-hardware-cells.txt
+98	Ethernet / PHY	RGMII2RXCK	GPIO18C2；球位 D2	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+99	Ethernet / PHY	RGMII2RXCTL	GPIO18C3；球位 E3	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+100	Ethernet / PHY	RGMII2RXD0	GPIO18C4；球位 D1	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+101	Ethernet / PHY	RGMII2RXD1	GPIO18C5；球位 F4	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+102	Ethernet / PHY	RGMII2RXD2	GPIO18C6；球位 E2	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+103	Ethernet / PHY	RGMII2RXD3	GPIO18C7；球位 E1	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+104	Ethernet / PHY	RGMII2TXCK	GPIO18B4；球位 D4	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+105	Ethernet / PHY	RGMII2TXCTL	GPIO18B5；球位 C2	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+106	Ethernet / PHY	RGMII2TXD0	GPIO18B6；球位 C1	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+107	Ethernet / PHY	RGMII2TXD1	GPIO18B7；球位 D3	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+108	Ethernet / PHY	RGMII2TXD2	GPIO18C0；球位 E4	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+109	Ethernet / PHY	RGMII2TXD3	GPIO18C1；球位 F5	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+110	Ethernet / PHY	MDC2	GPIOB4；球位 J23	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+111	Ethernet / PHY	MDIO2	GPIOB5；球位 G26	RTL8211FS-CG	mac1（物理 MAC2）/ Linux eth0；PHY 2	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+112	Ethernet / NC-SI	RGMII3TXCTL / NCSI TXEN	GPIOC1；球位 J22	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+113	Ethernet / NC-SI	RGMII3TXD0 / NCSI TXD0	GPIOC2；球位 H22	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+114	Ethernet / NC-SI	RGMII3TXD1 / NCSI TXD1	GPIOC3；球位 H23	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+115	Ethernet / NC-SI	RGMII3RXCK / NCSI RXCLK	GPIOC6；球位 G23	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+116	Ethernet / NC-SI	RGMII3RXD0 / NCSI RXD0	GPIOD0；球位 F23	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+117	Ethernet / NC-SI	RGMII3RXD1 / NCSI RXD1	GPIOD1；球位 F26	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+118	Ethernet / NC-SI	RGMII3RXD2 / NCSI CRS_DV	GPIOD2；球位 F25	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+119	Ethernet / NC-SI	RGMII3RXD3 / NCSI RXER	GPIOD3；球位 E26	Intel E810	mac2（物理 MAC3）/ Linux eth1	network*.txt net-layout.txt mac-regs.txt clock-config.txt
+120	SPI1 / BIOS Flash	SPI1CK	GPIOZ3；球位 AB11	MX25U51245GMI00；64 MiB	SPI1 CS0	flash-config.txt mtd.txt block-regs.txt
+121	SPI1 / BIOS Flash	SPI1MOSI	GPIOZ4；球位 AC11	MX25U51245GMI00；64 MiB	SPI1 CS0	flash-config.txt mtd.txt block-regs.txt
+122	SPI1 / BIOS Flash	SPI1MISO	GPIOZ5；球位 AA11	MX25U51245GMI00；64 MiB	SPI1 CS0	flash-config.txt mtd.txt block-regs.txt
+123	SPI1 / BIOS Flash	SPI1DQ2 (x1 模式未用)	GPIOZ6 / SPI1DQ2；球位 AD11	MX25U51245GMI00；64 MiB	SPI1 CS0	flash-config.txt mtd.txt block-regs.txt
+124	SPI1 / BIOS Flash	SPI1DQ3 (x1 模式未用)	GPIOZ7 / SPI1DQ3；球位 AF10	MX25U51245GMI00；64 MiB	SPI1 CS0	flash-config.txt mtd.txt block-regs.txt
+125	SPI1 / BIOS Flash	SPI1CS0#	Dedicated SPI1 CS0 pad；球位 AD13	MX25U51245GMI00；64 MiB	SPI1 CS0	flash-config.txt mtd.txt block-regs.txt
+126	FMC / BMC Flash	FWSPICS0#	Dedicated Firmware SPI CS0；球位 AB14	W25Q512JVFIQ；64 MiB	FMC CS0	flash-config.txt mtd.txt block-regs.txt
+127	FMC / BMC Flash	FWSPICK	Dedicated Firmware SPI clock；球位 AF13	W25Q512JVFIQ；64 MiB	FMC CS0	flash-config.txt mtd.txt block-regs.txt
+128	FMC / BMC Flash	FWSPIMOSI	Dedicated Firmware SPI MOSI；球位 AC14	W25Q512JVFIQ；64 MiB	FMC CS0	flash-config.txt mtd.txt block-regs.txt
+129	FMC / BMC Flash	FWSPIMISO	Dedicated Firmware SPI MISO；球位 AB13	W25Q512JVFIQ；64 MiB	FMC CS0	flash-config.txt mtd.txt block-regs.txt
+130	FMC / BMC Flash	FWSPIQ2	GPIOY4 / Firmware SPI DQ2；球位 AE12	W25Q512JVFIQ；64 MiB	FMC CS0	flash-config.txt mtd.txt block-regs.txt
+131	FMC / BMC Flash	FWSPIQ3	GPIOY5 / Firmware SPI DQ3；球位 AF12	W25Q512JVFIQ；64 MiB	FMC CS0	flash-config.txt mtd.txt block-regs.txt
+132	SPI2	SPI2 / CS0	SPI2 控制器	无配置子设备		flash-config.txt mtd.txt block-regs.txt
+133	PECI	PECI0	AST2600 PECI 控制器	Intel Xeon 6		bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt
+134	I3C	I3C3 SCL / SDA	AF25 / AE26	CPU 管理接口	物理 I3C3 = DT i3c2	bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt
+135	I2C 器件	EnvTemp Inlet	I2C7 / DT i2c6	NST175H-QSPR	0x48	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+136	I2C 器件	EnvTemp Outlet	I2C7 / DT i2c6	NST175H-QSPR	0x49	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+137	I2C 器件	BoardTemp PCIe	I2C7 / DT i2c6	NST175H-QSPR	0x4a	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+138	I2C 器件	BoardTemp M2	I2C7 / DT i2c6	NST175H-QSPR	0x4b	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+139	I2C 器件	CRPS PSU0	I2C8 / DT i2c7	CRPS PMBus	0x58	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+140	I2C 器件	CRPS PSU1	I2C8 / DT i2c7	CRPS PMBus	0x59	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+141	I2C 器件	CRPS PSU2	I2C8 / DT i2c7	CRPS PMBus	0x5a	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+142	I2C 器件	RTC	I2C10 / DT i2c9	NCT3015Y-R	0x6f	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+143	I2C 器件	FRU EEPROM	I2C11 / DT i2c10	FM24C08D	0x50–0x53	i2c-devices.txt bus-bindings.txt chips.txt eeprom-*.bin board-config.txt
+144	主机接口	KCS3	LPC KCS3	主机	I/O 0xca2（数据）/ 0xca3（状态）	serial.txt vuart-regs.txt lpc-regs.txt espi-regs.txt
+145	主机接口	POST snoop	LPC snoop	BIOS	I/O 0x80	serial.txt vuart-regs.txt lpc-regs.txt espi-regs.txt
+146	主机接口	SOL / VUART1	AST2600 VUART1	主机 COM1	I/O 0x3f8；主机 IRQ4	serial.txt vuart-regs.txt lpc-regs.txt espi-regs.txt
+147	看门狗	WDT1	AST2600 WDT1	BMC		watchdog.txt memory-config.txt
+148	DDR / 内存	DDR4 组织	AST2600 SDRAM 控制器	SK Hynix H5AN8G6NDJR-XNC	基址 0x80000000	memory-config.txt memory-regs.txt dt-hardware-cells.txt
+149	DDR / 内存	工作速率	SDRAM / DDR PHY	DDR4		memory-config.txt memory-regs.txt dt-hardware-cells.txt
+150	DDR / 内存	终端 / 驱动阻抗	DDR PHY / DRAM	DDR4		memory-config.txt memory-regs.txt dt-hardware-cells.txt
+151	DDR / 内存	训练 / ECC / SSP	SDRAM / DDR PHY	DDR4		memory-config.txt memory-regs.txt dt-hardware-cells.txt
+152	DDR / 内存	视频 DMA 池	video_engine_memory	视频引擎		memory-config.txt memory-regs.txt dt-hardware-cells.txt
+153	DDR / 内存	Framebuffer DMA 池	gfx_memory	VGA 显示引擎		memory-config.txt memory-regs.txt dt-hardware-cells.txt
+154	Flash 分区	u-boot	FMC CS0	BMC 64 MiB SPI NOR	offset=0x00000000	flash-config.txt mtd.txt block-regs.txt
+155	Flash 分区	u-boot-env	FMC CS0	BMC 64 MiB SPI NOR	offset=0x000e0000	flash-config.txt mtd.txt block-regs.txt
+156	Flash 分区	kernel	FMC CS0	BMC 64 MiB SPI NOR	offset=0x00100000	flash-config.txt mtd.txt block-regs.txt
+157	Flash 分区	rofs	FMC CS0	BMC 64 MiB SPI NOR	offset=0x00a00000	flash-config.txt mtd.txt block-regs.txt
+158	Flash 分区	rwfs	FMC CS0	BMC 64 MiB SPI NOR	offset=0x03600000	flash-config.txt mtd.txt block-regs.txt
+159	Flash 分区	host-bios	SPI1 CS0	BIOS 64 MiB SPI NOR	offset=0x00000000	flash-config.txt mtd.txt block-regs.txt
+160	禁用 / 预留	MAC / MDIO	MAC0 / MAC3；MDIO0 / MDIO2 / MDIO3	无配置连接		bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt
+161	禁用 / 预留	I3C 控制器	DT i3c0 / 1 / 3 / 4 / 5	无配置子设备		bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt
+162	禁用 / 预留	SD / eMMC	emmc / emmc_controller / sdhci0 / sdhci1 / sdc	无配置连接		bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt
+163	禁用 / 预留	UART1	UART1 / GPIOM1	BIOS Flash 选择 GPIO		bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt
 PORT_GUIDE
 
 # ---------------------------------------------------------------- archive
