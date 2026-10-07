@@ -4,7 +4,7 @@
 # panel (browser panel on http://localhost:8800):
 #
 #   flash   BMC flash (the built image) on FMC, a 64 MiB BIOS flash on SPI1
-#   network MAC2 = eth0, the RJ45 port (192.168.185.200, port forwards below)
+#   network MAC2 = eth0, the RJ45 port (DHCP 192.168.185.200, forwards below)
 #           MAC3 = eth1, Intel NC-SI profile (DHCP 10.0.2.x)
 #   I2C7    (Linux i2c-6)  0x48-0x4b  4 temperature sensors (tmp105, LM75 compatible)
 #   I2C8    (Linux i2c-7)  0x58-0x5a  PSU slots
@@ -241,7 +241,7 @@ fi
   -drive file="$IMAGE",format=raw,if=mtd,index=0 \
   -drive file="$BIOS_FLASH",format=raw,if=mtd,index=1 \
   -nic user \
-  -nic user,id=ceb-management,net=192.168.185.0/24,host=192.168.185.1,tftp=/srv/tftp,hostfwd=tcp:127.0.0.1:8443-192.168.185.200:443,hostfwd=tcp:127.0.0.1:2222-192.168.185.200:22,hostfwd=udp:127.0.0.1:2623-192.168.185.200:623 \
+  -nic user,id=ceb-management,net=192.168.185.0/24,host=192.168.185.1,dhcpstart=192.168.185.200,tftp=/srv/tftp,hostfwd=tcp:127.0.0.1:8443-192.168.185.200:443,hostfwd=tcp:127.0.0.1:2222-192.168.185.200:22,hostfwd=udp:127.0.0.1:2623-192.168.185.200:623 \
   -nic user,id=ceb-ncsi \
   -nic user,restrict=on \
   -device tmp105,bus=aspeed.i2c.bus.6,address=0x48,id=temp-inlet \

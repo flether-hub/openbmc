@@ -213,10 +213,10 @@ interfaces:
     ssh_scp: dropbear and standard OpenBMC SCP support
     network:
       ports:
-        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii, phy_address: 2, phy_reset: CPLD-drives-RTL8211_SYS_RSTN-not-a-BMC-gpio, phy_strap_note: PHYAD=002-per-schematic-note RXDLY=off CFG_MODE=000 no-RGMII-delay-in-PHY, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: 192.168.185.200/24, default_gateway: 192.168.185.1, default_dns: [192.168.185.1, 223.5.5.5, 223.6.6.6] }
+        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii, phy_address: 2, phy_reset: CPLD-drives-RTL8211_SYS_RSTN-not-a-BMC-gpio, phy_strap_note: PHYAD=002-per-schematic-note RXDLY=off CFG_MODE=000 no-RGMII-delay-in-PHY, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: dhcp }
         - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2, default_ipv4: dhcp, power_dependency: "BMC_CPU_PWRGD via xyz.openbmc_project.State.Chassis", behavior: "keep interface down while host is off; bring up on power-on; tear down on power-off" }
       address_modes: [static, dhcp]
-      default_management_mode: static
+      default_management_mode: dhcp
       status: configured
     watchdog:
       ipmi_standard:

@@ -892,7 +892,7 @@ grep '^bus ' "$OUT/i2c-devices.txt" 2>/dev/null | sed 's/^/    /' >> "$CK"
 [ -s "$OUT/i2c-scan.txt" ] || ck "(no I2C scan: run with -s to see devices the vendor firmware drives from user space)"
 
 sect "network"
-ck "expected: 1e680000.ethernet = RJ45 via RTL8211FS, PHY address 2 (…:02), RGMII, static 192.168.185.200"
+ck "expected: 1e680000.ethernet = RJ45 via RTL8211FS, PHY address 2 (…:02), RGMII, IPv4 DHCP by default"
 ck "expected: 1e670000.ethernet = NC-SI to the Intel E810 (no PHY), DHCP, only up while the host is on"
 ck "found:"
 sed 's/^/    /' "$OUT/net-layout.txt" >> "$CK" 2>/dev/null

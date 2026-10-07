@@ -74,6 +74,10 @@ FruDevice 写入后会读回物理 EEPROM 并比对；成功日志 `FRU EEPROM w
 | IPMI LAN | UDP 127.0.0.1:2623 | 转发至 BMC 623 |
 | CEB-GNRD 硬件模拟控制台 | http://127.0.0.1:8800 | Python 主机模拟器，非 BMC Web |
 
+两个 BMC 网口默认使用 DHCP 获取 IPv4 地址。模拟器的 eth0 DHCP 地址池从
+`192.168.185.200` 开始，与上述端口转发目标一致；eth1 使用独立的 user 网络。
+eth1 的 NC-SI 链路仍在主机上电后启用。实板的地址、网关和 DNS 由 DHCP 服务器提供。
+
 转发只绑定回环地址。从其他电脑访问，可建立 SSH 隧道：
 
 ```sh
