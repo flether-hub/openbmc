@@ -4,6 +4,7 @@ SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-delete-single-file-event-log.pa
 SRC_URI:append:ceb-gnrd = " file://0002-ceb-gnrd-async-virtual-media-proxy-cleanup.patch"
 SRC_URI:append:ceb-gnrd = " file://0003-ceb-gnrd-virtual-media-receive-backpressure.patch"
 SRC_URI:append:ceb-gnrd = " file://0004-ceb-gnrd-report-boot-id-for-update-monitor.patch"
+SRC_URI:append:ceb-gnrd = " file://0005-ceb-gnrd-allow-same-origin-kvm-fullscreen.patch"
 
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 

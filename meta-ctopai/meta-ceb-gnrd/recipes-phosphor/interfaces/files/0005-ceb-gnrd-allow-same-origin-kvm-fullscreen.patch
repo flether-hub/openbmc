@@ -1,0 +1,23 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] http: allow same-origin KVM fullscreen
+
+The board Web UI offers a KVM fullscreen button. The default HTML
+Permissions-Policy disables fullscreen entirely, causing Chromium-based
+browsers to reject requestFullscreen with a policy violation.
+
+Allow fullscreen only for the response origin. Keep the remaining
+permissions and the existing frame embedding restrictions unchanged.
+
+Upstream-Status: Inappropriate [CEB-GNRD Web UI feature]
+---
+--- a/include/security_headers.hpp
++++ b/include/security_headers.hpp
+@@ -40,7 +40,7 @@
+             "display-capture=(),"
+             "document-domain=(),"
+             "encrypted-media=(),"
+-            "fullscreen=(),"
++            "fullscreen=(self),"
+             "gamepad=(),"
+             "geolocation=(),"
+             "gyroscope=(),"
