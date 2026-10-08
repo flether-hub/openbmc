@@ -367,11 +367,13 @@ def ipmi_sensors_fans():
 
 def peripherals_network():
     section('3. eSPI/KCS/POST/SOL, RTC, USB/VGA and network')
-    for node in ('/dev/ipmi-kcs3', '/dev/aspeed-lpc-snoop0', '/dev/ttyVUART0', '/dev/rtc0', '/dev/video0', '/dev/nbd0'):
+    for node in ('/dev/ipmi-kcs3', '/dev/aspeed-lpc-snoop0', '/dev/ttyS2', '/dev/ttyVUART0', '/dev/rtc0', '/dev/video0', '/dev/nbd0'):
         require(node + ' exists', Path(node).exists())
+    unit('obmc-console@ttyS2')
     unit('obmc-console@ttyVUART0')
     unit('phosphor-ipmi-kcs@ipmi-kcs3')
-    check('SOL tty configuration', ['stty', '-F', '/dev/ttyVUART0', '-a'], 'speed|baud')
+    check('SOL physical tty configuration', ['stty', '-F', '/dev/ttyS2', '-a'], 'speed|baud')
+    check('SOL vUART tty configuration', ['stty', '-F', '/dev/ttyVUART0', '-a'], 'speed|baud')
     require('SOL socket registered', 'obmc-console' in read('/proc/net/unix'))
     base = '/sys/devices/platform/ahb/ahb:apb/1e787000.serial/'
     require('SOL vUART COM1 address', re.fullmatch(r'0x0*3[fF]8', read(base + 'lpc_address')) is not None)

@@ -30,6 +30,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0028-ceb-gnrd-event-logs-newest-first.patch \
     file://0029-ceb-gnrd-bmc-update-partition-selection.patch \
     file://0030-ceb-gnrd-bmc-update-completion-notification.patch \
+    file://0031-ceb-gnrd-sol-source-selection.patch \
     file://zh-CN.json \
 "
 

@@ -905,7 +905,7 @@ ck "found: $(grep -o 'console=[^ ]*' /proc/cmdline 2>/dev/null | tr '\n' ' ')/pr
 sect "host interfaces (eSPI / KCS / POST code / host CPU serial console = SOL)"
 ck "expected: eSPI mode (strap SCU510), Peripheral + Virtual Wire channels ready"
 ck "expected: KCS3 at I/O 0xCA2/0xCA3 (IPMI KCS), POST code snoop on port 0x80"
-ck "expected: VUART1 at I/O 0x3F8 (host COM1), SerIRQ 4 -> ttyVUART0 = SOL"
+ck "expected: default SOL UART3 ttyS2 at 115200; optional Web vUART1 ttyVUART0 at I/O 0x3F8, SerIRQ 4"
 if [ -n "$DEVMEM" ]; then
     c=$(rd 0x1e6ee000); s=$(rd 0x1e6ee098)
     case "$c$s" in *-*) ck "eSPI registers not readable" ;; *)
@@ -924,8 +924,8 @@ else
 fi
 ck "device nodes here: $(ls /dev 2>/dev/null | grep -E 'kcs|ipmi|snoop|espi|VUART' | tr '\n' ' ')"
 # Host CPU serial console (SOL), not the BMC debug port: the process that reads the
-# host UART (obmc-console-server on ttyVUART0 here; the vendor firmware may use
-# another program or another UART).  Shells on the BMC debug port are left out.
+# host UART (default ttyS2 and optional Web ttyVUART0). Shells on the BMC debug
+# port are left out.
 ck "host CPU serial console (SOL) source, i.e. the process holding the host UART:"
 grep -E '^pid ' "$OUT/serial.txt" 2>/dev/null | grep -v -E ' -?(ba)?sh |getty|bmc-hw-dump' \
     | sed 's/^/    /' >> "$CK"

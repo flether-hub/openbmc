@@ -872,10 +872,11 @@ def host_state():
 class Panel:
     """State of the simulated board, polled from QEMU for the panel."""
 
-    def __init__(self, host, qmp, console):
+    def __init__(self, host, qmp, console, physical_console=None):
         self.host = host
         self.q = qmp
         self.console = console
+        self.physical_console = physical_console
         self.state = {}
         self.posts = collections.deque(maxlen=64)
         self.last_post = None
@@ -907,6 +908,8 @@ class Panel:
         if st["host"] != self.last_host:
             if self.console:
                 self.console.on_state(self.last_host, st["host"])
+            if self.physical_console:
+                self.physical_console.on_state(self.last_host, st["host"])
             self.last_host = st["host"]
         details, age = GPIO_MONITOR.snapshot() if GPIO_MONITOR else ({}, None)
         st["pin_details"], st["gpio_sample_age_ms"] = details, age
@@ -1144,6 +1147,7 @@ def main():
     parser.add_argument("--headless", action="store_true", help="host I/O worker without a panel or stdin")
     parser.add_argument("--uart", default=os.path.expanduser("~/qemu-ceb-gnrd/host-uart.sock"),
                         help="host serial port socket (the panel plays the host console)")
+    parser.add_argument("--physical-uart", help="additional physical UART3 host socket")
     args = parser.parse_args()
 
     qmp = Qmp(args.qmp)
@@ -1225,7 +1229,8 @@ def main():
 
     threading.Thread(target=loop, daemon=True).start()
     console = ESPIConsole(HOST_IO) if HOST_IO else HostConsole(args.uart)
-    panel = Panel(host, qmp, console)
+    physical_console = HostConsole(args.physical_uart) if args.physical_uart and builtin else None
+    panel = Panel(host, qmp, console, physical_console)
 
     def usb_loop():
         seen_reset = qmp.resets

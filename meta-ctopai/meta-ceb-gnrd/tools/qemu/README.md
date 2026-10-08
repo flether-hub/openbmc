@@ -12,6 +12,11 @@ KVM 服务和虚拟媒体挂载仍由 BMC 固件处理。
 
 ## 构建与启动（Linux 构建机）
 
+Web SOL 默认连接物理 UART3（BMC `ttyS2`，115200 波特率），与物理板 dump 一致。
+“使用 vUART”开关切换到 `ttyVUART0`（主机 COM1 经 eSPI）；新窗口沿用所选来源。
+模拟器同时提供 UART3 和 vUART 两条主机串口，两者均可接收模拟主机启动输出及输入。
+IPMI SOL 默认保持物理 UART3。两条串口日志分别保存在 `/run`，每份限制为 64 KiB。
+
 ```sh
 # 在 OpenBMC 构建环境中：构建固件和对应 native QEMU。
 bitbake obmc-phosphor-image
@@ -314,7 +319,7 @@ NC-SI 端口在 U-Boot 中保持禁用，eth1 的 Linux 地址传递也需运行
 | eSPI Peripheral | SW_READY、RESET#、错误 IRQ；主机 legacy I/O 路由到 KCS3、80h 和 COM1 |
 | eSPI Virtual Wire | 就绪、BMC BOOT_STATUS/BOOT_DONE、原始 SYSEVT 位；不含完整 VW 包交换 |
 | POST 80h | 通道未就绪时不能写入；原生主机 POST 等待通道及 BMC boot wires；历史最新在前 |
-| COM1 / SOL | 双端 UART FIFO：主机 I/O 经 eSPI 到真实 ttyVUART0；新模型不走直连串口 socket |
+| SOL / COM1 | 默认物理 UART3 经 socket 到 ttyS2；Web 可切换到主机 COM1 经 eSPI 到 ttyVUART0 |
 | KCS3 | 主机 ca2/ca3 状态机，BMC 实际 KCS 驱动和 IPMI 服务生成回复 |
 | CHASI# | 开盖输入及 sticky latch；合盖不直接清除，由 BMC 服务重新布防 |
 | PWM / TACH | 六路风扇转速跟随 PWM，也可注入停转、固定转速；GPIOI6 由真实 owner 服务控制 |

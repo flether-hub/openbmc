@@ -51,6 +51,7 @@ IMAGE=$DEPLOY/obmc-phosphor-image-ceb-gnrd.static.mtd
 QEMUBOOT=$DEPLOY/obmc-phosphor-image-ceb-gnrd.qemuboot.conf
 QMP=$STATE/qmp.sock
 UART_SOCK=$STATE/host-uart.sock
+PHYSICAL_UART_SOCK=$STATE/host-physical-uart.sock
 
 # Always use the emulator built with this image, even if QEMU is exported.
 if [ ! -f "$QEMUBOOT" ]; then
@@ -142,8 +143,7 @@ fi
 # rail voltages divided by the board divider ratio (pad = rail * Entity-Manager
 # ScaleFactor). D3V0_BAT0 uses 1.5 V at ADC15 and ScaleFactor 0.5 to publish
 # 3.0 V, matching the physical-board dump's x2 conversion.
-# The host serial port is the VUART (SOL on ttyVUART0).
-# Stock QEMU: no VUART, so UART3 (BMC ttyS2) stands in for it (README.md).
+# Provide physical UART3 for the default SOL and VUART for the Web switch.
 BOARD=""
 if [ -n "$BOARD_QEMU" ]; then
     BOARD="-device bmc-host-sim,id=host,gpio=/machine/soc/gpio,peci=/machine/soc/peci,lpc=/machine/soc/lpc,ncsi=/machine/soc/ftgmac100[2]"
@@ -161,7 +161,7 @@ if [ -n "$BOARD_QEMU" ]; then
         BOARD="$BOARD -global driver=aspeed.adc,property=ch$ch-mv,value=$mv"
         ch=$((ch + 1))
     done
-    UART3=null
+    UART3="unix:$PHYSICAL_UART_SOCK,server=on,wait=off"
     if [ -n "$HOST_IO_QEMU" ]; then
         VUART="" # Peripheral I/O accesses go through QMP, no serial bypass.
     else
@@ -211,11 +211,11 @@ trap 'exit 129' HUP
 if [ -z "$NO_PANEL" ]; then
     python3 "$TOOLS/host-sim.py" --web --port "$PANEL_PORT" \
         --state-dir "$STATE" \
-        --qmp "$QMP" --uart "$UART_SOCK" > "$STATE/panel-log.pipe" 2>&1 &
+        --qmp "$QMP" --uart "$UART_SOCK" --physical-uart "$PHYSICAL_UART_SOCK" > "$STATE/panel-log.pipe" 2>&1 &
     echo "Control panel: http://localhost:$PANEL_PORT (log $STATE/panel.log)"
 else
     # Keep host USB, COM1 and VGA behaviour running without a visible panel.
-    python3 "$TOOLS/host-sim.py" --headless --qmp "$QMP" --uart "$UART_SOCK" \
+    python3 "$TOOLS/host-sim.py" --headless --qmp "$QMP" --uart "$UART_SOCK" --physical-uart "$PHYSICAL_UART_SOCK" \
         --state-dir "$STATE" > "$STATE/panel-log.pipe" 2>&1 &
 fi
 PANEL_PID=$!

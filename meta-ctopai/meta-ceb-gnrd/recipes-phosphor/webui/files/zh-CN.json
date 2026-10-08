@@ -932,6 +932,10 @@
     }
   },
   "pageSerialOverLan": {
+    "useVuart": "使用 vUART（关闭：物理串口）",
+    "physicalSource": "物理串口：UART3 / ttyS2，115200 波特率（默认）",
+    "vuartSource": "vUART：主机 COM1 经 eSPI / ttyVUART0，115200 波特率",
+    "connectionHint": "控制台未连接，请确认主机已开机且所选串口来源可用。",
     "accessDeniedAriaLabel": "Serial Over LAN access denied",
     "alert": {
       "disconnectedAlertMessage": "系统必须开机才能连接。"

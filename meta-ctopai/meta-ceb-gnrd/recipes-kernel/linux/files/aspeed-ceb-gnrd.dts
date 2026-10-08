@@ -197,14 +197,12 @@
     aspeed,lpc-interrupts = <4 IRQ_TYPE_LEVEL_HIGH>;
 };
 
-/* UART3 RX (GPIOL5/RXD3) is cross-connected to the CPU serial output.  It is no
- * longer the SOL source (VUART1 is); it stays muxed as receive-only and TXD3
- * (GPIOL4) is an undriven GPIO input.  UART5 remains the BMC debug console on
- * ttyS4. */
+/* Default physical SOL: UART3 TX/RX, matching the physical-board dump.
+ * UART5 remains the BMC debug console on ttyS4. */
 &uart3 {
     status = "okay";
     pinctrl-names = "default";
-    pinctrl-0 = <&pinctrl_rxd3_default>;
+    pinctrl-0 = <&pinctrl_txd3_default &pinctrl_rxd3_default>;
 };
 
 /* BMC debug console is wired to the dedicated AST2600 UART5 pads C8/D8.

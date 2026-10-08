@@ -1,0 +1,144 @@
+Subject: [PATCH] SOL: select physical UART3 or vUART
+
+Upstream-Status: Inappropriate [CEB-GNRD serial topology]
+
+--- a/src/views/Operations/SerialOverLan/SerialOverLanConsole.vue
++++ b/src/views/Operations/SerialOverLan/SerialOverLanConsole.vue
+@@ -5,6 +5,15 @@
+       :aria-label="$t('pageSerialOverLan.accessDeniedAriaLabel')"
+     />
+     <template v-else>
++      <b-form-checkbox
++        v-model="useVuart"
++        switch
++        class="my-3"
++        @update:model-value="switchConsole"
++      >
++        {{ $t('pageSerialOverLan.useVuart') }}
++      </b-form-checkbox>
++      <p class="small text-muted">{{ consoleSourceLabel }}</p>
+       <b-row class="d-flex">
+         <b-col sm="4" md="6">
+           <alert
+@@ -14,7 +23,7 @@
+             class="mt-4"
+           >
+             <p class="col-form-label">
+-              {{ $t('pageSerialOverLan.alert.disconnectedAlertMessage') }}
++              {{ $t('pageSerialOverLan.connectionHint') }}
+             </p>
+           </alert>
+         </b-col>
+@@ -82,14 +91,24 @@
+   data() {
+     return {
+       resizeConsoleWindow: null,
++      useVuart: this.$route.query.source === 'vuart',
++      socketConnected: false,
++      consoleGeneration: 0,
+     };
+   },
+   computed: {
++    consoleSourceLabel() {
++      return this.$t(
++        this.useVuart
++          ? 'pageSerialOverLan.vuartSource'
++          : 'pageSerialOverLan.physicalSource',
++      );
++    },
+     serverStatus() {
+       return this.$store.getters['global/serverStatus'];
+     },
+     connection() {
+-      return this.serverStatus === 'off' ? false : true;
++      return this.socketConnected;
+     },
+     serverStatusIcon() {
+       return this.connection ? 'success' : 'danger';
+@@ -110,11 +129,22 @@
+     this.closeTerminal();
+   },
+   methods: {
++    switchConsole() {
++      this.closeTerminal();
++      const generation = this.consoleGeneration;
++      this.$nextTick(() => {
++        if (!this.accessDenied && generation === this.consoleGeneration) {
++          this.openTerminal();
++        }
++      });
++    },
+     openTerminal() {
+       const token = this.$store.getters['authentication/token'];
+-      this.ws = new WebSocket(`wss://${window.location.host}/console/default`, [
+-        token,
+-      ]);
++      const source = this.useVuart ? 'vuart' : 'default';
++      this.ws = new WebSocket(
++        `wss://${window.location.host}/console/${source}`,
++        [token],
++      );
+ 
+       // Refer https://github.com/xtermjs/xterm.js/ for xterm implementation and addons.
+ 
+@@ -154,23 +184,23 @@
+       }, 1000);
+       window.addEventListener('resize', this.resizeConsoleWindow);
+ 
+-      try {
+-        this.ws.onopen = function () {
+-          console.log('websocket console/default opened');
+-        };
+-        this.ws.onclose = function (event) {
+-          console.log(
+-            'websocket console/default closed. code: ' +
+-              event.code +
+-              ' reason: ' +
+-              event.reason,
+-          );
+-        };
+-      } catch (error) {
+-        console.log(error);
+-      }
++      const socket = this.ws;
++      socket.onopen = () => {
++        if (this.ws === socket) this.socketConnected = true;
++      };
++      socket.onclose = () => {
++        if (this.ws === socket) this.socketConnected = false;
++      };
++      socket.onerror = () => {
++        if (this.ws === socket) this.socketConnected = false;
++      };
+     },
+     closeTerminal() {
++      this.consoleGeneration += 1;
++      window.removeEventListener('resize', this.resizeConsoleWindow);
++      this.resizeConsoleWindow?.cancel();
++      this.resizeConsoleWindow = null;
++      this.socketConnected = false;
+       this.term?.dispose();
+       this.term = null;
+       this.ws?.close();
+@@ -178,7 +208,7 @@
+     },
+     openConsoleWindow() {
+       window.open(
+-        '#/console/serial-over-lan-console',
++        `#/console/serial-over-lan-console?source=${this.useVuart ? 'vuart' : 'physical'}`,
+         '_blank',
+         'directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,scrollbars=no,resizable=yes,width=600,height=550',
+       );
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -932,6 +932,10 @@
+         }
+     },
+     "pageSerialOverLan": {
++        "useVuart": "Use vUART (off: physical serial port)",
++        "physicalSource": "Physical serial port: UART3 / ttyS2, 115200 baud (default)",
++        "vuartSource": "vUART: host COM1 over eSPI / ttyVUART0, 115200 baud",
++        "connectionHint": "Console disconnected. Confirm the host is powered on and the selected serial source is available.",
+         "accessDeniedAriaLabel": "Serial Over LAN access denied",
+         "alert": {
+             "disconnectedAlertMessage": "System must be powered on to connect"
