@@ -41,9 +41,9 @@
 	status = "disabled";
 };
 
-/* RTL8211FS-CG straps (schematic): PHYAD = 002 (MDIO address 2, per the schematic note), no RGMII delay. */
+/* RTL8211FS-CG: MDIO address 1 and RGMII internal delays match the board dump. */
 &ethphy1 {
-	reg = <2>;
+	reg = <1>;
 };
 
 /* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */

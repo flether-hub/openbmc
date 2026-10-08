@@ -240,11 +240,11 @@
     pinctrl-0 = <&pinctrl_usb2ad_default>;
 };
 
-/* RTL8211FS-CG: retain MDIO address 2 from the schematic note.
+/* RTL8211FS-CG: MDIO address 1, confirmed by the physical-board dump.
  * Use "rgmii-id" to match the physical-board dump's RX/TX delay mode.
  * PHY reset (RTL8211_SYS_RSTN) is driven by the CPLD, so no reset-gpios here. */
 &ethphy1 {
-    reg = <2>;
+    reg = <1>;
 };
 
 /* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
@@ -275,12 +275,14 @@
 &mdio3 { status = "disabled"; };
 
 /* AST2600 Firmware SPI (FMC) hosts the 64 MiB Winbond W25Q512JVFIQ.
- * Explicitly mux the dedicated FWSPID signals and quad DQ2/DQ3 pads.
+ * Keep the boot strap's dedicated FWSPI CS/CLK/MOSI/MISO routing.
+ * FWSPID selects the alternate Y1-Y4 pads through SCU500[3], which are not
+ * connected to this flash. Only mux the quad DQ2/DQ3 pads here.
  */
 &fmc {
     status = "okay";
     pinctrl-names = "default";
-    pinctrl-0 = <&pinctrl_fwspid_default &pinctrl_fwqspi_default>;
+    pinctrl-0 = <&pinctrl_fwqspi_default>;
     /delete-node/ flash@0;
 
     flash@0 {

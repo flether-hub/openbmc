@@ -44,7 +44,7 @@ interfaces:
       - { bus_signal: JW6375_PMBCLK1_PMBDATA1, svid_addresses: [0x00, 0x01], pmbus_address_low_nibble: 0x3 }
     spi:
       - { controller: AST2600_SPI1, chip_select: 0, signal: FLASH_SPI1, device: Macronix_MX25U51245GMI00, capacity_bytes: 67108864, bus_width: 1, use: BIOS_update_only, mtd_label: host-bios, pins: { CS0: AD13, CLK: AB11, MOSI: AC11, MISO: AA11 } }
-      - { controller: AST2600_FMC_FIRMWARE_SPI, chip_select: 0, signal: BMC_FIRMWARE_SPI, device: Winbond_W25Q512JVFIQ, capacity_bytes: 67108864, bus_width: 4, mtd_layout: OpenBMC_64MiB, pinctrl: [FWSPID, FWQSPI], pins: { CS0: AB14, CLK: AF13, MOSI: AC14, MISO: AB13, DQ2: AE12_GPIOY4, DQ3: AF12_GPIOY5 }, reset_signal: BMC_SRST_N }
+      - { controller: AST2600_FMC_FIRMWARE_SPI, chip_select: 0, signal: BMC_FIRMWARE_SPI, device: Winbond_W25Q512JVFIQ, capacity_bytes: 67108864, bus_width: 4, mtd_layout: OpenBMC_64MiB, pinctrl: [FWQSPI], routing: dedicated-FWSPI-boot-pads-not-alternate-FWSPID-Y1-Y4, pins: { CS0: AB14, CLK: AF13, MOSI: AC14, MISO: AB13, DQ2: AE12_GPIOY4, DQ3: AF12_GPIOY5 }, reset_signal: BMC_SRST_N }
 
       - { controller: AST2600_SPI2, signal: FLASH_SPI2, status: reserved_unused, note: reserved interface only; not connected to any flash on this board, pins: { CS0: AE8, CLK: AF8, MOSI: AB9, MISO: AD9, DQ2: AF9, DQ3: AB10 } }
 
@@ -213,7 +213,7 @@ interfaces:
     ssh_scp: dropbear and standard OpenBMC SCP support
     network:
       ports:
-        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii-id, phy_address: 2, phy_reset: CPLD-drives-RTL8211_SYS_RSTN-not-a-BMC-gpio, phy_strap_note: PHYAD=002-per-schematic-note; RX-and-TX-delay-mode-matches-physical-board-dump, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: dhcp }
+        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii-id, phy_address: 1, phy_reset: CPLD-drives-RTL8211_SYS_RSTN-not-a-BMC-gpio, phy_strap_note: MDIO-address-and-RX-and-TX-delay-mode-match-physical-board-dump, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: dhcp }
         - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2, default_ipv4: dhcp, power_dependency: "BMC_CPU_PWRGD via xyz.openbmc_project.State.Chassis", behavior: "keep interface down while host is off; bring up on power-on; tear down on power-off" }
       address_modes: [static, dhcp]
       default_management_mode: dhcp
