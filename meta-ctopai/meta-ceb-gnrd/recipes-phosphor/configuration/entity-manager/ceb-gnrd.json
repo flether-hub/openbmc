@@ -56,7 +56,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.765 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.636 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.035 }
             ],
             "Type": "ADC"
