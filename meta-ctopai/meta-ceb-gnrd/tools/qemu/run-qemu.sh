@@ -139,10 +139,10 @@ else
 fi
 
 # Board QEMU: the host inside QEMU, the RTC, and steady ADC inputs at the nominal
-# rail voltages divided as in the Entity-Manager configuration (pad mV = rail /
-# ScaleFactor).  D3V0_BAT0 (3.0 V, ScaleFactor 1) is above the 2.5 V reference,
-# so it reads 2.5 V and trips its low threshold, as on the board with that
-# configuration.  The host serial port is the VUART (SOL on ttyVUART0).
+# rail voltages divided by the board divider ratio (pad = rail * Entity-Manager
+# ScaleFactor). D3V0_BAT0 uses 1.5 V at ADC15 and ScaleFactor 0.5 to publish
+# 3.0 V, matching the physical-board dump's x2 conversion.
+# The host serial port is the VUART (SOL on ttyVUART0).
 # Stock QEMU: no VUART, so UART3 (BMC ttyS2) stands in for it (README.md).
 BOARD=""
 if [ -n "$BOARD_QEMU" ]; then
@@ -156,7 +156,7 @@ if [ -n "$BOARD_QEMU" ]; then
     BOARD="$BOARD -device nct3018y,bus=aspeed.i2c.bus.9,address=0x6f,id=rtc"
     BOARD="$BOARD -global driver=aspeed.peci,property=cpuid,value=$PECI_CPUID"
     ch=0
-    for mv in 1091 455 1650 1800 900 1130 850 1000 1800 1130 1800 1650 1800 1200 1000 3000; do
+    for mv in 1091 455 1650 1800 900 1130 850 1000 1800 1130 1800 1650 1800 1200 1000 1500; do
         # long form: the short one splits "aspeed.adc.chN-mv" at the first dot
         BOARD="$BOARD -global driver=aspeed.adc,property=ch$ch-mv,value=$mv"
         ch=$((ch + 1))

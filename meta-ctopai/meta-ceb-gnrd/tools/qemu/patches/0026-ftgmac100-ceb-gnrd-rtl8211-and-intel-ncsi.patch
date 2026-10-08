@@ -3,7 +3,7 @@ Subject: [PATCH] ftgmac100: add opt-in RTL8211FS and Intel NC-SI test profiles
 
 Upstream-Status: Inappropriate [CEB-GNRD software test model]
 
-Expose the board PHY at MDIO address 2 and retain Realtek vendor pages.
+Expose the board PHY at MDIO address 1 and retain Realtek vendor pages.
 Model two Intel NC-SI channels at the MAC boundary, independently of
 libslirp's stateless responder. Defer and bound replies, implement filters,
 Intel OEM MAC discovery and link/configuration AENs. Drive NIC power from
@@ -235,7 +235,7 @@ diff --git a/hw/net/ftgmac100.c b/hw/net/ftgmac100.c
  
      reg = FTGMAC100_PHYCR_NEW_REG(s->phycr);
      data = FTGMAC100_PHYCR_NEW_DATA(s->phycr);
-+    if (s->rtl8211f && FTGMAC100_PHYCR_NEW_DEV(s->phycr) != 2) {
++    if (s->rtl8211f && FTGMAC100_PHYCR_NEW_DEV(s->phycr) != 1) {
 +        s->phydata = 0xffff;
 +        s->phycr &= ~FTGMAC100_PHYCR_NEW_FIRE;
 +        return;
@@ -247,7 +247,7 @@ diff --git a/hw/net/ftgmac100.c b/hw/net/ftgmac100.c
  static void do_phy_ctl(FTGMAC100State *s)
  {
      uint8_t reg = FTGMAC100_PHYCR_REG(s->phycr);
-+    if (s->rtl8211f && FTGMAC100_PHYCR_DEV(s->phycr) != 2) {
++    if (s->rtl8211f && FTGMAC100_PHYCR_DEV(s->phycr) != 1) {
 +        s->phydata = 0xffff0000;
 +        s->phycr &= ~(FTGMAC100_PHYCR_MIIWR | FTGMAC100_PHYCR_MIIRD);
 +        return;
@@ -414,7 +414,7 @@ diff --git a/hw/net/ftgmac100.c b/hw/net/ftgmac100.c
  
      reg = ASPEED_MII_PHYCR_REG(s->phycr);
      data = ASPEED_MII_PHYCR_DATA(s->phycr);
-+    if (s->nic->rtl8211f && ASPEED_MII_PHYCR_PHY(s->phycr) != 2) {
++    if (s->nic->rtl8211f && ASPEED_MII_PHYCR_PHY(s->phycr) != 1) {
 +        s->phydata = ASPEED_MII_PHYDATA_IDLE | 0xffff;
 +        aspeed_mii_transition(s, false);
 +        return;
@@ -922,7 +922,7 @@ diff --git a/hw/net/ceb_gnrd_network.c.inc b/hw/net/ceb_gnrd_network.c.inc
 +        "unsupported=%u control-dropped=%u tx=%u rx=%u data-dropped=%u",
 +        s->rtl8211f ? "RTL8211FS" : s->ncsi_e810 ? "E810-NCSI-SIM" : "generic",
 +        s->test_link, s->test_speed, s->rtl8211f ? 0x001cc916 : 0x001cc915,
-+        s->rtl8211f ? 2 : 0, s->phy_page, s->mdio_accesses,
++        s->rtl8211f ? 1 : 0, s->phy_page, s->mdio_accesses,
 +        s->rtl8211f ? ceb_phy_speed(s) : 0,
 +        s->ncsi_powered, s->ncsi_selected, s->ncsi_link[0], s->ncsi_enabled[0], s->ncsi_tx[0],
 +        s->ncsi_link[1], s->ncsi_enabled[1], s->ncsi_tx[1],

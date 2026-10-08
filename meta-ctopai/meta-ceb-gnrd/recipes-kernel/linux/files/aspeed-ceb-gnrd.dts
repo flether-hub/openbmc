@@ -275,14 +275,12 @@
 &mdio3 { status = "disabled"; };
 
 /* AST2600 Firmware SPI (FMC) hosts the 64 MiB Winbond W25Q512JVFIQ.
- * Keep the boot strap's dedicated FWSPI CS/CLK/MOSI/MISO routing.
- * FWSPID selects the alternate Y1-Y4 pads through SCU500[3], which are not
- * connected to this flash. Only mux the quad DQ2/DQ3 pads here.
+ * Match the physical-board dump: dual data lines and no FMC pinctrl override.
+ * Keep the boot strap's dedicated FWSPI routing; do not select the alternate
+ * FWSPID Y1-Y4 pads or force the quad DQ2/DQ3 pin group.
  */
 &fmc {
     status = "okay";
-    pinctrl-names = "default";
-    pinctrl-0 = <&pinctrl_fwqspi_default>;
     /delete-node/ flash@0;
 
     flash@0 {
@@ -290,8 +288,8 @@
         reg = <0>;
         label = "bmc";
         spi-max-frequency = <50000000>;
-        spi-rx-bus-width = <4>;
-        spi-tx-bus-width = <4>;
+        spi-rx-bus-width = <2>;
+        spi-tx-bus-width = <2>;
 
         partitions {
             compatible = "fixed-partitions";

@@ -134,8 +134,8 @@ ADC_NAMES = ["P12V_SYS", "P5V0_SYS", "P3V3_SYS", "PVCCIN_CPU", "PVNN_NAC_CPU",
              "PVCCD1_HV_CPU", "PVCCINF_EHV_FIVRA_CPU", "P3V3_STBY", "P1V8_STBY",
              "P1V2_STBY", "P1V0_STBY", "D3V0_BAT0"]
 ADC_NOMINAL_MV = [1091, 455, 1650, 1800, 900, 1130, 850, 1000, 1800, 1130, 1800,
-                  1650, 1800, 1200, 1000, 3000]
-ADC_SCALE = [11, 11, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1]
+                  1650, 1800, 1200, 1000, 1500]
+ADC_SCALE = [11, 11, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 2]
 
 LOG = collections.deque(maxlen=2000)    # detailed recent history, bounded in RAM
 LOG_LOCK = threading.RLock()
