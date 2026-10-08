@@ -49,7 +49,7 @@
 /* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
 &mac1 {
 	status = "okay";
-	phy-mode = "rgmii";
+	phy-mode = "rgmii-id";
 	phy-handle = <&ethphy1>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_rgmii2_default>;

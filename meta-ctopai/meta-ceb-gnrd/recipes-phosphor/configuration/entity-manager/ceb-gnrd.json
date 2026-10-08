@@ -175,7 +175,7 @@
             "Index": 15,
             "Name": "D3V0_BAT0",
             "PowerState": "ChassisOn",
-            "ScaleFactor": 1.0,
+            "ScaleFactor": 0.5,
             "Type": "ADC"
         },
         {

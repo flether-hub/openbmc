@@ -58,7 +58,7 @@ interfaces:
 
   adc:
     source: AST2600 ADC pads 0-15 (pads 0-7 on adc0 ch0-7, pads 8-15 on adc1 ch0-7)
-    scaling: ADC sensor reading = measured pin voltage multiplied by ScaleFactor
+    scaling: ADC sensor reading = measured pin voltage divided by ScaleFactor
     reference: internal 2.5 V (aspeed,int-vref-microvolt = 2500000); ADCVREFEXT0/1 (AF19/AF17) are tied to P1V8_STBY but not selected
     sampling_power_state: chassis-on-only
     thresholds: lower-and-upper-critical-at-nominal-minus-plus-15-percent-except-D3V0_BAT0
@@ -78,7 +78,7 @@ interfaces:
       - { channel: 12, name: P1V8_STBY, net: P1V8_STBY_ADC12, package_ball: AC16, nominal: 1.8, divider_ratio: 1.0, lnr: 1.53, unr: 2.07 }
       - { channel: 13, name: P1V2_STBY, net: P1V2_STBY_ADC13, package_ball: AA16, nominal: 1.2, divider_ratio: 1.0, lnr: 1.02, unr: 1.38 }
       - { channel: 14, name: P1V0_STBY, net: P1V0_STBY_ADC14, package_ball: AD16, nominal: 1.0, divider_ratio: 1.0, lnr: 0.85, unr: 1.15 }
-      - { channel: 15, name: D3V0_BAT0, net: D3V0_BAT0_ADC15, package_ball: AC17, nominal: 3.0, divider_ratio: 1.0, thresholds: disabled, divider: none-as-built, note: R542 and Q39 not populated so the 3 V battery exceeds the 2.5 V ADC full scale and reads saturated; populate R542 (ratio 2) and set ScaleFactor 2 }
+      - { channel: 15, name: D3V0_BAT0, net: D3V0_BAT0_ADC15, package_ball: AC17, nominal: 3.0, divider_ratio: 2.0, thresholds: disabled, note: Match physical-board dump conversion; pin voltage about 1.52 V corresponds to battery voltage about 3.04 V with ScaleFactor 0.5 }
 
   fans:
     source: AST2600 G6 PWM/TACH
@@ -213,7 +213,7 @@ interfaces:
     ssh_scp: dropbear and standard OpenBMC SCP support
     network:
       ports:
-        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii, phy_address: 2, phy_reset: CPLD-drives-RTL8211_SYS_RSTN-not-a-BMC-gpio, phy_strap_note: PHYAD=002-per-schematic-note RXDLY=off CFG_MODE=000 no-RGMII-delay-in-PHY, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: dhcp }
+        - { name: management, interface: eth0, mac: AST2600_MAC2, linux_uboot_dt_node: mac1, pin_group: RGMII2, phy_mode: rgmii-id, phy_address: 2, phy_reset: CPLD-drives-RTL8211_SYS_RSTN-not-a-BMC-gpio, phy_strap_note: PHYAD=002-per-schematic-note; RX-and-TX-delay-mode-matches-physical-board-dump, io_voltage: 1.8, mdio_controller: mdio1, mdio_phy: ethphy1, phy: RTL8211FS-CG, connection: independent-RJ45, ipmi_channel: 1, default_ipv4: dhcp }
         - { name: host_ncsi, interface: eth1, mac: AST2600_MAC3, linux_uboot_dt_node: mac2, pin_group: NCSI3, controller: Intel_E810, connection: NC-SI-to-host, ipmi_channel: 2, default_ipv4: dhcp, power_dependency: "BMC_CPU_PWRGD via xyz.openbmc_project.State.Chassis", behavior: "keep interface down while host is off; bring up on power-on; tear down on power-off" }
       address_modes: [static, dhcp]
       default_management_mode: dhcp

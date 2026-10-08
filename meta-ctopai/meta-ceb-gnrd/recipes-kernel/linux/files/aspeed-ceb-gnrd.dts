@@ -240,8 +240,8 @@
     pinctrl-0 = <&pinctrl_usb2ad_default>;
 };
 
-/* RTL8211FS-CG straps (schematic): PHYAD = 002 (MDIO address 2, per the schematic note), RXDLY off,
- * CFG_MODE = 000 (UTP to RGMII).  The PHY adds no RGMII delay, hence "rgmii".
+/* RTL8211FS-CG: retain MDIO address 2 from the schematic note.
+ * Use "rgmii-id" to match the physical-board dump's RX/TX delay mode.
  * PHY reset (RTL8211_SYS_RSTN) is driven by the CPLD, so no reset-gpios here. */
 &ethphy1 {
     reg = <2>;
@@ -250,7 +250,7 @@
 /* Physical MAC2: independent RJ45 through the RTL8211FS-CG PHY. */
 &mac1 {
     status = "okay";
-    phy-mode = "rgmii";
+    phy-mode = "rgmii-id";
     phy-handle = <&ethphy1>;
     pinctrl-names = "default";
     pinctrl-0 = <&pinctrl_rgmii2_default>;
