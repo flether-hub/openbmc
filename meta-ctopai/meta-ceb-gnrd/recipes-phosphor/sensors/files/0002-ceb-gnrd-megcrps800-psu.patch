@@ -1,0 +1,36 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] psu: consume externally managed MEGCRPS800 devices
+
+The PSU presence monitor alone creates/removes these hotplug clients.
+Avoid new_device EBUSY loops and sensor restarts deleting a live device.
+Base: dbus-sensors 17f2fc3fe1400bf9e45c075e4864cc79afa2ed91 plus patch 0001.
+
+Upstream-Status: Inappropriate [CEB-GNRD PSU integration]
+
+diff --git a/src/psu/PSUSensorMain.cpp b/src/psu/PSUSensorMain.cpp
+--- a/src/psu/PSUSensorMain.cpp
++++ b/src/psu/PSUSensorMain.cpp
+@@ -139,6 +139,7 @@
+     {"NCP4200", I2CDeviceType{"ncp4200", true}},
+     {"PLI1209BC", I2CDeviceType{"pli1209bc", true}},
+     {"pmbus", I2CDeviceType{"pmbus", true}},
++    {"MEGCRPS800", I2CDeviceType{"megcrps800", true}},
+     {"PXE1610", I2CDeviceType{"pxe1610", true}},
+     {"Q54SN120A1", I2CDeviceType{"q54sn120a1", true}},
+     {"Q54SW120A7", I2CDeviceType{"q54sw120a7", true}},
+diff --git a/src/DeviceMgmt.hpp b/src/DeviceMgmt.hpp
+--- a/src/DeviceMgmt.hpp
++++ b/src/DeviceMgmt.hpp
+@@ -140,6 +140,12 @@
+ 
+             std::optional<I2CDeviceParams> params =
+                 getI2CDeviceParams(sensorTypes, cfg);
++            // The CEB-GNRD hotplug monitor exclusively owns these devices.
++            // Consume their hwmon files without creating/deleting I2C clients.
++            if (params.has_value() && params->type.name == "megcrps800")
++            {
++                continue;
++            }
+             if (params.has_value() && !params->deviceStatic())
+             {
+                 // There exist error cases in which a sensor device that we

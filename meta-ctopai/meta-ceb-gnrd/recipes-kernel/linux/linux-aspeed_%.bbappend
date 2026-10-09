@@ -13,6 +13,8 @@ SRC_URI:append = " \
         file://0005-usb-gadget-hid-classify-endpoint-shutdown.patch \
         file://0006-ncsi-accept-initial-deselect-response.patch \
         file://0007-peci-retry-response-in-progress.patch \
+        file://0008-hwmon-add-megcrps800-psu-driver.patch \
+        file://0009-ncsi-retry-empty-discovery-on-start.patch \
         "
 
 # The board device tree is a new file; the dtb is built through KERNEL_DEVICETREE.

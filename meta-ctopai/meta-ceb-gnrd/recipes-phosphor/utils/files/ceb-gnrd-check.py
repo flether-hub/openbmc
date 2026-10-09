@@ -14,12 +14,15 @@ import ssl
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 OUT = Path('/tmp/ceb-gnrd-check')
 FILE_LIMIT = 256 * 1024
 REPORT_LIMIT = 2 * 1024 * 1024
 BUNDLE_LIMIT = 4 * 1024 * 1024
+POST_PAGE_SIZE = 32
+POST_ENTRY_LIMIT = 1024  # two retained boots, at most 512 records per boot
 PASSWORD = os.environ.get('BMC_PASSWORD', '0penBmc')
 ENV = 'qemu' if sys.argv[1] == '0' else 'board'
 COUNT = Counter()
@@ -150,16 +153,29 @@ CLIENT = urllib.request.build_opener(urllib.request.ProxyHandler({}),
 AUTH = 'Basic ' + base64.b64encode(('root:' + PASSWORD).encode()).decode()
 
 
-def fetch(path, method='GET', body=None):
+class CaptureLimitError(ValueError):
+    """A diagnostic capture limit is not evidence of a server failure."""
+
+
+def fetch(path, method='GET', body=None, query=None):
     if not path.startswith('/redfish/v1/') or '..' in path or '?' in path:
         raise ValueError('Invalid local Redfish link: ' + path)
+    if query is not None:
+        # Only locally generated bounded pagination parameters are accepted.
+        # Do not follow arbitrary URLs supplied in @odata.nextLink.
+        if (method != 'GET' or set(query) != {'$top', '$skip'}
+                or any(type(value) is not int for value in query.values())
+                or not 1 <= query['$top'] <= POST_PAGE_SIZE
+                or not 0 <= query['$skip'] < POST_ENTRY_LIMIT):
+            raise ValueError('Invalid Redfish pagination parameters')
+        path += '?' + urllib.parse.urlencode(query)
     req = urllib.request.Request('https://127.0.0.1' + path, method=method,
         headers={'Authorization': AUTH, 'Content-Type': 'application/json', 'Cache-Control': 'no-cache'},
         data=None if body is None else json.dumps(body).encode())
     with CLIENT.open(req, timeout=8) as response:
         raw = response.read(FILE_LIMIT + 1)
         if len(raw) > FILE_LIMIT:
-            raise ValueError('response exceeds 256 KiB capture limit')
+            raise CaptureLimitError(f'HTTP {response.status}; response exceeds 256 KiB capture limit')
         return response.status, json.loads(raw) if raw else {}
 
 
@@ -171,9 +187,57 @@ def api(name, path):
             raise ValueError('Redfish error/non-object response')
         result('PASS', name, f'HTTP {status}')
         return data
+    except CaptureLimitError as exc:
+        result('SKIP', name, str(exc) + '; response schema not checked')
+        return None
     except (OSError, ValueError, urllib.error.URLError) as exc:
         result('FAIL', name, exc)
         return None
+
+
+def post_code_entries():
+    path = '/redfish/v1/Systems/system/LogServices/PostCodes/Entries'
+    name = 'Redfish POST code entries'
+    skip = 0
+    initial_total = None
+    while skip < POST_ENTRY_LIMIT:
+        try:
+            status, data = fetch(path, query={'$top': POST_PAGE_SIZE, '$skip': skip})
+            record(f'GET {path} $top={POST_PAGE_SIZE} $skip={skip} HTTP {status}\n'
+                   + json.dumps(data, ensure_ascii=False))
+            if not isinstance(data, dict) or 'error' in data:
+                raise ValueError('Redfish error/non-object response')
+            rows = data.get('Members')
+            total = data.get('Members@odata.count')
+            if (not isinstance(rows, list) or type(total) is not int or total < 0
+                    or len(rows) > POST_PAGE_SIZE):
+                raise ValueError('Invalid paginated POST collection schema')
+            if any(not isinstance(row, dict)
+                   or not isinstance(row.get('@odata.id'), str)
+                   or not isinstance(row.get('Message'), str)
+                   or not isinstance(row.get('Created'), str) for row in rows):
+                raise ValueError('Invalid POST entry schema')
+            if initial_total is None:
+                initial_total = total
+            elif total != initial_total:
+                result('PASS', name + ' paginated interface', f'HTTP {status}; {skip} entries checked')
+                result('SKIP', name + ' complete snapshot', 'POST count changed while reading; rerun after BIOS POST completes')
+                return
+            expected = min(POST_PAGE_SIZE, max(0, total - skip))
+            if len(rows) != expected:
+                raise ValueError(f'POST page has {len(rows)} entries, expected {expected}')
+            skip += len(rows)
+            if skip >= total:
+                result('PASS', name, f'HTTP {status}; {skip} entries checked in bounded pages')
+                return
+        except CaptureLimitError as exc:
+            result('SKIP', name, str(exc) + '; page too large to validate')
+            return
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            result('FAIL', name + f' at offset {skip}', exc)
+            return
+    result('PASS', name + ' paginated interface', f'{skip} entries checked')
+    result('SKIP', name + ' remaining entries', f'capture limited to {POST_ENTRY_LIMIT} entries')
 
 
 def members(name, path, limit=32):
@@ -215,6 +279,22 @@ def system():
     require('chassis power state readable', HOST is not None, HOST or 'unknown')
     reason = read('/sys/firmware/devicetree/base/chosen/aspeed,boot-reason')
     require('boot reason classified', reason in ('power-on', 'warm'), reason or 'missing')
+    try:
+        reset_flags = []
+        for name in ('aspeed,reset-log', 'aspeed,reset-log3'):
+            raw = Path('/sys/firmware/devicetree/base/chosen', name).read_bytes()
+            if len(raw) != 4:
+                raise ValueError(f'{name}: expected 4 bytes, got {len(raw)}')
+            reset_flags.append(int.from_bytes(raw, 'big'))
+        reset, reset3 = reset_flags
+        # PCI reset bits 4/5 are peripheral events, not BMC warm resets.
+        warm = bool((reset & 0xffff004e) or (reset3 & 0xffff))
+        expected = 'warm' if warm else 'power-on' if reset & 1 else 'unknown'
+        require('boot reason matches reset flags', reason == expected,
+                f'SCU064=0x{reset:08x}; SCU06C=0x{reset3:08x}; '
+                f'expected={expected}; actual={reason or "missing"}')
+    except (OSError, ValueError) as exc:
+        result('FAIL', 'boot reset flags readable', exc)
     info('reset flags/restore decision', ['sh', '-c',
         'for f in /sys/firmware/devicetree/base/chosen/aspeed,reset-log*; do echo "$f"; od -x "$f"; done; '
         'journalctl -b -u xyz.openbmc_project.Chassis.Control.Power@0 --no-pager -n 60'])
@@ -260,7 +340,7 @@ def ipmi_sensors_fans():
             name = item.get('Name')
             if kind in ('ADC', 'LM75A', 'AspeedFan') and name:
                 expected[name] = item.get('PowerState') == 'ChassisOn'
-            elif kind == 'pmbus':
+            elif kind in ('pmbus', 'MEGCRPS800'):
                 dev = Path(f'/sys/bus/i2c/devices/{item["Bus"]}-{int(item["Address"], 0):04x}')
                 if not (dev / 'driver').exists():
                     result('FAIL' if dev.exists() else 'SKIP', name + ' PMBus sensors',
@@ -454,7 +534,7 @@ def peripherals_network():
 def redfish():
     section('4. Redfish/web interfaces')
     for path in ('', 'Systems/system', 'Managers/bmc', 'AccountService', 'SessionService', 'UpdateService',
-        'Systems/system/LogServices/EventLog/Entries', 'Systems/system/LogServices/PostCodes/Entries',
+        'Systems/system/LogServices/EventLog/Entries',
         'Managers/bmc/LogServices/Dump/Entries'):
         data = api('Redfish ' + (path or 'root'), '/redfish/v1/' + path)
         if path == 'Managers/bmc' and data:
@@ -462,6 +542,7 @@ def redfish():
         if path == 'Systems/system' and data:
             require('Redfish/IPMI chassis state agrees', HOST is not None
                     and data.get('PowerState') == ('On' if HOST == 'on' else 'Off'), data.get('PowerState'))
+    post_code_entries()
     for name, path in (('EthernetInterfaces', '/redfish/v1/Managers/bmc/EthernetInterfaces'),
                        ('Accounts', '/redfish/v1/AccountService/Accounts'),
                        ('FirmwareInventory', '/redfish/v1/UpdateService/FirmwareInventory')):

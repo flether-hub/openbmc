@@ -16,8 +16,8 @@ The source temperatures are the temp*_input attributes of the hwmon devices whos
 name starts with "peci_cputemp" (CPU) or "peci_dimmtemp" (DIMM), found by scanning
 /sys/class/hwmon:
   * DIMM : every temperature of a peci_dimmtemp device
-  * CPU  : every temperature of a peci_cputemp device, except margin style
-           readings (DTS) and the Tcontrol / Tthrottle / Tjmax values (by label)
+  * CPU  : only labelled Die / Core N temperatures; unknown or unreadable
+           labels never make reference temperatures eligible for aggregation
 
 Upper thresholds (non-critical / critical / non-recoverable) are published on the
 Warning / Critical threshold interfaces and a private NonRecoverable interface (not
@@ -75,7 +75,7 @@ CHASSIS_STATE = ("xyz.openbmc_project.State.Chassis",
                  "xyz.openbmc_project.State.Chassis", "CurrentPowerState")
 
 TEMP_INPUT_RE = re.compile(r"temp(\d+)_input$")
-EXCLUDE_RE = re.compile(r"dts|tcontrol|tthrottle|tjmax|margin", re.IGNORECASE)
+CPU_INPUT_LABEL_RE = re.compile(r"Die|Core\s+\d+", re.IGNORECASE)
 
 POLL_SECONDS = 2
 PECI_RESCAN_SECONDS = 30
@@ -371,9 +371,11 @@ def scan_sources():
             if not match:
                 continue
             label = read_text(os.path.join(hwmon, "temp%s_label" % match.group(1)))
-            label = label or "temp" + match.group(1)
-            if group == "CPU" and EXCLUDE_RE.search(label):
+            # A missing label is not evidence of a live temperature. In
+            # particular, temp4/temp5 expose Tthrottle/Tjmax as *_input too.
+            if group == "CPU" and (not label or not CPU_INPUT_LABEL_RE.fullmatch(label)):
                 continue
+            label = label or "temp" + match.group(1)
             found[os.path.join(hwmon, fname)] = (group, "%s %s" % (name, label))
     return found
 
@@ -389,6 +391,29 @@ def read_values(paths):
         except (TypeError, ValueError):
             pass
     return values
+
+
+def log_alarm_sources(group, sources, readings):
+    """Record the exact samples used, only when a high alarm is asserted.
+
+    Reference values are diagnostic only and never enter the maximum. Do
+    their sysfs reads in the worker thread, like the regular temperature reads.
+    """
+    for path, (source_group, label) in sorted(sources.items()):
+        if source_group != group or path not in readings:
+            continue
+        LOG.warning("alarm source %s: %s = %.3f C (%s)",
+                    group, label, readings[path], path)
+        if group == "CPU":
+            hwmon = os.path.dirname(path)
+            for index in (2, 3, 4, 5):
+                ref_label = read_text(os.path.join(hwmon, "temp%d_label" % index))
+                ref_path = os.path.join(hwmon, "temp%d_input" % index)
+                # These belong to the pinned peci_cputemp ABI. Log failures as
+                # failures; do not manufacture a value for an unavailable PCS.
+                LOG.warning("CPU diagnostic %s: %s mC (%s)",
+                            ref_label or "temp%d" % index,
+                            read_text(ref_path) or "unavailable", ref_path)
 
 
 async def read_assoc(bus, service, path):
@@ -508,7 +533,10 @@ async def main():
                      sum(1 for g in names.values() if g == "DIMM"))
             for name in sorted(names):
                 LOG.info("  %-4s %s", names[name], name)
-        readings = await asyncio.to_thread(read_values, list(sources))
+        # PECI hwmon nodes survive host power cycles. An off/resetting CPU may
+        # return an unready GetTemp offset, or hwmon may still hold a cached
+        # sample. Neither is a new live host temperature while chassis is off.
+        readings = await asyncio.to_thread(read_values, list(sources)) if on else {}
 
         missing = tuple(group for group in sensors if on and not any(
             g == group and path in readings and math.isfinite(readings[path])
@@ -531,12 +559,19 @@ async def main():
                 sensor.update(FAILSAFE_TEMP)   # no reading while the host is on: 60 % fans
             else:
                 sensor.update(0.0)             # host off: no thermal load
+            high_asserted = False
             for obj, alarm_name, level in thresholds[group]:
-                if obj.evaluate(sensor.sensor_name, real, alarm_name):
+                # Known power-off is not a lost reading: clear old thermal
+                # alarms. A failed read while on still retains the alarm.
+                alarm_value = real if on else 0.0
+                if obj.evaluate(sensor.sensor_name, alarm_value, alarm_name):
+                    high_asserted = high_asserted or obj.alarm
                     LOG.warning("%s %s %s (value %.1f, threshold %.1f)",
                                 sensor.sensor_name, level,
                                 "asserted" if obj.alarm else "cleared",
-                                real, obj.high)
+                                alarm_value, obj.high)
+            if high_asserted:
+                await asyncio.to_thread(log_alarm_sources, group, sources, readings)
             if not assocs[group].assoc:
                 if not default_assoc:
                     default_assoc = (await find_board_assoc(bus)

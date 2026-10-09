@@ -1,0 +1,19 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] configuration: accept MEGCRPS800 PSU type
+
+Reuse the existing PSU sensor properties for the model-specific driver.
+Base: entity-manager 27d0e48a6dcd69fd12d92b7528d66853db1d6543.
+
+Upstream-Status: Inappropriate [CEB-GNRD PSU integration]
+
+diff --git a/schemas/legacy.json b/schemas/legacy.json
+--- a/schemas/legacy.json
++++ b/schemas/legacy.json
+@@ -1029,6 +1029,7 @@
+                         "NCP4200",
+                         "PLI1209BC",
+                         "pmbus",
++                        "MEGCRPS800",
+                         "PXE1610",
+                         "Q54SN120A1",
+                         "Q54SW120A7",

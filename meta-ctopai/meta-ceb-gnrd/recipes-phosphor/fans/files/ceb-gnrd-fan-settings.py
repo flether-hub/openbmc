@@ -136,6 +136,7 @@ async def read_config(bus, interface, keys):
 async def write_config(bus, interface, stored):
     """Set stored values on the matching objects; return the number changed."""
     changed = 0
+    found = set()
     for service, path in await find_objects(bus, interface):
         body = await call(bus, service, path, PROPS, "GetAll", "s", [interface])
         props = {k: v.value for k, v in body[0].items()}
@@ -143,8 +144,11 @@ async def write_config(bus, interface, stored):
         wanted = stored.get(props.get("Name"))
         if not wanted:
             continue
+        found.add(props["Name"])
         for key, value in wanted.items():
-            if key not in props or props[key] == value:
+            if key not in props:
+                raise RuntimeError("missing property %s.%s" % (props["Name"], key))
+            if props[key] == value:
                 continue
             # Write with the type the property already has (Entity-Manager
             # rejects a different one with InvalidArgs).
@@ -172,7 +176,22 @@ async def write_config(bus, interface, stored):
             LOG.info("applied %s %s.%s = %s (was %s)", interface.rsplit(".", 1)[-1],
                      props["Name"], key, value, props[key])
             changed += 1
+    missing = set(stored) - found
+    if missing:
+        raise RuntimeError("missing configuration: %s" % ", ".join(sorted(missing)))
     return changed
+
+
+async def refresh_control(bus):
+    """Rebuild controllers even if Entity-Manager suppressed its change signal.
+
+    Its property setter can update the value and then return an error while
+    saving JSON. Readback alone does not prove that swampd loaded the value.
+    RestartUnit queues a restart; it does not wait for sensors to become ready.
+    """
+    await call(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+               "org.freedesktop.systemd1.Manager", "RestartUnit", "ss",
+               ["phosphor-pid-control.service", "replace"])
 
 
 async def read_fan_rpms(bus):
@@ -326,9 +345,11 @@ class FanSettings(ServiceInterface):
             changed = await write_config(
                 self.bus, PID_IFACE,
                 {name: {"OutLimitMin": low, "OutLimitMax": high} for name in names})
-            if fan == 0xFF:
-                await write_config(self.bus, ZONE_IFACE,
-                                   {ZONE_NAME: {"MinThermalOutput": low}})
+            # Fixed duties belong to the individual fan controllers. A shared
+            # fixed floor would also constrain fans returned to adaptive mode.
+            changed += await write_config(self.bus, ZONE_IFACE,
+                                          {ZONE_NAME: {"MinThermalOutput": ADAPTIVE_MIN}})
+            await refresh_control(self.bus)
         except Exception as exc:
             LOG.error("SetFan failed: %s", exc)
             return False
@@ -391,7 +412,12 @@ for _fan in range(FAN_COUNT + 1):
 
 async def apply_stored(bus, state):
     changed = await write_config(bus, PID_IFACE, state.get("controllers", {}))
-    changed += await write_config(bus, ZONE_IFACE, state.get("zones", {}))
+    # Migrate snapshots from versions that saved the all-fan fixed duty as
+    # the zone floor. Keep the requested individual controller limits.
+    changed += await write_config(bus, ZONE_IFACE,
+                                  {ZONE_NAME: {"MinThermalOutput": ADAPTIVE_MIN}})
+    if changed:
+        await refresh_control(bus)
     return changed
 
 

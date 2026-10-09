@@ -4,7 +4,10 @@
 # shows up in IPMI, Redfish or the web page): ceb-gnrd-temp-max reads the kernel
 # PECI hwmon devices and publishes only CPU_MAX_TEMP and DIMM_MAX_TEMP.
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
-SRC_URI:append:ceb-gnrd = " file://0001-reuse-i2c-device-by-config-path-and-guard-psu-io.patch"
+SRC_URI:append:ceb-gnrd = " \
+    file://0001-reuse-i2c-device-by-config-path-and-guard-psu-io.patch \
+    file://0002-ceb-gnrd-megcrps800-psu.patch \
+    "
 
 PACKAGECONFIG:append:ceb-gnrd = " \
     adcsensor \

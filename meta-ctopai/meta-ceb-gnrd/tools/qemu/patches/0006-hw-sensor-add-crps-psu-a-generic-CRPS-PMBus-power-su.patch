@@ -42,7 +42,7 @@ new file mode 100644
 index 0000000..392faa4
 --- /dev/null
 +++ b/hw/sensor/crps_psu.c
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,284 @@
 +/*
 + * Generic CRPS (Common Redundant Power Supply) PMBus power supply
 + *
@@ -54,7 +54,7 @@ index 0000000..392faa4
 + *   vin-mv, vout-mv     input and output voltage (230000, 12200)
 + *   pout-mw             output power, the load (250000)
 + *   efficiency          percent, gives the input power (94)
-+ *   temp1-mc, temp2-mc  inlet and hotspot temperatures in m°C (30000, 45000)
++ *   temp1-mc, temp2-mc, temp3-mc  temperatures in millidegrees Celsius
 + *   fan-rpm             (9000)
 + *   ac-lost             no input: the output drops and STATUS reports VIN_UV
 + *   present             false: the module is pulled, the address NACKs
@@ -84,6 +84,7 @@ index 0000000..392faa4
 +    uint32_t efficiency;
 +    int32_t temp1_mc;
 +    int32_t temp2_mc;
++    int32_t temp3_mc;
 +    uint32_t fan_rpm;
 +    bool ac_lost;
 +    bool present;
@@ -125,6 +126,7 @@ index 0000000..392faa4
 +    page->read_pin = crps_linear11(pin);
 +    page->read_temperature_1 = crps_linear11(s->temp1_mc);
 +    page->read_temperature_2 = crps_linear11(s->temp2_mc);
++    page->read_temperature_3 = crps_linear11(s->temp3_mc);
 +    page->read_fan_speed_1 = crps_linear11((int64_t)s->fan_rpm * 1000);
 +
 +    if (s->ac_lost) {
@@ -145,7 +147,7 @@ index 0000000..392faa4
 +    PMBusPage *page = &pmdev->pages[0];
 +
 +    pmdev->page = 0;
-+    pmdev->capability = 0x20;           /* no PEC, 400 kHz */
++    pmdev->capability = 0x00;           /* no PEC, 100 kHz */
 +    page->operation = 0x80;             /* on */
 +    page->on_off_config = 0x1f;
 +    page->revision = 0x22;              /* PMBus 1.2 */
@@ -153,8 +155,8 @@ index 0000000..392faa4
 +    page->status_word = 0;
 +    page->status_input = 0;
 +    page->fan_config_1_2 = 0x90;        /* fan 1 installed, RPM */
-+    page->mfr_id = "QEMU";
-+    page->mfr_model = "CRPS-1600";
++    page->mfr_id = "MEGMEET";
++    page->mfr_model = "MEG-CRPS800AOP";
 +    page->mfr_revision = "A1";
 +    crps_update(s);
 +}
@@ -238,7 +240,8 @@ index 0000000..392faa4
 +
 +    pmbus_page_config(pmdev, 0, PB_HAS_VOUT_MODE | PB_HAS_VIN | PB_HAS_VOUT |
 +                      PB_HAS_IIN | PB_HAS_IOUT | PB_HAS_PIN | PB_HAS_POUT |
-+                      PB_HAS_TEMPERATURE | PB_HAS_TEMP2 | PB_HAS_FAN |
++                      PB_HAS_TEMPERATURE | PB_HAS_TEMP2 | PB_HAS_TEMP3 |
++                      PB_HAS_FAN |
 +                      PB_HAS_MFR_INFO);
 +
 +    s->vin_mv = 230000;
@@ -247,6 +250,7 @@ index 0000000..392faa4
 +    s->efficiency = 94;
 +    s->temp1_mc = 30000;
 +    s->temp2_mc = 45000;
++    s->temp3_mc = 50000;
 +    s->fan_rpm = 9000;
 +    s->present = true;
 +
@@ -262,6 +266,8 @@ index 0000000..392faa4
 +                        NULL, &s->temp1_mc);
 +    object_property_add(obj, "temp2-mc", "int32", crps_get_i32, crps_set_i32,
 +                        NULL, &s->temp2_mc);
++    object_property_add(obj, "temp3-mc", "int32", crps_get_i32, crps_set_i32,
++                        NULL, &s->temp3_mc);
 +    object_property_add(obj, "fan-rpm", "uint32", crps_get_u32, crps_set_u32,
 +                        NULL, &s->fan_rpm);
 +    object_property_add(obj, "ac-lost", "bool", crps_get_bool, crps_set_bool,
@@ -272,7 +278,7 @@ index 0000000..392faa4
 +
 +static const VMStateDescription vmstate_crps = {
 +    .name = TYPE_CRPS_PSU,
-+    .version_id = 0,
++    .version_id = 1,
 +    .minimum_version_id = 0,
 +    .fields = (const VMStateField[]){
 +        VMSTATE_PMBUS_DEVICE(parent, CRPSState),
@@ -285,6 +291,7 @@ index 0000000..392faa4
 +        VMSTATE_UINT32(fan_rpm, CRPSState),
 +        VMSTATE_BOOL(ac_lost, CRPSState),
 +        VMSTATE_BOOL(present, CRPSState),
++        VMSTATE_INT32_V(temp3_mc, CRPSState, 1),
 +        VMSTATE_END_OF_LIST()
 +    }
 +};

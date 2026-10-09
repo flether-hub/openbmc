@@ -1,0 +1,208 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] hwmon: add MEG-CRPS800AOP telemetry driver
+
+Use explicit PAGE 0 functions and a command allowlist. Two board PSUs
+return persistent CML INVALID_COMMAND after CLEAR_FAULTS with/without PEC.
+Skip CML checks only for this model; retain transfer errors and real alarms.
+Verify MFR_MODEL before enabling the quirk. Block telemetry control writes.
+Base: linux c0538446e769fab620225578d378a0627b883bd5.
+
+Upstream-Status: Inappropriate [CEB-GNRD PSU integration]
+
+diff --git a/drivers/hwmon/pmbus/Kconfig b/drivers/hwmon/pmbus/Kconfig
+--- a/drivers/hwmon/pmbus/Kconfig
++++ b/drivers/hwmon/pmbus/Kconfig
+@@ -26,6 +26,12 @@
+ 
+ 	  This driver can also be built as a module. If so, the module will
+ 	  be called pmbus.
++
++config SENSORS_MEGCRPS800
++	tristate "MEGMEET MEG-CRPS800AOP power supply"
++	help
++	  Main-output PMBus telemetry for MEG-CRPS800AOP, including its
++	  persistent invalid-command status compatibility quirk.
+ 
+ config SENSORS_ACBEL_FSG032
+ 	tristate "ACBEL FSG032 Power Supply"
+diff --git a/drivers/hwmon/pmbus/Makefile b/drivers/hwmon/pmbus/Makefile
+--- a/drivers/hwmon/pmbus/Makefile
++++ b/drivers/hwmon/pmbus/Makefile
+@@ -5,6 +5,7 @@
+ 
+ obj-$(CONFIG_PMBUS)		+= pmbus_core.o
+ obj-$(CONFIG_SENSORS_PMBUS)	+= pmbus.o
++obj-$(CONFIG_SENSORS_MEGCRPS800)	+= megcrps800.o
+ obj-$(CONFIG_SENSORS_ACBEL_FSG032) += acbel-fsg032.o
+ obj-$(CONFIG_SENSORS_ADM1266)	+= adm1266.o
+ obj-$(CONFIG_SENSORS_ADM1275)	+= adm1275.o
+diff --git a/drivers/hwmon/pmbus/megcrps800.c b/drivers/hwmon/pmbus/megcrps800.c
+--- /dev/null
++++ b/drivers/hwmon/pmbus/megcrps800.c
+@@ -0,0 +1,166 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/* MEGMEET MEG-CRPS800AOP: specification R07020117 A10, section 14.1. */
++#include <linux/ctype.h>
++#include <linux/err.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pmbus.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++#include "pmbus.h"
++
++/* Do not let persistent INVALID_COMMAND hide otherwise valid telemetry.
++ * These flags affect only this driver, not generic PMBus devices. */
++static const struct pmbus_platform_data megcrps800_pdata = {
++	.flags = PMBUS_SKIP_STATUS_CHECK | PMBUS_NO_WRITE_PROTECT |
++		 PMBUS_WRITE_PROTECTED | PMBUS_OP_PROTECTED |
++		 PMBUS_VOUT_PROTECTED,
++};
++
++static int megcrps800_read_byte(struct i2c_client *client, int page, int reg)
++{
++	if (page > 0)
++		return -ENXIO;
++
++	switch (reg) {
++	case PMBUS_PAGE:
++	case PMBUS_CAPABILITY:
++	case PMBUS_VOUT_MODE:
++	case PMBUS_FAN_CONFIG_12:
++	case PMBUS_STATUS_VOUT:
++	case PMBUS_STATUS_IOUT:
++	case PMBUS_STATUS_INPUT:
++	case PMBUS_STATUS_TEMPERATURE:
++	case PMBUS_STATUS_CML:
++	case PMBUS_STATUS_FAN_12:
++	case PMBUS_REVISION:
++		return -ENODATA;
++	default:
++		/* Reject optional limit/configuration probes before bus access. */
++		return -ENXIO;
++	}
++}
++
++static int megcrps800_read_word(struct i2c_client *client, int page,
++			       int phase, int reg)
++{
++	if (page > 0)
++		return -ENXIO;
++
++	switch (reg) {
++	case PMBUS_STATUS_WORD:
++	case PMBUS_READ_VIN:
++	case PMBUS_READ_IIN:
++	case PMBUS_READ_VOUT:
++	case PMBUS_READ_IOUT:
++	case PMBUS_READ_PIN:
++	case PMBUS_READ_POUT:
++	case PMBUS_READ_TEMPERATURE_1:
++	case PMBUS_READ_TEMPERATURE_2:
++	case PMBUS_READ_TEMPERATURE_3:
++	case PMBUS_READ_FAN_SPEED_1:
++		return -ENODATA;
++	default:
++		return -ENXIO;
++	}
++}
++
++/* Telemetry driver: no writable output, fan or limit settings. */
++static int megcrps800_write_byte_data(struct i2c_client *client, int page,
++				    int reg, u8 value)
++{
++	return -EOPNOTSUPP;
++}
++
++static int megcrps800_write_word_data(struct i2c_client *client, int page,
++				    int reg, u16 value)
++{
++	return -EOPNOTSUPP;
++}
++
++static int megcrps800_identify(struct i2c_client *client,
++			      struct pmbus_driver_info *info)
++{
++	int mode;
++
++	mode = pmbus_read_byte_data(client, 0, PMBUS_VOUT_MODE);
++	if (mode < 0)
++		return mode;
++	/* Board readings use LINEAR16, exponent -9. Let the core read the
++	 * actual exponent; never interpret VID/direct data as LINEAR16. */
++	if ((mode >> 5) != 0)
++		return -ENODEV;
++	return 0;
++}
++
++static const struct pmbus_driver_info megcrps800_info = {
++	/* Only main-output telemetry is specified and used by this board.
++	 * Do not discover page count by writing out-of-range PAGE values. */
++	.pages = 1,
++	.format[PSC_VOLTAGE_IN] = linear,
++	.format[PSC_VOLTAGE_OUT] = linear,
++	.format[PSC_CURRENT_IN] = linear,
++	.format[PSC_CURRENT_OUT] = linear,
++	.format[PSC_POWER] = linear,
++	.format[PSC_TEMPERATURE] = linear,
++	.format[PSC_FAN] = linear,
++	.func[0] = PMBUS_HAVE_VIN | PMBUS_HAVE_IIN | PMBUS_HAVE_PIN |
++		   PMBUS_HAVE_VOUT | PMBUS_HAVE_IOUT | PMBUS_HAVE_POUT |
++		   PMBUS_HAVE_TEMP | PMBUS_HAVE_TEMP2 | PMBUS_HAVE_TEMP3 |
++		   PMBUS_HAVE_FAN12 | PMBUS_HAVE_STATUS_INPUT |
++		   PMBUS_HAVE_STATUS_VOUT | PMBUS_HAVE_STATUS_IOUT |
++		   PMBUS_HAVE_STATUS_TEMP | PMBUS_HAVE_STATUS_FAN12,
++	.read_byte_data = megcrps800_read_byte,
++	.read_word_data = megcrps800_read_word,
++	.write_byte_data = megcrps800_write_byte_data,
++	.write_word_data = megcrps800_write_word_data,
++	.identify = megcrps800_identify,
++};
++
++static int megcrps800_probe(struct i2c_client *client)
++{
++	struct pmbus_driver_info *info;
++	u8 model[I2C_SMBUS_BLOCK_MAX + 1];
++	char normalized[I2C_SMBUS_BLOCK_MAX + 1];
++	int len, i, n = 0;
++
++	if (!i2c_check_functionality(client->adapter,
++				     I2C_FUNC_SMBUS_READ_BLOCK_DATA))
++		return -EOPNOTSUPP;
++	len = i2c_smbus_read_block_data(client, PMBUS_MFR_MODEL, model);
++	if (len < 0)
++		return len;
++	for (i = 0; i < len; i++)
++		if (isalnum(model[i]))
++			normalized[n++] = toupper(model[i]);
++	normalized[n] = '\0';
++	if (!strstr(normalized, "CRPS800AOP")) {
++		dev_err(&client->dev, "unsupported PSU model %s\n", normalized);
++		return -ENODEV;
++	}
++
++	info = devm_kmemdup(&client->dev, &megcrps800_info,
++			    sizeof(megcrps800_info), GFP_KERNEL);
++	if (!info)
++		return -ENOMEM;
++	client->dev.platform_data = (void *)&megcrps800_pdata;
++	dev_info(&client->dev, "MEG-CRPS800AOP telemetry; persistent CML quirk enabled\n");
++	return pmbus_do_probe(client, info);
++}
++
++static const struct i2c_device_id megcrps800_id[] = {
++	{ "megcrps800" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, megcrps800_id);
++
++static struct i2c_driver megcrps800_driver = {
++	.driver = { .name = "megcrps800" },
++	.probe = megcrps800_probe,
++	.id_table = megcrps800_id,
++};
++module_i2c_driver(megcrps800_driver);
++
++MODULE_DESCRIPTION("MEGMEET MEG-CRPS800AOP PMBus telemetry");
++MODULE_LICENSE("GPL");
++MODULE_IMPORT_NS("PMBUS");

@@ -12,15 +12,15 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
  #include <asm/io.h>
  #include <asm/arch/aspeed_scu_info.h>
  #include <fdt_support.h>
-@@ -163,3 +164,42 @@
+@@ -165,3 +166,47 @@
  	return ret;
  }
  #endif
 +
 +#if defined(CEB_GNRD_ENV) && !defined(CONFIG_SPL_BUILD)
 +/* A valid saved environment replaces the whole compiled default environment.
-+ * Migrate only missing MAC variables before eth_initialize() probes the NICs.
-+ * Keep provisioned addresses and every other environment variable unchanged.
++ * Migrate missing MAC and network boot defaults before NIC initialization.
++ * Preserve provisioned addresses, bootcmd and existing nonempty variables.
 + */
 +int board_late_init(void)
 +{
@@ -30,6 +30,11 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
 +	} defaults[] = {
 +		{ "ethaddr", CEB_GNRD_DEFAULT_MAC0 },
 +		{ "eth1addr", CEB_GNRD_DEFAULT_MAC1 },
++		{ "netboot_server", CEB_GNRD_NETBOOT_SERVER },
++		{ "netboot_gateway", CEB_GNRD_NETBOOT_GATEWAY },
++		{ "netboot_kernel", CEB_GNRD_NETBOOT_KERNEL },
++		{ "netboot_addr", CEB_GNRD_NETBOOT_ADDR },
++		{ "bootnet", CEB_GNRD_BOOTNET },
 +	};
 +	bool changed = false;
 +	bool save_ok = true;
@@ -50,7 +55,7 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
 +		       defaults[i].name, defaults[i].address);
 +	}
 +	if (changed && save_ok && env_save())
-+		printf("CEB-GNRD: MAC defaults active, but environment save failed\n");
++		printf("CEB-GNRD: defaults active, but environment save failed\n");
 +
 +	return 0;
 +}

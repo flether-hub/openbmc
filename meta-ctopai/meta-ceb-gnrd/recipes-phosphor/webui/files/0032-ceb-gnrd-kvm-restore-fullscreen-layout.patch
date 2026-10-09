@@ -1,0 +1,157 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] webui: restore KVM layout after leaving fullscreen
+
+Keep the toolbar constrained to its page container instead of copying the
+fullscreen canvas width. Handle fullscreenchange, including Escape, and
+notify noVNC after browser layout restoration. Cancel pending callbacks
+when the component is removed and handle fullscreen API rejection.
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+---
+--- a/src/views/Operations/Kvm/KvmConsole.vue
++++ b/src/views/Operations/Kvm/KvmConsole.vue
+@@ -1,5 +1,5 @@
+ <template>
+-  <div :class="marginClass">
++  <div class="kvm-console" :class="marginClass">
+     <div ref="toolbar" class="kvm-toolbar">
+       <b-row class="d-flex">
+         <b-col class="d-flex flex-column justify-content-end" cols="4">
+@@ -12,7 +12,7 @@
+           </dl>
+         </b-col>
+ 
+-        <b-col class="d-flex justify-content-end pe-1">
++        <b-col class="d-flex flex-wrap justify-content-end pe-1">
+           <b-button
+             v-if="isConnected"
+             variant="link"
+@@ -63,7 +63,6 @@
+ import IconArrowDown from '@carbon/icons-vue/es/arrow--down/16';
+ import IconCamera from '@carbon/icons-vue/es/camera/20';
+ import IconMaximize from '@carbon/icons-vue/es/maximize/20';
+-import { throttle } from 'lodash';
+ import i18n from '@/i18n';
+ 
+ const Connecting = 0;
+@@ -93,7 +92,7 @@
+       marginClass: this.isFullWindow ? 'margin-left-full-window' : '',
+       status: Connecting,
+       convasRef: null,
+-      resizeKvmWindow: null,
++      fullscreenFrame: null,
+     };
+   },
+   computed: {
+@@ -119,21 +118,40 @@
+   },
+   mounted() {
+     this.openTerminal();
++    document.addEventListener('fullscreenchange', this.onFullScreenChange);
+   },
+   beforeUnmount() {
+-    window.removeEventListener('resize', this.resizeKvmWindow);
++    document.removeEventListener('fullscreenchange', this.onFullScreenChange);
++    if (this.fullscreenFrame !== null) {
++      window.cancelAnimationFrame(this.fullscreenFrame);
++    }
+     this.closeTerminal();
+   },
+   methods: {
+     sendCtrlAltDel() {
+       this.rfb.sendCtrlAltDel();
+     },
+-    toggleFullScreen() {
+-      if (document.fullscreenElement) {
+-        document.exitFullscreen();
+-      } else {
+-        this.$refs.panel.requestFullscreen?.();
+-      }
++    async toggleFullScreen() {
++      try {
++        if (document.fullscreenElement === this.$refs.panel) {
++          await document.exitFullscreen();
++        } else {
++          await this.$refs.panel.requestFullscreen?.();
++        }
++      } catch (error) {
++        console.warn('Unable to change KVM fullscreen mode', error);
++      }
++    },
++    onFullScreenChange() {
++      // Esc also exits fullscreen. Wait for the normal layout to be restored
++      // before notifying noVNC's viewport resize handler.
++      if (this.fullscreenFrame !== null) {
++        window.cancelAnimationFrame(this.fullscreenFrame);
++      }
++      this.fullscreenFrame = window.requestAnimationFrame(() => {
++        this.fullscreenFrame = null;
++        window.dispatchEvent(new Event('resize'));
++      });
+     },
+     captureScreenshot() {
+       const canvas = this.$refs.panel.querySelector('canvas');
+@@ -173,33 +191,15 @@
+       this.rfb.clipViewport = true;
+       const that = this;
+ 
+-      this.resizeKvmWindow = throttle(() => {
+-        setTimeout(that.setWidthToolbar, 0);
+-      }, 1000);
+-      window.addEventListener('resize', this.resizeKvmWindow, {
+-        passive: true,
+-      });
+-
+       this.rfb.addEventListener('connect', () => {
+         that.isConnected = true;
+         that.status = Connected;
+-        that.setWidthToolbar();
+       });
+ 
+       this.rfb.addEventListener('disconnect', () => {
+         this.isConnected = false;
+         that.status = Disconnected;
+       });
+-    },
+-    setWidthToolbar() {
+-      if (
+-        this.$refs.panel.children &&
+-        this.$refs.panel.children.length > 0 &&
+-        this.$refs.panel.children[0].children.length > 0
+-      ) {
+-        this.$refs.toolbar.style.width =
+-          this.$refs.panel.children[0].children[0].clientWidth - 10 + 'px';
+-      }
+     },
+     openConsoleWindow() {
+       // If consoleWindow is not null
+@@ -230,6 +230,29 @@
+ </script>
+ 
+ <style scoped lang="scss">
++.kvm-console {
++  min-width: 0;
++  max-width: 100%;
++}
++
++.kvm-toolbar {
++  width: 100%;
++  max-width: 100%;
++}
++
++#terminal-kvm {
++  width: 100%;
++  min-width: 0;
++  max-width: 100%;
++  overflow: hidden;
++}
++
++#terminal-kvm:fullscreen {
++  width: 100vw;
++  height: 100vh;
++  background: black;
++}
++
+ .button-ctrl-alt-delete {
+   float: inline-end;
+ }

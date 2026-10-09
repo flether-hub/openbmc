@@ -502,13 +502,15 @@
 
 &i2c7 {
     status = "okay";
+    /* MEG-CRPS800AOP PMBus 1.2 supports at most 100 kbit/s. */
+    clock-frequency = <100000>;
     pinctrl-names = "default";
     pinctrl-0 = <&pinctrl_i2c8_default>;
     /delete-node/ temp@2e;
     /delete-node/ eeprom@50;
 
     /* CRPS PMBus modules (0, 1 or 2 present at 0x58/0x59/0x5a) are not declared
-     * here: ceb-gnrd-psu-detect creates a pmbus device for each installed
+     * here: ceb-gnrd-psu-detect creates a megcrps800 device for each installed
      * module, so empty slots do not log probe failures. */
 };
 

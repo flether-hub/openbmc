@@ -1,0 +1,53 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ncsi: retry discovery after an empty initial probe
+
+A host-powered controller can fail to answer the first NC-SI enumeration.
+The probe still marks the device PROBED; subsequent interface starts then
+return ENODEV from channel selection without issuing discovery commands.
+
+On the next start, clear PROBED only when there are no discovered channels.
+Reuse the existing probe state machine and request timeout handling. Keep
+known channels, package/channel selection policy and external link failure
+handling unchanged. The board userspace monitor bounds restart frequency.
+
+Upstream-Status: Pending
+---
+--- a/net/ncsi/ncsi-manage.c
++++ b/net/ncsi/ncsi-manage.c
+@@ -1817,10 +1817,36 @@
+ int ncsi_start_dev(struct ncsi_dev *nd)
+ {
+ 	struct ncsi_dev_priv *ndp = TO_NCSI_DEV_PRIV(nd);
++	struct ncsi_package *np;
++	struct ncsi_channel *nc;
++	bool has_channel = false;
+ 
+ 	if (nd->state != ncsi_dev_state_registered &&
+ 	    nd->state != ncsi_dev_state_functional)
+ 		return -ENOTTY;
++
++	/* A host-powered NIC can be absent during the first enumeration.
++	 * Finishing that pass sets PROBED even when no channel answered.
++	 * Starting the interface again must retry discovery in that case,
++	 * rather than forever trying to configure an empty channel list.
++	 * Preserve existing channels and user selection policy; lack of
++	 * external carrier alone is not a reason to discard discovery.
++	 */
++	if (ndp->flags & NCSI_DEV_PROBED) {
++		NCSI_FOR_EACH_PACKAGE(ndp, np) {
++			NCSI_FOR_EACH_CHANNEL(np, nc) {
++				has_channel = true;
++				break;
++			}
++			if (has_channel)
++				break;
++		}
++		if (!has_channel) {
++			ndp->flags &= ~(NCSI_DEV_PROBED | NCSI_DEV_HWA);
++			netdev_info(nd->dev,
++				    "NCSI: No discovered channels, retrying probe\n");
++		}
++	}
+ 
+ 	if (!(ndp->flags & NCSI_DEV_PROBED)) {
+ 		ndp->package_probe_id = 0;
