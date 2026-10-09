@@ -1,0 +1,118 @@
+Subject: [PATCH] webui: show BIOS boot checkpoints and raw POST codes
+
+Keep the standard boot-progress enum and show board checkpoint details.
+Generic AMI mappings are explicitly marked; unknown codes remain visible.
+No checkpoint is interpreted as an OS-running confirmation.
+
+Upstream-Status: Inappropriate [CEB-GNRD boot checkpoints]
+
+--- a/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
++++ b/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
+@@ -64,7 +64,7 @@
+       return SENSORS.map((sensor) => ({
+         name: sensor.name,
+         description: this.$t('pageSensors.discrete.' + sensor.descriptionKey),
+-        state: stateText(this.values[sensor.path]?.[sensor.property]),
++        state: this.sensorState(sensor),
+       }));
+     },
+   },
+@@ -76,6 +76,22 @@
+     clearInterval(this.timer);
+   },
+   methods: {
++    sensorState(sensor) {
++      const data = this.values[sensor.path] || {};
++      const stage = stateText(data[sensor.property]);
++      if (sensor.property !== 'BootProgress' || !data.BootCheckpoint) {
++        return stage;
++      }
++      const key = 'pageSensors.discrete.checkpoints.' + data.BootCheckpoint;
++      const detail = this.$te(key) ? this.$t(key) : data.BootCheckpoint;
++      const code = data.BootPostCode ? ` (${data.BootPostCode})` : '';
++      const generic =
++        data.BootPostCode &&
++        !['Unknown', 'PlatformSpecific'].includes(data.BootCheckpoint)
++          ? ` [${this.$t('pageSensors.discrete.checkpoints.generic')}]`
++          : '';
++      return `${stage} — ${detail}${code}${generic}`;
++    },
+     async load() {
+       const paths = [...new Set(SENSORS.map((sensor) => sensor.path))];
+       const values = {};
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -928,6 +928,73 @@
+             "description": "Description",
+             "state": "State",
+             "bootProgress": "Host boot progress",
++            "checkpoints": {
++                "ResetDetection": "Power-on reset detection",
++                "APBeforeMicrocode": "AP initialization before microcode",
++                "SystemAgentBeforeMicrocode": "System Agent initialization before microcode",
++                "PCHBeforeMicrocode": "PCH initialization before microcode",
++                "MicrocodeLoad": "CPU microcode loading",
++                "APAfterMicrocode": "AP initialization after microcode",
++                "SystemAgentAfterMicrocode": "System Agent initialization after microcode",
++                "PCHAfterMicrocode": "PCH initialization after microcode",
++                "CacheInit": "CPU cache initialization",
++                "PEICore": "PEI core initialization",
++                "CPUBeforeMemory": "CPU initialization before memory",
++                "SystemAgentBeforeMemory": "System Agent initialization before memory",
++                "PCHBeforeMemory": "PCH initialization before memory",
++                "MemoryInit": "Memory initialization",
++                "MemoryInstalled": "Memory detected",
++                "CPUAfterMemory": "CPU initialization after memory",
++                "SystemAgentAfterMemory": "System Agent initialization after memory",
++                "PCHAfterMemory": "PCH initialization after memory",
++                "DXEIPL": "Entering DXE",
++                "DXECore": "DXE core initialization",
++                "NVRAMInit": "NVRAM initialization",
++                "PCHRuntime": "PCH runtime services initialization",
++                "CPUDXE": "CPU DXE initialization",
++                "PCIHostBridge": "PCI host bridge initialization",
++                "SystemAgentDXE": "System Agent DXE initialization",
++                "SystemAgentSMM": "System Agent SMM initialization",
++                "PCHDXE": "PCH DXE initialization",
++                "PCHSMM": "PCH SMM initialization",
++                "PCHDevices": "PCH device initialization",
++                "ACPIInit": "ACPI initialization",
++                "CSMInit": "CSM initialization",
++                "BootDeviceSelection": "Boot device selection",
++                "DriverConnection": "Connecting firmware drivers",
++                "PCIBusInit": "PCI bus initialization",
++                "PCIHotPlugInit": "PCI hot-plug controller initialization",
++                "PCIEnumeration": "PCI device enumeration",
++                "PCIResourceRequest": "Requesting PCI resources",
++                "PCIResourceAssignment": "Assigning PCI resources",
++                "ConsoleOutput": "Connecting console output",
++                "ConsoleInput": "Connecting console input",
++                "SuperIOInit": "Super I/O initialization",
++                "USBInit": "USB initialization",
++                "USBReset": "USB reset",
++                "USBDetection": "USB device detection",
++                "USBEnable": "Enabling USB devices",
++                "IDEInit": "IDE initialization",
++                "IDEReset": "IDE reset",
++                "IDEDetection": "IDE device detection",
++                "IDEEnable": "Enabling IDE devices",
++                "SCSIInit": "SCSI initialization",
++                "SCSIReset": "SCSI reset",
++                "SCSIDetection": "SCSI device detection",
++                "SCSIEnable": "Enabling SCSI devices",
++                "SetupPassword": "BIOS setup password verification",
++                "BIOSSetup": "BIOS setup entered",
++                "SetupInput": "Waiting for BIOS setup input",
++                "ReadyToBoot": "Preparing to boot the OS",
++                "LegacyBoot": "Legacy boot handoff",
++                "ExitBootServices": "Exiting UEFI boot services",
++                "VirtualAddressMapBegin": "Runtime virtual address mapping started",
++                "VirtualAddressMapEnd": "Runtime virtual address mapping completed",
++                "PlatformSpecific": "Platform-specific checkpoint",
++                "Unknown": "Unmapped POST code",
++                "POSTComplete": "BIOS POST complete signal received",
++                "generic": "Generic AMI mapping"
++            },
+             "watchdog": "IPMI watchdog, configured expire action"
+         }
+     },

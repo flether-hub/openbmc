@@ -8,6 +8,9 @@ when the component is removed and handle fullscreen API rejection.
 Keep the toolbar on one line; scroll the actions within their column when
 the viewport is too narrow instead of wrapping buttons or widening the page.
 
+Size the video panel from its full available width and remote aspect ratio
+instead of the fixed viewport-height limit.
+
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
 --- a/src/views/Operations/Kvm/KvmConsole.vue
@@ -18,8 +21,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +  <div class="kvm-console" :class="marginClass">
      <div ref="toolbar" class="kvm-toolbar">
 -      <b-row class="d-flex">
-+      <b-row class="d-flex flex-nowrap align-items-center">
 -        <b-col class="d-flex flex-column justify-content-end" cols="4">
++      <b-row class="d-flex flex-nowrap align-items-center">
 +        <b-col class="d-flex flex-column flex-shrink-0 justify-content-end" cols="auto">
            <dl class="mb-2" sm="2" md="2">
              <dt class="d-inline fw-bold me-1">{{ $t('pageKvm.status') }}:</dt>
@@ -33,7 +36,21 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
            <b-button
              v-if="isConnected"
              variant="link"
-@@ -63,7 +63,6 @@
+@@ -52,7 +52,12 @@
+         </b-col>
+       </b-row>
+     </div>
+-    <div id="terminal-kvm" ref="panel" :class="terminalClass"></div>
++    <div
++      id="terminal-kvm"
++      ref="panel"
++      :class="terminalClass"
++      :style="{ aspectRatio: framebufferRatio }"
++    ></div>
+   </div>
+ </template>
+ 
+@@ -63,7 +68,6 @@
  import IconArrowDown from '@carbon/icons-vue/es/arrow--down/16';
  import IconCamera from '@carbon/icons-vue/es/camera/20';
  import IconMaximize from '@carbon/icons-vue/es/maximize/20';
@@ -41,16 +58,18 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
  import i18n from '@/i18n';
  
  const Connecting = 0;
-@@ -93,7 +92,7 @@
+@@ -93,7 +97,9 @@
        marginClass: this.isFullWindow ? 'margin-left-full-window' : '',
        status: Connecting,
        convasRef: null,
 -      resizeKvmWindow: null,
 +      fullscreenFrame: null,
++      framebufferObserver: null,
++      framebufferRatio: 16 / 9,
      };
    },
    computed: {
-@@ -119,21 +118,40 @@
+@@ -119,21 +125,50 @@
    },
    mounted() {
      this.openTerminal();
@@ -62,9 +81,19 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +    if (this.fullscreenFrame !== null) {
 +      window.cancelAnimationFrame(this.fullscreenFrame);
 +    }
++    this.framebufferObserver?.disconnect();
++    this.framebufferObserver = null;
      this.closeTerminal();
    },
    methods: {
++    updateFramebufferRatio() {
++      const canvas = this.$refs.panel?.querySelector('canvas');
++      if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
++      const ratio = canvas.width / canvas.height;
++      if (ratio === this.framebufferRatio) return;
++      this.framebufferRatio = ratio;
++      this.$nextTick(() => window.dispatchEvent(new Event('resize')));
++    },
      sendCtrlAltDel() {
        this.rfb.sendCtrlAltDel();
      },
@@ -98,21 +127,37 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
      },
      captureScreenshot() {
        const canvas = this.$refs.panel.querySelector('canvas');
-@@ -173,33 +191,15 @@
-       this.rfb.clipViewport = true;
-       const that = this;
+@@ -170,36 +205,30 @@
+       );
  
+       this.rfb.scaleViewport = true;
+-      this.rfb.clipViewport = true;
++      this.rfb.clipViewport = false;
++      // Track the remote resolution, not the already scaled CSS dimensions.
++      this.framebufferObserver = new MutationObserver(() => {
++        this.updateFramebufferRatio();
++      });
++      this.framebufferObserver.observe(this.$refs.panel, {
++        childList: true,
++        subtree: true,
++        attributes: true,
++        attributeFilter: ['width', 'height'],
++      });
++      this.updateFramebufferRatio();
+       const that = this;
+-
 -      this.resizeKvmWindow = throttle(() => {
 -        setTimeout(that.setWidthToolbar, 0);
 -      }, 1000);
 -      window.addEventListener('resize', this.resizeKvmWindow, {
 -        passive: true,
 -      });
--
+ 
        this.rfb.addEventListener('connect', () => {
          that.isConnected = true;
          that.status = Connected;
 -        that.setWidthToolbar();
++        that.updateFramebufferRatio();
        });
  
        this.rfb.addEventListener('disconnect', () => {
@@ -132,7 +177,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
      },
      openConsoleWindow() {
        // If consoleWindow is not null
-@@ -230,6 +230,44 @@
+@@ -230,6 +259,49 @@
  </script>
  
  <style scoped lang="scss">
@@ -166,6 +211,11 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +  min-width: 0;
 +  max-width: 100%;
 +  overflow: hidden;
++  height: auto;
++}
++
++#terminal-kvm.full-window {
++  height: auto;
 +}
 +
 +#terminal-kvm:fullscreen {
@@ -177,3 +227,13 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
  .button-ctrl-alt-delete {
    float: inline-end;
  }
+--- a/src/views/Operations/Kvm/Kvm.vue
++++ b/src/views/Operations/Kvm/Kvm.vue
+@@ -1,6 +1,6 @@
+ <template>
+-  <b-container fluid="xl">
++  <b-container fluid>
+     <page-title />
+     <div class="terminal-container">
+       <kvm-console :is-full-window="false" />
+     </div>

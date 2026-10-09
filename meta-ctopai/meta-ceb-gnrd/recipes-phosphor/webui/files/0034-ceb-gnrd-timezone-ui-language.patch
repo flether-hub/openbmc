@@ -1,0 +1,47 @@
+Subject: [PATCH] webui: format timezone names using the UI locale
+
+Use the selected interface language instead of parsing the OS-localized
+Date.toString() text. Shared time filters also feed the date/time timezone
+label and the timestamps on logs and power operation pages.
+
+Upstream-Status: Inappropriate [CEB-GNRD interface languages]
+
+--- a/src/main.js
++++ b/src/main.js
+@@ -186,6 +186,7 @@
+     }
+   },
+   formatTime(value) {
++    const locale = i18n.global.locale.value || 'en-US';
+     const isUtcDisplay = store.getters['global/isUtcDisplay'];
+ 
+     if (value instanceof Date) {
+@@ -194,7 +195,7 @@
+           timeZone: 'UTC',
+           hourCycle: 'h23',
+         };
+-        return `${value.toLocaleTimeString('default', timeOptions)} UTC`;
++        return `${value.toLocaleTimeString(locale, timeOptions)} UTC`;
+       }
+       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+       const shortTz = this.shortTimeZone(value);
+@@ -203,12 +204,13 @@
+     }
+   },
+   shortTimeZone(value) {
+-    const longTZ = value
+-      .toString()
+-      .match(/\((.*)\)/)
+-      .pop();
+-    const regexNotUpper = /[*a-z ]/g;
+-    return longTZ.replace(regexNotUpper, '');
++    if (!(value instanceof Date) || Number.isNaN(value.getTime())) return '';
++    // Date.toString() uses the OS language, which may differ from the UI.
++    const locale = i18n.global.locale.value || 'en-US';
++    const parts = new Intl.DateTimeFormat(locale, {
++      timeZoneName: 'long',
++    }).formatToParts(value);
++    return parts.find((part) => part.type === 'timeZoneName')?.value || '';
+   },
+ };
+ app.config.globalProperties.$filters = filter;

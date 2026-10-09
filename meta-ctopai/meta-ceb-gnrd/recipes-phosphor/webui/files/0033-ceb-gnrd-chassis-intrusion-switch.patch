@@ -4,7 +4,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 
 --- a/src/views/HardwareStatus/Inventory/InventoryServiceIndicator.vue
 +++ b/src/views/HardwareStatus/Inventory/InventoryServiceIndicator.vue
-@@ -35,18 +35,49 @@
+@@ -35,18 +35,47 @@
              </dd>
            </dl>
          </b-col>
@@ -23,7 +23,6 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +                  $t(intrusionEnabled ? 'global.status.on' : 'global.status.off')
 +                }}
 +              </b-form-checkbox>
-+              <small>{{ $t('pageInventory.intrusion.hint') }}</small>
 +            </dd>
 +          </dl>
 +        </b-col>
@@ -37,8 +36,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
  import PageSection from '@/components/Global/PageSection';
  import BVToastMixin from '@/components/Mixins/BVToastMixin';
  
-+const intrusionPath =
-+  '/xyz/openbmc_project/Chassis/IntrusionSettings/attr/Enabled';
++const intrusionPath = '/xyz/openbmc_project/Chassis/IntrusionSettings';
 +
  export default {
    components: { PageSection },
@@ -54,7 +52,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
    computed: {
      systems() {
        let systemData = this.$store.getters['system/systems'][0];
-@@ -63,12 +94,43 @@
+@@ -63,12 +92,47 @@
      },
    },
    created() {
@@ -67,7 +65,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
    methods: {
 +    async loadIntrusion() {
 +      try {
-+        const response = await api.get(intrusionPath);
++        const response = await api.get(`${intrusionPath}/attr/Enabled`);
 +        if (typeof response.data.data !== 'boolean') {
 +          throw new Error('Invalid state');
 +        }
@@ -83,8 +81,12 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +      if (!this.intrusionLoaded || this.intrusionSaving) return;
 +      this.intrusionSaving = true;
 +      try {
-+        await api.put(intrusionPath, { data: state });
-+        this.intrusionSaved = state;
++        const method = state ? 'Enable' : 'Disable';
++        await api.post(`${intrusionPath}/action/${method}`, { data: [] });
++        await this.loadIntrusion();
++        if (!this.intrusionLoaded || this.intrusionSaved !== state) {
++          throw new Error('Chassis intrusion state was not applied');
++        }
 +        this.successToast(this.$t('pageInventory.intrusion.saved'));
 +      } catch {
 +        this.intrusionEnabled = this.intrusionSaved;
@@ -100,13 +102,12 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
          .dispatch('system/changeIdentifyLedState', state)
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -437,6 +437,13 @@
+@@ -437,6 +437,12 @@
          }
      },
      "pageInventory": {
 +        "intrusion": {
 +            "label": "Chassis intrusion detection",
-+            "hint": "The setting is retained after BMC power loss.",
 +            "loadError": "Unable to read chassis intrusion settings.",
 +            "saveError": "Unable to save chassis intrusion settings.",
 +            "saved": "Chassis intrusion settings saved."

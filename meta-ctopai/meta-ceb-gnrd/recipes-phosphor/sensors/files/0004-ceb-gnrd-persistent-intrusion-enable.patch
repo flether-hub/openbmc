@@ -100,7 +100,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
      mHwmonName(std::move(hwmonName)), mPollTimer(io)
  {
      std::vector<std::filesystem::path> paths;
-@@ -446,6 +514,41 @@
+@@ -446,6 +514,49 @@
  
      // Expecting only one hwmon file for one given chassis
      mHwmonPath = paths[0].string();
@@ -138,11 +138,19 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +                      "ENABLED", requested);
 +            return 1;
 +        });
++    // Use argument-free methods for bmcweb's legacy D-Bus REST API.
++    // Both calls reuse the property setter and its durable save operation.
++    mSettingsIface->register_method("Enable", [this]() {
++        return mSettingsIface->set_property("Enabled", true);
++    });
++    mSettingsIface->register_method("Disable", [this]() {
++        return mSettingsIface->set_property("Enabled", false);
++    });
 +    mSettingsIface->initialize();
  
      lg2::debug(
          "Found '{NUM_PATHS}' paths for intrusion status. The first path is: '{PATH}'",
-@@ -477,5 +580,6 @@
+@@ -477,5 +588,6 @@
  
  ChassisIntrusionHwmonSensor::~ChassisIntrusionHwmonSensor()
  {
