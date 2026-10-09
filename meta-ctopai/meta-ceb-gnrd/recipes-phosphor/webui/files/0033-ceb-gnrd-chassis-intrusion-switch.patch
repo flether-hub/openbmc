@@ -1,0 +1,116 @@
+Subject: [PATCH] inventory: add persistent chassis intrusion switch
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+
+--- a/src/views/HardwareStatus/Inventory/InventoryServiceIndicator.vue
++++ b/src/views/HardwareStatus/Inventory/InventoryServiceIndicator.vue
+@@ -35,18 +35,49 @@
+             </dd>
+           </dl>
+         </b-col>
++        <b-col sm="6" md="3">
++          <dl>
++            <dt>{{ $t('pageInventory.intrusion.label') }}</dt>
++            <dd>
++              <b-form-checkbox
++                id="chassisIntrusionSwitch"
++                v-model="intrusionEnabled"
++                switch
++                :disabled="!intrusionLoaded || intrusionSaving"
++                @update:model-value="toggleIntrusion"
++              >
++                {{
++                  $t(intrusionEnabled ? 'global.status.on' : 'global.status.off')
++                }}
++              </b-form-checkbox>
++              <small>{{ $t('pageInventory.intrusion.hint') }}</small>
++            </dd>
++          </dl>
++        </b-col>
+       </b-row>
+     </div>
+   </page-section>
+ </template>
+ <script>
++import api from '@/store/api';
+ import eventBus from '@/eventBus';
+ import PageSection from '@/components/Global/PageSection';
+ import BVToastMixin from '@/components/Mixins/BVToastMixin';
+ 
++const intrusionPath =
++  '/xyz/openbmc_project/Chassis/IntrusionSettings/attr/Enabled';
++
+ export default {
+   components: { PageSection },
+   mixins: [BVToastMixin],
++  data() {
++    return {
++      intrusionEnabled: false,
++      intrusionSaved: false,
++      intrusionLoaded: false,
++      intrusionSaving: false,
++    };
++  },
+   computed: {
+     systems() {
+       let systemData = this.$store.getters['system/systems'][0];
+@@ -63,12 +94,43 @@
+     },
+   },
+   created() {
++    this.loadIntrusion();
+     this.$store.dispatch('system/getSystem').finally(() => {
+       // Emit initial data fetch complete to parent component
+       eventBus.$emit('hardware-status-service-complete');
+     });
+   },
+   methods: {
++    async loadIntrusion() {
++      try {
++        const response = await api.get(intrusionPath);
++        if (typeof response.data.data !== 'boolean') {
++          throw new Error('Invalid state');
++        }
++        this.intrusionEnabled = response.data.data;
++        this.intrusionSaved = this.intrusionEnabled;
++        this.intrusionLoaded = true;
++      } catch {
++        this.intrusionLoaded = false;
++        this.errorToast(this.$t('pageInventory.intrusion.loadError'));
++      }
++    },
++    async toggleIntrusion(state) {
++      if (!this.intrusionLoaded || this.intrusionSaving) return;
++      this.intrusionSaving = true;
++      try {
++        await api.put(intrusionPath, { data: state });
++        this.intrusionSaved = state;
++        this.successToast(this.$t('pageInventory.intrusion.saved'));
++      } catch {
++        this.intrusionEnabled = this.intrusionSaved;
++        this.errorToast(this.$t('pageInventory.intrusion.saveError'));
++        // A lost response may follow a successful write. Read back the BMC state.
++        await this.loadIntrusion();
++      } finally {
++        this.intrusionSaving = false;
++      }
++    },
+     toggleIdentifyLedSwitch(state) {
+       this.$store
+         .dispatch('system/changeIdentifyLedState', state)
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -437,6 +437,13 @@
+         }
+     },
+     "pageInventory": {
++        "intrusion": {
++            "label": "Chassis intrusion detection",
++            "hint": "The setting is retained after BMC power loss.",
++            "loadError": "Unable to read chassis intrusion settings.",
++            "saveError": "Unable to save chassis intrusion settings.",
++            "saved": "Chassis intrusion settings saved."
++        },
+         "dimmSlot": "DIMM slot",
+         "fans": "Fans",
+         "powerSupplies": "Power supplies",

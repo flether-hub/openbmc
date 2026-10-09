@@ -5,6 +5,8 @@ Keep the toolbar constrained to its page container instead of copying the
 fullscreen canvas width. Handle fullscreenchange, including Escape, and
 notify noVNC after browser layout restoration. Cancel pending callbacks
 when the component is removed and handle fullscreen API rejection.
+Keep the toolbar on one line; scroll the actions within their column when
+the viewport is too narrow instead of wrapping buttons or widening the page.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
@@ -15,15 +17,16 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 -  <div :class="marginClass">
 +  <div class="kvm-console" :class="marginClass">
      <div ref="toolbar" class="kvm-toolbar">
-       <b-row class="d-flex">
+-      <b-row class="d-flex">
++      <b-row class="d-flex flex-nowrap align-items-center">
 -        <b-col class="d-flex flex-column justify-content-end" cols="4">
-+        <b-col class="d-flex flex-column justify-content-end" cols="auto">
++        <b-col class="d-flex flex-column flex-shrink-0 justify-content-end" cols="auto">
 @@ -12,7 +12,7 @@
            </dl>
          </b-col>
  
 -        <b-col class="d-flex justify-content-end pe-1">
-+        <b-col class="d-flex flex-wrap flex-grow-1 justify-content-end pe-1" cols="auto">
++        <b-col class="kvm-actions d-flex flex-nowrap flex-grow-1 pe-1" cols="auto">
            <b-button
              v-if="isConnected"
              variant="link"
@@ -126,7 +129,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
      },
      openConsoleWindow() {
        // If consoleWindow is not null
-@@ -230,6 +230,33 @@
+@@ -230,6 +230,44 @@
  </script>
  
  <style scoped lang="scss">
@@ -141,7 +144,18 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +}
 +
 +.kvm-toolbar .btn {
++  flex-shrink: 0;
 +  white-space: nowrap;
++}
++
++.kvm-actions {
++  flex-basis: 0;
++  min-width: 0;
++  overflow-x: auto;
++}
++
++.kvm-actions .btn:first-child {
++  margin-left: auto;
 +}
 +
 +#terminal-kvm {

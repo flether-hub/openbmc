@@ -1,0 +1,163 @@
+Subject: [PATCH] intrusion: persist opt-in chassis monitoring
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+
+--- a/src/intrusion/ChassisIntrusionSensor.cpp
++++ b/src/intrusion/ChassisIntrusionSensor.cpp
+@@ -40,6 +40,7 @@
+ #include <memory>
+ #include <stdexcept>
+ #include <string>
++#include <system_error>
+ #include <utility>
+ #include <vector>
+ 
+@@ -70,6 +71,67 @@
+ // Value to clear intrusion status hwmon file
+ const static constexpr size_t intrusionStatusHwmonClearValue = 0;
+ 
++// Missing or invalid settings mean disabled. Store in rwfs, not /run.
++static constexpr const char* intrusionSettingsDir = "/var/lib/ceb-gnrd";
++static constexpr const char* intrusionSettingsFile =
++    "/var/lib/ceb-gnrd/chassis-intrusion-enabled";
++
++static bool loadIntrusionEnabled()
++{
++    std::ifstream input(intrusionSettingsFile);
++    std::string value;
++    return std::getline(input, value) && value == "1";
++}
++
++static void saveIntrusionEnabled(bool enabled)
++{
++    std::error_code ec;
++    std::filesystem::create_directories(intrusionSettingsDir, ec);
++    if (ec)
++    {
++        throw std::runtime_error("Cannot create intrusion settings directory");
++    }
++    // Open the directory before committing; flush both data and rename.
++    int dirFd = open(intrusionSettingsDir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++    if (dirFd < 0)
++    {
++        throw std::runtime_error("Cannot open intrusion settings directory");
++    }
++    const std::string temporary = std::string(intrusionSettingsFile) + ".tmp";
++    int fd = open(temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
++                  0600);
++    if (fd < 0)
++    {
++        close(dirFd);
++        throw std::runtime_error("Cannot open intrusion settings file");
++    }
++    const char* value = enabled ? "1\n" : "0\n";
++    bool written = write(fd, value, 2) == 2 && fsync(fd) == 0;
++    if (close(fd) != 0)
++    {
++        written = false;
++    }
++    if (!written)
++    {
++        unlink(temporary.c_str());
++        close(dirFd);
++        throw std::runtime_error("Cannot save intrusion settings");
++    }
++    std::filesystem::rename(temporary, intrusionSettingsFile, ec);
++    if (ec)
++    {
++        unlink(temporary.c_str());
++        close(dirFd);
++        throw std::runtime_error("Cannot commit intrusion settings");
++    }
++    if (fsync(dirFd) != 0)
++    {
++        // The rename has committed: keep the runtime value consistent with it.
++        lg2::error("Cannot sync intrusion settings directory");
++    }
++    close(dirFd);
++}
++
+ void ChassisIntrusionSensor::updateValue(const size_t& value)
+ {
+     std::string newValue = value != 0 ? hwIntrusionValStr : normalValStr;
+@@ -213,6 +275,11 @@
+ 
+ int ChassisIntrusionHwmonSensor::readSensor()
+ {
++    if (!mDetectionEnabled)
++    {
++        // Do not access or rearm the hardware latch while monitoring is off.
++        return 0;
++    }
+     int value = 0;
+ 
+     std::fstream stream(mHwmonPath, std::ios::in | std::ios::out);
+@@ -422,6 +489,7 @@
+     bool autoRearm, boost::asio::io_context& io,
+     sdbusplus::asio::object_server& objServer, std::string hwmonName) :
+     ChassisIntrusionSensor(autoRearm, objServer),
++    mDetectionEnabled(loadIntrusionEnabled()), mSettingsServer(objServer),
+     mHwmonName(std::move(hwmonName)), mPollTimer(io)
+ {
+     std::vector<std::filesystem::path> paths;
+@@ -446,6 +514,41 @@
+ 
+     // Expecting only one hwmon file for one given chassis
+     mHwmonPath = paths[0].string();
++
++    mSettingsIface = objServer.add_interface(
++        "/xyz/openbmc_project/Chassis/IntrusionSettings",
++        "com.ctopai.CebGnrd.ChassisIntrusionSettings");
++    mSettingsIface->register_property(
++        "Enabled", mDetectionEnabled,
++        [this](const bool& requested, bool& propertyValue) {
++            if (requested == mDetectionEnabled)
++            {
++                return 1;
++            }
++            if (requested)
++            {
++                // Ignore latch history accumulated while detection was disabled.
++                // A currently open chassis will reassert on the next poll.
++                std::ofstream rearm(mHwmonPath);
++                rearm << intrusionStatusHwmonClearValue << '\n';
++                rearm.close();
++                if (!rearm)
++                {
++                    throw std::runtime_error("Cannot rearm chassis intrusion");
++                }
++            }
++            saveIntrusionEnabled(requested);
++            mDetectionEnabled = requested;
++            propertyValue = requested;
++            if (!requested)
++            {
++                updateValue(0);
++            }
++            lg2::info("Chassis intrusion detection enabled: {ENABLED}",
++                      "ENABLED", requested);
++            return 1;
++        });
++    mSettingsIface->initialize();
+ 
+     lg2::debug(
+         "Found '{NUM_PATHS}' paths for intrusion status. The first path is: '{PATH}'",
+@@ -477,5 +580,6 @@
+ 
+ ChassisIntrusionHwmonSensor::~ChassisIntrusionHwmonSensor()
+ {
++    mSettingsServer.remove_interface(mSettingsIface);
+     mPollTimer.cancel();
+ }
+--- a/src/intrusion/ChassisIntrusionSensor.hpp
++++ b/src/intrusion/ChassisIntrusionSensor.hpp
+@@ -89,6 +89,9 @@
+     ~ChassisIntrusionHwmonSensor() override;
+ 
+   private:
++    bool mDetectionEnabled = false;
++    sdbusplus::asio::object_server& mSettingsServer;
++    std::shared_ptr<sdbusplus::asio::dbus_interface> mSettingsIface;
+     std::string mHwmonName;
+     std::string mHwmonPath;
+     boost::asio::steady_timer mPollTimer;

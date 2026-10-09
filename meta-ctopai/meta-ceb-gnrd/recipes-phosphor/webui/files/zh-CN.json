@@ -437,6 +437,13 @@
     }
   },
   "pageInventory": {
+    "intrusion": {
+      "label": "开盖检测",
+      "hint": "设置在 BMC 掉电后仍会保留。",
+      "loadError": "无法读取开盖检测设置。",
+      "saveError": "无法保存开盖检测设置。",
+      "saved": "开盖检测设置已保存。"
+    },
     "dimmSlot": "DIMM 插槽",
     "fans": "风扇",
     "powerSupplies": "电源供应",

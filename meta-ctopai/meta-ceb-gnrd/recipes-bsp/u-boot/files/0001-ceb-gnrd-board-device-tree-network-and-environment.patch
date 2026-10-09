@@ -4,7 +4,7 @@ Date: Fri, 2 Oct 2026 00:00:00 +0000
 Subject: [PATCH] ceb-gnrd: board device tree, default network and environment
 
 Register the ast2600-ceb-gnrd device tree in arch/arm/dts/Makefile, set the
-default network settings to the Linux eth0 values (192.168.185.200/24, gateway
+default U-Boot network settings (192.168.185.50/24, gateway
 192.168.185.1, TFTP server 192.168.185.84) and add the board environment
 (CEB_GNRD_ENV, "run netupdate") to the default environment.  The device tree
 (ast2600-ceb-gnrd.dts) and include/configs/ceb-gnrd-env.h are new files that the
@@ -33,7 +33,7 @@ diff --git a/include/configs/aspeed-common.h b/include/configs/aspeed-common.h
 +#define CONFIG_GATEWAYIP	192.168.185.1
 -#define CONFIG_GATEWAYIP	192.168.0.1
  #define CONFIG_NETMASK		255.255.255.0
-+#define CONFIG_IPADDR		192.168.185.200
++#define CONFIG_IPADDR		192.168.185.50
 +#define CONFIG_SERVERIP		192.168.185.84
 -#define CONFIG_IPADDR		192.168.0.45
 -#define CONFIG_SERVERIP		192.168.0.81
