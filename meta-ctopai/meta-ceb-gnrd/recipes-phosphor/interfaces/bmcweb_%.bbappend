@@ -5,6 +5,7 @@ SRC_URI:append:ceb-gnrd = " file://0002-ceb-gnrd-async-virtual-media-proxy-clean
 SRC_URI:append:ceb-gnrd = " file://0003-ceb-gnrd-virtual-media-receive-backpressure.patch"
 SRC_URI:append:ceb-gnrd = " file://0004-ceb-gnrd-report-boot-id-for-update-monitor.patch"
 SRC_URI:append:ceb-gnrd = " file://0005-ceb-gnrd-allow-same-origin-kvm-fullscreen.patch"
+SRC_URI:append:ceb-gnrd = " file://0006-ceb-gnrd-fix-bmcweb-state-directory.patch"
 
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 

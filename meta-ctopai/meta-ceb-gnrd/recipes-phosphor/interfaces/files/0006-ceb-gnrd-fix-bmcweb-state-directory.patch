@@ -1,0 +1,25 @@
+Subject: [PATCH] bmcweb: clear invalid state directory in root mode
+
+The root-mode service uses /home/root as its working directory and stores
+bmcweb_persistent_data.json there when STATE_DIRECTORY is absent. systemd
+already ignores the absolute StateDirectory=/home/root value. Generate an
+empty directive instead, retaining the existing data path without migrating
+sessions, system UUID or event subscriptions. Leave experimental dynamic-user
+mode's valid StateDirectory=bmcweb configuration unchanged.
+
+Upstream-Status: Pending
+
+--- a/config/meson.build
++++ b/config/meson.build
+@@ -192,7 +192,10 @@
+     user = 'root'
+     group = 'root'
+     dynamic_user = 'no'
+-    state_directory = '/home/root'
++    # StateDirectory accepts names relative to /var/lib, not absolute paths.
++    # Keep legacy root-mode persistence in WorkingDirectory: persistent_data
++    # falls back to '.' when STATE_DIRECTORY is absent. Do not move old data.
++    state_directory = ''
+     work_dir = '/home/root'
+ endif
+ 
