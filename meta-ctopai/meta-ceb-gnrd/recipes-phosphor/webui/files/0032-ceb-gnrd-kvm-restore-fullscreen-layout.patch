@@ -12,7 +12,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
 --- a/src/views/Operations/Kvm/KvmConsole.vue
 +++ b/src/views/Operations/Kvm/KvmConsole.vue
-@@ -1,5 +1,5 @@
+@@ -1,8 +1,8 @@
  <template>
 -  <div :class="marginClass">
 +  <div class="kvm-console" :class="marginClass">
@@ -21,6 +21,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +      <b-row class="d-flex flex-nowrap align-items-center">
 -        <b-col class="d-flex flex-column justify-content-end" cols="4">
 +        <b-col class="d-flex flex-column flex-shrink-0 justify-content-end" cols="auto">
+           <dl class="mb-2" sm="2" md="2">
+             <dt class="d-inline fw-bold me-1">{{ $t('pageKvm.status') }}:</dt>
+             <dd class="d-inline">
 @@ -12,7 +12,7 @@
            </dl>
          </b-col>
