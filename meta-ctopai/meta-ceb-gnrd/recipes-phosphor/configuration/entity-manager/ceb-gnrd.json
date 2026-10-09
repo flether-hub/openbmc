@@ -45,7 +45,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.53 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.525 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.07 }
             ],
             "Type": "ADC"
@@ -67,7 +67,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.9605 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.960 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.2995 }
             ],
             "Type": "ADC"
@@ -78,7 +78,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.7225 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.636 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 0.9775 }
             ],
             "Type": "ADC"
@@ -89,7 +89,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.85 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.846 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.15 }
             ],
             "Type": "ADC"
@@ -100,7 +100,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.53 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.525 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.07 }
             ],
             "Type": "ADC"
@@ -111,7 +111,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.9605 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 0.960 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 1.2995 }
             ],
             "Type": "ADC"
@@ -122,7 +122,7 @@
             "PowerState": "ChassisOn",
             "ScaleFactor": 1.0,
             "Thresholds": [
-                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.53 },
+                { "Direction": "less than", "Name": "lower critical", "Severity": 1, "Value": 1.525 },
                 { "Direction": "greater than", "Name": "upper critical", "Severity": 1, "Value": 2.07 }
             ],
             "Type": "ADC"

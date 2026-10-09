@@ -1,0 +1,198 @@
+From: CEB-GNRD maintainers <bmc@localhost>
+Subject: [PATCH] sensors: gate initial chassis samples and recheck delayed alarms
+
+Apply the existing ten-second Power OK settling gate to initial chassis
+state reads as well as signals. Ignore stale initial replies. Revalidate
+delayed threshold edges using the latest sample instead of a ramp value.
+
+Upstream-Status: Pending
+---
+diff --git a/src/Utils.cpp b/src/Utils.cpp
+--- a/src/Utils.cpp
++++ b/src/Utils.cpp
+@@ -60,6 +60,7 @@
+ static bool biosHasPost = false;
+ static bool manufacturingMode = false;
+ static bool chassisStatusOn = false;
++static unsigned int chassisStatusGeneration = 0;
+ 
+ static std::unique_ptr<sdbusplus::match> powerMatch = nullptr;
+ static std::unique_ptr<sdbusplus::match> postMatch = nullptr;
+@@ -417,13 +418,52 @@
+         post::interface, post::property);
+ }
+ 
++// Use the same settling gate for initial Get and PropertiesChanged.
++// Chassis.On is published by power-control after Power OK, not on request.
++static void updateChassisStatus(
++    const std::shared_ptr<sdbusplus::asio::connection>& conn, bool on,
++    const std::function<void(PowerState, bool)>& callback)
++{
++    static boost::asio::steady_timer timer(conn->get_io_context());
++    const unsigned int generation = ++chassisStatusGeneration;
++    timer.cancel();
++    chassisStatusOn = false;
++    callback(PowerState::chassisOn, false);
++    if (!on)
++    {
++        return;
++    }
++    timer.expires_after(std::chrono::seconds(10));
++    timer.async_wait([callback, generation](boost::system::error_code ec) {
++        if (ec == boost::asio::error::operation_aborted ||
++            generation != chassisStatusGeneration)
++        {
++            return;
++        }
++        if (ec)
++        {
++            lg2::error("Chassis settling timer error: {ERROR}", "ERROR",
++                       ec.message());
++            return;
++        }
++        chassisStatusOn = true;
++        callback(PowerState::chassisOn, true);
++    });
++}
++
+ static void getChassisStatus(
+     const std::shared_ptr<sdbusplus::asio::connection>& conn,
+-    size_t retries = 2)
++    const std::function<void(PowerState, bool)>& callback,
++    size_t retries = 2, unsigned int generation = chassisStatusGeneration)
+ {
+     conn->async_method_call(
+-        [conn, retries](boost::system::error_code ec,
++        [conn, callback, retries, generation](boost::system::error_code ec,
+                         const std::variant<std::string>& state) {
++            // Ignore initial replies overtaken by a newer power event.
++            if (generation != chassisStatusGeneration)
++            {
++                return;
++            }
+             if (ec)
+             {
+                 if (retries != 0U)
+@@ -432,8 +472,8 @@
+                         conn->get_io_context());
+                     timer->expires_after(std::chrono::seconds(15));
+                     timer->async_wait(
+-                        [timer, conn, retries](boost::system::error_code) {
+-                            getChassisStatus(conn, retries - 1);
++                        [timer, conn, callback, retries, generation](boost::system::error_code) {
++                            getChassisStatus(conn, callback, retries - 1, generation);
+                         });
+                     return;
+                 }
+@@ -445,8 +485,9 @@
+                     "ERROR_MESSAGE", ec.message());
+                 return;
+             }
+-            chassisStatusOn =
+-                std::get<std::string>(state).ends_with(chassis::sOn);
++            updateChassisStatus(
++                conn, std::get<std::string>(state).ends_with(chassis::sOn),
++                callback);
+         },
+         chassis::busname, chassis::path, properties::interface, properties::get,
+         chassis::interface, chassis::property);
+@@ -457,7 +498,6 @@
+     std::function<void(PowerState type, bool state)>&& hostStatusCallback)
+ {
+     static boost::asio::steady_timer timer(conn->get_io_context());
+-    static boost::asio::steady_timer timerChassisOn(conn->get_io_context());
+     // create a match for powergood changes, first time do a method call to
+     // cache the correct value
+     if (powerMatch)
+@@ -534,7 +574,7 @@
+         "type='signal',interface='" + std::string(properties::interface) +
+             "',path='" + std::string(chassis::path) + "',arg0='" +
+             std::string(chassis::interface) + "'",
+-        [hostStatusCallback = std::move(hostStatusCallback)](
++        [conn, hostStatusCallback](
+             sdbusplus::message_t& message) {
+             std::string objectName;
+             boost::container::flat_map<std::string, std::variant<std::string>>
+@@ -545,35 +585,12 @@
+             {
+                 bool on = std::get<std::string>(findState->second)
+                               .ends_with(chassis::sOn);
+-                if (!on)
+-                {
+-                    timerChassisOn.cancel();
+-                    chassisStatusOn = false;
+-                    hostStatusCallback(PowerState::chassisOn, chassisStatusOn);
+-                    return;
+-                }
+-                // on comes too quickly
+-                timerChassisOn.expires_after(std::chrono::seconds(10));
+-                timerChassisOn.async_wait([hostStatusCallback](
+-                                              boost::system::error_code ec) {
+-                    if (ec == boost::asio::error::operation_aborted)
+-                    {
+-                        return;
+-                    }
+-                    if (ec)
+-                    {
+-                        lg2::error("Timer error: '{ERROR_MESSAGE}'",
+-                                   "ERROR_MESSAGE", ec.message());
+-                        return;
+-                    }
+-                    chassisStatusOn = true;
+-                    hostStatusCallback(PowerState::chassisOn, chassisStatusOn);
+-                });
++                updateChassisStatus(conn, on, hostStatusCallback);
+             }
+         });
+     getPowerStatus(conn);
+     getPostStatus(conn);
+-    getChassisStatus(conn);
++    getChassisStatus(conn, hostStatusCallback);
+ }
+ 
+ void setupPowerMatch(const std::shared_ptr<sdbusplus::asio::connection>& conn)
+diff --git a/src/Thresholds.cpp b/src/Thresholds.cpp
+--- a/src/Thresholds.cpp
++++ b/src/Thresholds.cpp
+@@ -337,7 +337,7 @@
+ 
+ void ThresholdTimer::startTimer(const std::weak_ptr<Sensor>& weakSensor,
+                                 const Threshold& threshold, bool assert,
+-                                double assertValue)
++                                double /*assertValue*/)
+ {
+     struct TimerUsed timerUsed = {};
+     constexpr const size_t waitTime = 5;
+@@ -361,8 +361,7 @@
+     pair->first.direction = threshold.direction;
+     pair->first.assert = assert;
+     pair->second.expires_after(std::chrono::seconds(waitTime));
+-    pair->second.async_wait([weakSensor, pair, threshold, assert,
+-                             assertValue](boost::system::error_code ec) {
++    pair->second.async_wait([weakSensor, pair, threshold, assert](boost::system::error_code ec) {
+         auto sensorPtr = weakSensor.lock();
+         if (!sensorPtr)
+         {
+@@ -383,8 +382,20 @@
+         }
+         if (sensorPtr->readingStateGood())
+         {
+-            assertThresholds(sensorPtr.get(), assertValue, threshold.level,
+-                             threshold.direction, assert);
++            // A delayed edge must still be valid for the latest sample.
++            // Never emit an old power-ramp value after the rail recovered.
++            const auto changes = checkThresholds(sensorPtr.get(), sensorPtr->value);
++            for (const auto& change : changes)
++            {
++                if (change.threshold.level == threshold.level &&
++                    change.threshold.direction == threshold.direction &&
++                    change.asserted == assert)
++                {
++                    assertThresholds(sensorPtr.get(), change.assertValue,
++                                     threshold.level, threshold.direction, assert);
++                    break;
++                }
++            }
+         }
+     });
+ }

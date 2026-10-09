@@ -16,13 +16,14 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +  <div class="kvm-console" :class="marginClass">
      <div ref="toolbar" class="kvm-toolbar">
        <b-row class="d-flex">
-         <b-col class="d-flex flex-column justify-content-end" cols="4">
+-        <b-col class="d-flex flex-column justify-content-end" cols="4">
++        <b-col class="d-flex flex-column justify-content-end" cols="auto">
 @@ -12,7 +12,7 @@
            </dl>
          </b-col>
  
 -        <b-col class="d-flex justify-content-end pe-1">
-+        <b-col class="d-flex flex-wrap justify-content-end pe-1">
++        <b-col class="d-flex flex-wrap flex-grow-1 justify-content-end pe-1" cols="auto">
            <b-button
              v-if="isConnected"
              variant="link"
@@ -125,7 +126,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
      },
      openConsoleWindow() {
        // If consoleWindow is not null
-@@ -230,6 +230,29 @@
+@@ -230,6 +230,33 @@
  </script>
  
  <style scoped lang="scss">
@@ -137,6 +138,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +.kvm-toolbar {
 +  width: 100%;
 +  max-width: 100%;
++}
++
++.kvm-toolbar .btn {
++  white-space: nowrap;
 +}
 +
 +#terminal-kvm {

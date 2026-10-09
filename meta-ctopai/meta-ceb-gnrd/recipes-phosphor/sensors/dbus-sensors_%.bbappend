@@ -7,6 +7,7 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 SRC_URI:append:ceb-gnrd = " \
     file://0001-reuse-i2c-device-by-config-path-and-guard-psu-io.patch \
     file://0002-ceb-gnrd-megcrps800-psu.patch \
+    file://0003-ceb-gnrd-gate-chassis-adc-and-delayed-alarms.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \
