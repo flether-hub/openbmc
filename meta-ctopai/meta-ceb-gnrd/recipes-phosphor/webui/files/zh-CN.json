@@ -939,7 +939,8 @@
     }
   },
   "pageSerialOverLan": {
-    "useVuart": "使用 vUART（关闭：物理串口）",
+    "useVuart": "使用 vUART（暂不可用）",
+    "readOnlyHint": "SOL 目前为只读模式，仅支持串口输出，不支持键盘输入或粘贴。",
     "physicalSource": "物理串口：UART3 / ttyS2，115200 波特率（默认）",
     "vuartSource": "vUART：主机 COM1 经 eSPI / ttyVUART0，115200 波特率",
     "connectionHint": "控制台未连接，请确认主机已开机且所选串口来源可用。",

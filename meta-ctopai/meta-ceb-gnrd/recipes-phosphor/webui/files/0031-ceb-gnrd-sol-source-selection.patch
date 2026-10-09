@@ -1,4 +1,8 @@
-Subject: [PATCH] SOL: select physical UART3 or vUART
+Subject: [PATCH] SOL: use physical UART in output-only mode
+
+Disable the vUART selector and ignore old source query parameters. Attach
+the terminal to the physical default endpoint with bidirectional forwarding
+disabled and explain the read-only behavior to users.
 
 Upstream-Status: Inappropriate [CEB-GNRD serial topology]
 
@@ -8,15 +12,15 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
        :aria-label="$t('pageSerialOverLan.accessDeniedAriaLabel')"
      />
      <template v-else>
-+      <b-form-checkbox
-+        v-model="useVuart"
-+        switch
-+        class="my-3"
-+        @update:model-value="switchConsole"
-+      >
++      <b-form-checkbox :model-value="false" switch disabled class="my-3">
 +        {{ $t('pageSerialOverLan.useVuart') }}
 +      </b-form-checkbox>
-+      <p class="small text-muted">{{ consoleSourceLabel }}</p>
++      <p class="small text-muted">
++        {{ $t('pageSerialOverLan.physicalSource') }}
++      </p>
++      <alert variant="info" :small="true" class="mb-3">
++        <p class="mb-0">{{ $t('pageSerialOverLan.readOnlyHint') }}</p>
++      </alert>
        <b-row class="d-flex">
          <b-col sm="4" md="6">
            <alert
@@ -29,24 +33,15 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
              </p>
            </alert>
          </b-col>
-@@ -82,14 +91,24 @@
+@@ -82,6 +91,7 @@
    data() {
      return {
        resizeConsoleWindow: null,
-+      useVuart: this.$route.query.source === 'vuart',
 +      socketConnected: false,
-+      consoleGeneration: 0,
      };
    },
    computed: {
-+    consoleSourceLabel() {
-+      return this.$t(
-+        this.useVuart
-+          ? 'pageSerialOverLan.vuartSource'
-+          : 'pageSerialOverLan.physicalSource',
-+      );
-+    },
-     serverStatus() {
+@@ -89,7 +99,7 @@
        return this.$store.getters['global/serverStatus'];
      },
      connection() {
@@ -55,33 +50,29 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
      },
      serverStatusIcon() {
        return this.connection ? 'success' : 'danger';
-@@ -110,11 +129,22 @@
-     this.closeTerminal();
-   },
+@@ -112,6 +122,7 @@
    methods: {
-+    switchConsole() {
-+      this.closeTerminal();
-+      const generation = this.consoleGeneration;
-+      this.$nextTick(() => {
-+        if (!this.accessDenied && generation === this.consoleGeneration) {
-+          this.openTerminal();
-+        }
-+      });
-+    },
      openTerminal() {
        const token = this.$store.getters['authentication/token'];
--      this.ws = new WebSocket(`wss://${window.location.host}/console/default`, [
--        token,
--      ]);
-+      const source = this.useVuart ? 'vuart' : 'default';
-+      this.ws = new WebSocket(
-+        `wss://${window.location.host}/console/${source}`,
-+        [token],
-+      );
++      // Always use the physical UART endpoint, including old vUART bookmarks.
+       this.ws = new WebSocket(`wss://${window.location.host}/console/default`, [
+         token,
+       ]);
+@@ -137,10 +148,12 @@
+         fontFamily:
+           'SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace',
+         scrollback: 10000,
++        disableStdin: true,
+         theme: SOL_THEME,
+       });
  
-       // Refer https://github.com/xtermjs/xterm.js/ for xterm implementation and addons.
+-      const attachAddon = new AttachAddon(this.ws);
++      // Receive output only; do not forward keys, paste or terminal replies.
++      const attachAddon = new AttachAddon(this.ws, { bidirectional: false });
+       this.term.loadAddon(attachAddon);
  
-@@ -154,23 +184,23 @@
+       const fitAddon = new FitAddon();
+@@ -154,23 +167,22 @@
        }, 1000);
        window.addEventListener('resize', this.resizeConsoleWindow);
  
@@ -112,7 +103,6 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
 +      };
      },
      closeTerminal() {
-+      this.consoleGeneration += 1;
 +      window.removeEventListener('resize', this.resizeConsoleWindow);
 +      this.resizeConsoleWindow?.cancel();
 +      this.resizeConsoleWindow = null;
@@ -120,22 +110,23 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
        this.term?.dispose();
        this.term = null;
        this.ws?.close();
-@@ -178,7 +208,7 @@
+@@ -178,7 +190,7 @@
      },
      openConsoleWindow() {
        window.open(
 -        '#/console/serial-over-lan-console',
-+        `#/console/serial-over-lan-console?source=${this.useVuart ? 'vuart' : 'physical'}`,
++        '#/console/serial-over-lan-console?source=physical',
          '_blank',
          'directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,scrollbars=no,resizable=yes,width=600,height=550',
        );
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -932,6 +932,10 @@
+@@ -932,6 +932,11 @@
          }
      },
      "pageSerialOverLan": {
-+        "useVuart": "Use vUART (off: physical serial port)",
++        "useVuart": "Use vUART (unavailable)",
++        "readOnlyHint": "SOL is currently read-only. Only console output is supported; keyboard input and paste are not supported.",
 +        "physicalSource": "Physical serial port: UART3 / ttyS2, 115200 baud (default)",
 +        "vuartSource": "vUART: host COM1 over eSPI / ttyVUART0, 115200 baud",
 +        "connectionHint": "Console disconnected. Confirm the host is powered on and the selected serial source is available.",
