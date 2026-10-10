@@ -10,6 +10,9 @@ for file in /var/lib/systemd/coredump/core.*; do
     removed=$((removed + 1))
 done
 echo "Log storage: removed $removed old core payloads; rwfs=14 MiB"
-# Vacuum only the volatile journal; preserve old persistent files for diagnosis.
+# Retain a bounded amount of old binary diagnostics and trim oversized legacy
+# text files before rsyslog opens them. Normal rotation runs inside rsyslog.
+/usr/libexec/ceb-gnrd-storage-budget --migrate
+# Vacuum only the volatile journal.
 journalctl --directory=/run/log/journal --vacuum-size=8M --vacuum-files=8 || true
 df -k /var/lib /var/log

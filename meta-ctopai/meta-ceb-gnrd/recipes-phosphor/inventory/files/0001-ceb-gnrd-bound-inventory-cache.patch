@@ -1,0 +1,89 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Bound persistent storage on CEB-GNRD
+
+Upstream-Status: Inappropriate [board storage policy]
+
+--- a/serialize.hpp
++++ b/serialize.hpp
+@@ -7,6 +7,9 @@
+ 
+ #include <filesystem>
+ #include <fstream>
++#include <sstream>
++#include <iterator>
++#include <xyz/openbmc_project/Common/error.hpp>
+ 
+ namespace phosphor
+ {
+@@ -27,6 +30,42 @@
+     p /= fs::path(iface).relative_path();
+     return p;
+ }
++inline void checkStorageBudget(const fs::path& target, std::size_t bytes)
++{
++    // Bound directory metadata as well as cache data.
++    const auto relative = target.lexically_relative(PIM_PERSIST_PATH);
++    if (relative.string().size() > 256 ||
++        std::distance(relative.begin(), relative.end()) > 16)
++    {
++        throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++    }
++    std::uintmax_t total = bytes;
++    std::size_t entries = 0;
++    if (bytes > 16 * 1024)
++    {
++        throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++    }
++    if (fs::exists(PIM_PERSIST_PATH))
++    {
++        for (const auto& entry : fs::recursive_directory_iterator(PIM_PERSIST_PATH))
++        {
++            ++entries;
++            if (entry.is_regular_file() && entry.path() != target)
++            {
++                total += entry.file_size();
++            }
++            if (entries > 1024 || total > 512 * 1024)
++            {
++                throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++            }
++        }
++        // Allow replacing existing cache files when the entry budget is full.
++        if (entries + 16 > 1024 && !fs::exists(target))
++        {
++            throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++        }
++    }
++}
+ } // namespace detail
+ 
+ struct SerialOps
+@@ -40,6 +79,7 @@
+     static void serialize(const std::string& path, const std::string& iface)
+     {
+         auto p = detail::getStoragePath(path, iface);
++        detail::checkStorageBudget(p, 0);
+         fs::create_directories(p.parent_path());
+         std::ofstream os(p, std::ios::binary);
+     }
+@@ -54,11 +94,18 @@
+     static void serialize(const std::string& path, const std::string& iface,
+                           const T& object)
+     {
++        std::ostringstream buffer;
++        {
++            // Destroy the archive before measuring; it writes closing braces.
++            cereal::JSONOutputArchive oarchive(buffer);
++            oarchive(object);
++        }
++        const auto data = buffer.str();
+         auto p = detail::getStoragePath(path, iface);
++        detail::checkStorageBudget(p, data.size());
+         fs::create_directories(p.parent_path());
+         std::ofstream os(p, std::ios::binary);
+-        cereal::JSONOutputArchive oarchive(os);
+-        oarchive(object);
++        os << data;
+     }
+ 
+     static void deserialize(const std::string&, const std::string&)

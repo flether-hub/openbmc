@@ -651,8 +651,18 @@ def storage_logs():
     stat = os.statvfs('/var/lib')
     free = stat.f_bavail * stat.f_frsize
     require('persistent storage >= 1 MiB free', free >= 1024 * 1024, f'{free // 1024} KiB')
-    require('persistent journal budget 1 MiB configured',
-            'SystemMaxUse=1M' in read('/etc/systemd/journald.conf.d/60-ceb-gnrd-journal-limits.conf'))
+    journal_config = read('/etc/systemd/journald.conf.d/60-ceb-gnrd-journal-limits.conf')
+    require('journal in RAM with 8 MiB budget',
+            'Storage=volatile' in journal_config and 'RuntimeMaxUse=8M' in journal_config)
+    require('pstore external archives disabled',
+            'Storage=journal' in read('/etc/systemd/pstore.conf.d/60-ceb-gnrd-pstore-limits.conf'))
+    for filename, limit in [('ceb-gnrd-system-errors.conf', '524288'),
+                            ('ceb-gnrd-redfish.conf', '65536'),
+                            ('phosphor-sel-logger.conf', '15360')]:
+        config = read('/etc/rsyslog.d/' + filename)
+        require(f'rsyslog writer size limit {filename}',
+                f'rotation.sizeLimit="{limit}"' in config and
+                'rotation.sizeLimitCommand="/usr/libexec/ceb-gnrd-rotate-log"' in config)
     require('core binary storage disabled',
             'Storage=none' in read('/etc/systemd/coredump.conf.d/60-ceb-gnrd-coredump-limits.conf'))
     info('effective journal/core configuration', ['sh', '-c',

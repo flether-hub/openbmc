@@ -1,0 +1,62 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Bound persistent storage on CEB-GNRD
+
+Upstream-Status: Inappropriate [board storage policy]
+
+--- a/src/manager.cpp
++++ b/src/manager.cpp
+@@ -20,6 +20,13 @@
+ #include "xyz/openbmc_project/BIOSConfig/Common/error.hpp"
+ #include "xyz/openbmc_project/Common/error.hpp"
+ 
++#include <cereal/archives/binary.hpp>
++#include <cereal/types/map.hpp>
++#include <cereal/types/string.hpp>
++#include <cereal/types/tuple.hpp>
++#include <cereal/types/variant.hpp>
++#include <cereal/types/vector.hpp>
++#include <sstream>
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/asio/connection.hpp>
+ #include <sdbusplus/asio/object_server.hpp>
+@@ -29,6 +36,24 @@
+ 
+ using namespace sdbusplus::xyz::openbmc_project::Common::Error;
+ using namespace sdbusplus::xyz::openbmc_project::BIOSConfig::Common::Error;
++
++static void checkBIOSStorageBudget(const Manager::BaseTable& table,
++                                   const Manager::PendingAttributes& pending)
++{
++    if (table.size() > 1024 || pending.size() > 1024)
++    {
++        throw InvalidArgument();
++    }
++    std::ostringstream buffer;
++    {
++        cereal::BinaryOutputArchive archive(buffer);
++        archive(table, pending);
++    }
++    if (buffer.str().size() > 256 * 1024)
++    {
++        throw InvalidArgument();
++    }
++}
+ 
+ static bool valueMatchesType(Manager::AttributeValue value,
+                              Base::AttributeType type)
+@@ -110,6 +135,7 @@
+ 
+ Manager::BaseTable Manager::baseBIOSTable(BaseTable value)
+ {
++    checkBIOSStorageBudget(value, {});
+     pendingAttributes({});
+     auto baseTable = Base::baseBIOSTable(value, false);
+     serialize(*this, biosFile);
+@@ -319,6 +345,7 @@
+         pendingAttribute.emplace(std::make_pair(pair.first, pair.second));
+     }
+ 
++    checkBIOSStorageBudget(biosTable, pendingAttribute);
+     auto pendingAttrs = Base::pendingAttributes(pendingAttribute, false);
+     serialize(*this, biosFile);
+ 

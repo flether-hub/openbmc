@@ -1,0 +1,128 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Bound persistent storage on CEB-GNRD
+
+Upstream-Status: Inappropriate [board storage policy]
+
+--- a/certificate.cpp
++++ b/certificate.cpp
+@@ -106,6 +106,11 @@
+ 
+ void dumpCertificate(const std::string& pem, const std::string& certFilePath)
+ {
++    if (pem.size() >= 32 * 1024)
++    {
++        elog<InvalidCertificateError>(
++            InvalidCertificate::REASON("Certificate exceeds 32 KiB"));
++    }
+     std::ofstream outputCertFileStream;
+ 
+     outputCertFileStream.exceptions(
+@@ -302,6 +307,15 @@
+ 
+ void Certificate::install(const std::string& certSrcFilePath, bool restore)
+ {
++    // Reject oversized input before touching the installed certificate.
++    std::error_code ec;
++    const auto inputSize = fs::file_size(certSrcFilePath, ec);
++    if (ec || inputSize == 0 || inputSize > 32 * 1024)
++    {
++        elog<InvalidCertificateError>(InvalidCertificate::REASON(
++            "Certificate file must be 1..32768 bytes"));
++    }
++
+     if (restore)
+     {
+         lg2::debug("Certificate install, FILEPATH:{FILEPATH}", "FILEPATH",
+--- a/certs_manager.cpp
++++ b/certs_manager.cpp
+@@ -81,6 +81,17 @@
+  *
+  * @return An array of individual PEM encoded x509 certificate
+  */
++void checkAuthorityListSize(const std::string& filePath)
++{
++    std::error_code ec;
++    const auto size = fs::file_size(filePath, ec);
++    if (ec || size == 0 || size > 256 * 1024)
++    {
++        elog<InvalidCertificate>(InvalidCertificateReason(
++            "Authority list must be 1..262144 bytes"));
++    }
++}
++
+ std::vector<std::string> splitCertificates(const std::string& sourceFilePath)
+ {
+     std::ifstream inputCertFileStream;
+@@ -296,6 +307,7 @@
+             "InstallAll, or use ReplaceAll"));
+     }
+ 
++    checkAuthorityListSize(filePath);
+     fs::path sourceFile(filePath);
+     if (!fs::exists(sourceFile))
+     {
+@@ -315,6 +327,13 @@
+     // Atomically install all the certificates
+     fs::path tempPath = Certificate::generateUniqueFilePath(authorityStore);
+     fs::create_directory(tempPath);
++    auto removeStaging = [](fs::path* path) {
++        std::error_code ec;
++        fs::remove_all(*path, ec);
++        delete path;
++    };
++    std::unique_ptr<fs::path, decltype(removeStaging)> stagingGuard(
++        new fs::path(tempPath), removeStaging);
+     // Copies the authorities list
+     Certificate::copyCertificate(sourceFile,
+                                  tempPath / defaultAuthoritiesListFileName);
+@@ -367,6 +386,22 @@
+ 
+ std::vector<sdbusplus::object_path> Manager::replaceAll(std::string filePath)
+ {
++    // Validate the storage budget before removing the current authorities.
++    if (certType != CertificateType::authority)
++    {
++        elog<NotAllowed>(NotAllowedReason(
++            "ReplaceAll is only allowed for Authority certificates"));
++    }
++    checkAuthorityListSize(filePath);
++    const auto authorities = splitCertificates(filePath);
++    if (authorities.size() > maxNumAuthorityCertificates ||
++        std::any_of(authorities.begin(), authorities.end(),
++                    [](const auto& pem) { return pem.size() >= 32 * 1024; }))
++    {
++        elog<InvalidCertificate>(InvalidCertificateReason(
++            "Authority list exceeds certificate count or size limit"));
++    }
++
+     installedCerts.clear();
+     certIdCounter = 1;
+     storageUpdate();
+@@ -441,6 +476,27 @@
+     std::string organization, std::string organizationalUnit, std::string state,
+     std::string surname, std::string unstructuredName)
+ {
++    // Reject oversized CSR fields before removing the previous request.
++    for (const auto* field : {&challengePassword, &city, &commonName,
++                             &contactPerson, &country, &email, &givenName,
++                             &initials, &keyCurveId, &keyPairAlgorithm,
++                             &organization, &organizationalUnit, &state,
++                             &surname, &unstructuredName})
++    {
++        if (field->size() > 256)
++        {
++            throw InvalidArgument();
++        }
++    }
++    if (alternativeNames.size() > 32 || keyUsage.size() > 16 ||
++        std::any_of(alternativeNames.begin(), alternativeNames.end(),
++                    [](const auto& value) { return value.size() > 256; }) ||
++        std::any_of(keyUsage.begin(), keyUsage.end(),
++                    [](const auto& value) { return value.size() > 64; }))
++    {
++        throw InvalidArgument();
++    }
++
+     // We support only one CSR.
+     csrPtr.reset(nullptr);
+     auto pid = fork();

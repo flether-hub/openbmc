@@ -6,3 +6,6 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/${PN}:"
 # field" ("Get Sol Config - Invalid solInterface").  Same override as the other
 # OpenBMC platforms that offer IPMI SOL.
 SRC_URI:append:ceb-gnrd = " file://settings.override.yml"
+
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-bound-persistent-setting-text.patch"

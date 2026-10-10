@@ -1,0 +1,15 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] rsyslog: rotate SEL in the writer before it grows indefinitely
+
+Upstream-Status: Inappropriate [CEB-GNRD persistent storage budget]
+
+--- a/rsyslog/phosphor-sel-logger.conf
++++ b/rsyslog/phosphor-sel-logger.conf
+@@ -22,3 +22,6 @@
+ if ($!MESSAGE_ID == "b370836ccf2f4850ac5bee185b77893a") then {
+-   action(type="omfile" file="/var/log/ipmi_sel" template="IPMISELTemplate")
++   action(type="omfile" file="/var/log/ipmi_sel" template="IPMISELTemplate"
++          rotation.sizeLimit="15360"
++          rotation.sizeLimitCommand="/usr/libexec/ceb-gnrd-rotate-log"
++          rotation.sizeLimitCommandPassFileName="on")
+ }

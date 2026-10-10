@@ -1,7 +1,7 @@
 [Unit]
 Description=Apply CEB-GNRD persistent log storage budget
 After=local-fs.target systemd-journald.service
-Before=bmcweb.service
+Before=bmcweb.service rsyslog.service
 
 [Service]
 Type=oneshot

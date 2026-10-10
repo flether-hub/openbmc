@@ -1,0 +1,127 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] bound persistent sessions and event subscription payloads
+
+Upstream-Status: Inappropriate [CEB-GNRD persistent storage budget]
+
+Limit persistent sessions to 64 and session Context to 256 bytes. Basic and
+mutual TLS transient authentication are not limited by persistent capacity.
+Apply the same constraints when restoring old sessions and handle rejection
+in Web login before dereferencing the returned session. Bound event creation
+and update payloads to 16 KiB; firmware uploads retain their existing limit.
+
+--- a/include/sessions.hpp
++++ b/include/sessions.hpp
+@@ -261,11 +261,38 @@
+ class SessionStore
+ {
+   public:
++    static constexpr std::size_t maxPersistentSessions = 64;
++    static constexpr std::size_t maxSessionContextSize = 256;
++
++    bool hasPersistentSessionCapacity() const
++    {
++        std::size_t count = 0;
++        for (const auto& entry : authTokens)
++        {
++            const auto& session = entry.second;
++            if (session->sessionType != SessionType::Basic &&
++                session->sessionType != SessionType::MutualTLS)
++            {
++                ++count;
++            }
++        }
++        return count < maxPersistentSessions;
++    }
++
+     std::shared_ptr<UserSession> generateUserSession(
+         std::string_view username, const boost::asio::ip::address& clientIp,
+         const std::optional<std::string>& clientId, SessionType sessionType,
+         bool isConfigureSelfOnly = false)
+     {
++        applySessionTimeouts();
++        if ((clientId && clientId->size() > maxSessionContextSize) ||
++            ((sessionType != SessionType::Basic &&
++              sessionType != SessionType::MutualTLS) &&
++             !hasPersistentSessionCapacity()))
++        {
++            BMCWEB_LOG_WARNING("Persistent session storage limit reached");
++            return nullptr;
++        }
+         // Only need csrf tokens for cookie based auth, token doesn't matter
+         std::string sessionToken =
+             bmcweb::getRandomIdOfLength(sessionTokenSize);
+--- a/include/persistent_data.hpp
++++ b/include/persistent_data.hpp
+@@ -186,6 +186,14 @@
+                                 continue;
+                             }
+ 
++                            if (!SessionStore::getInstance()
++                                     .hasPersistentSessionCapacity() ||
++                                (newSession->clientId &&
++                                 newSession->clientId->size() >
++                                     SessionStore::maxSessionContextSize))
++                            {
++                                continue;
++                            }
+                             BMCWEB_LOG_DEBUG("Restored session: {} {} {}",
+                                              newSession->csrfToken,
+                                              newSession->uniqueId,
+--- a/features/webui_login/login_routes.hpp
++++ b/features/webui_login/login_routes.hpp
+@@ -92,6 +92,11 @@
+             *userStr, req.ipAddress, std::nullopt,
+             persistent_data::SessionType::Session, isConfigureSelfOnly);
+ 
++    if (session == nullptr)
++    {
++        asyncResp->res.result(boost::beast::http::status::service_unavailable);
++        return;
++    }
+     bmcweb::setSessionCookies(asyncResp->res, *session);
+ 
+     // if content type is json, assume json token
+--- a/redfish-core/lib/redfish_sessions.hpp
++++ b/redfish-core/lib/redfish_sessions.hpp
+@@ -265,6 +265,13 @@
+         return;
+     }
+ 
++    if (clientId &&
++        clientId->size() > persistent_data::SessionStore::maxSessionContextSize)
++    {
++        messages::stringValueTooLong(asyncResp->res, "Context",
++                                    persistent_data::SessionStore::maxSessionContextSize);
++        return;
++    }
+     int pamrc = pamAuthenticateUser(username, password, token);
+     bool isConfigureSelfOnly = pamrc == PAM_NEW_AUTHTOK_REQD;
+     if ((pamrc != PAM_SUCCESS) && !isConfigureSelfOnly)
+--- a/redfish-core/lib/event_service.hpp
++++ b/redfish-core/lib/event_service.hpp
+@@ -316,6 +316,13 @@
+                 const std::shared_ptr<bmcweb::AsyncResp>& asyncResp) {
+             if (!redfish::setUpRedfishRoute(app, req, asyncResp))
+             {
++                return;
++            }
++            // Firmware uploads retain their larger body limit. Persistent
++            // event filters and headers must fit the board's rwfs budget.
++            if (req.body().size() > 16384)
++            {
++                messages::stringValueTooLong(asyncResp->res, "Subscription", 16384);
+                 return;
+             }
+             if (EventServiceManager::getInstance().getNumberOfSubscriptions() >=
+@@ -853,6 +860,11 @@
+                 {
+                     return;
+                 }
++                if (req.body().size() > 16384)
++                {
++                    messages::stringValueTooLong(asyncResp->res, "Subscription", 16384);
++                    return;
++                }
+                 std::shared_ptr<Subscription> subValue =
+                     EventServiceManager::getInstance().getSubscription(param);
+                 if (subValue == nullptr)

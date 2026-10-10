@@ -29,9 +29,10 @@ do_install:append:ceb-gnrd() {
         ${D}${sysconfdir}/sysctl.d/50-ceb-gnrd-console.conf
 }
 
-SRC_URI:append:ceb-gnrd = " file://60-ceb-gnrd-journal-limits.conf file://60-ceb-gnrd-coredump-limits.conf"
-FILES:${PN}:append:ceb-gnrd = " ${sysconfdir}/systemd/journald.conf.d/60-ceb-gnrd-journal-limits.conf ${sysconfdir}/systemd/coredump.conf.d/60-ceb-gnrd-coredump-limits.conf"
+SRC_URI:append:ceb-gnrd = " file://60-ceb-gnrd-journal-limits.conf file://60-ceb-gnrd-coredump-limits.conf file://60-ceb-gnrd-pstore-limits.conf"
+FILES:${PN}:append:ceb-gnrd = " ${sysconfdir}/systemd/journald.conf.d/60-ceb-gnrd-journal-limits.conf ${sysconfdir}/systemd/coredump.conf.d/60-ceb-gnrd-coredump-limits.conf ${sysconfdir}/systemd/pstore.conf.d/60-ceb-gnrd-pstore-limits.conf"
 do_install:append:ceb-gnrd() {
     install -Dm0644 ${UNPACKDIR}/60-ceb-gnrd-journal-limits.conf ${D}${sysconfdir}/systemd/journald.conf.d/60-ceb-gnrd-journal-limits.conf
     install -Dm0644 ${UNPACKDIR}/60-ceb-gnrd-coredump-limits.conf ${D}${sysconfdir}/systemd/coredump.conf.d/60-ceb-gnrd-coredump-limits.conf
+    install -Dm0644 ${UNPACKDIR}/60-ceb-gnrd-pstore-limits.conf ${D}${sysconfdir}/systemd/pstore.conf.d/60-ceb-gnrd-pstore-limits.conf
 }

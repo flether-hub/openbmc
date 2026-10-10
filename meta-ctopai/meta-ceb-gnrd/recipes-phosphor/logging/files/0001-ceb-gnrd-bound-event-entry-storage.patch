@@ -1,0 +1,73 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Bound variable-length persistent data on CEB-GNRD
+
+Upstream-Status: Inappropriate [board storage policy]
+
+--- a/log_manager.cpp
++++ b/log_manager.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/vtable.hpp>
++#include <xyz/openbmc_project/Common/error.hpp>
+ #include <xyz/openbmc_project/State/Host/server.hpp>
+ 
+ #include <cassert>
+@@ -220,6 +221,25 @@
+                           std::map<std::string, std::string> additionalData,
+                           const FFDCEntries& ffdc) -> sdbusplus::object_path
+ {
++    // Validate before evicting an existing entry or allocating a new ID.
++    if (errMsg.size() > 1024 || additionalData.size() > 32)
++    {
++        throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++    }
++    std::size_t metadataBytes = 0;
++    for (const auto& [key, value] : additionalData)
++    {
++        if (key.size() > 128 || value.size() > 1024)
++        {
++            throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++        }
++        metadataBytes += key.size() + value.size();
++    }
++    if (metadataBytes > 4096)
++    {
++        throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++    }
++
+     if (!Extensions::disableDefaultLogCaps())
+     {
+         if (errLvl < Entry::sevLowerLimit)
+--- a/elog_entry.cpp
++++ b/elog_entry.cpp
+@@ -9,6 +9,7 @@
+ 
+ #include <phosphor-logging/lg2.hpp>
+ #include <xyz/openbmc_project/Common/File/error.hpp>
++#include <xyz/openbmc_project/Common/error.hpp>
+ 
+ namespace phosphor
+ {
+@@ -79,6 +80,10 @@
+ 
+ std::string Entry::eventId(std::string value)
+ {
++    if (value.size() > 256)
++    {
++        throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++    }
+     auto current =
+         sdbusplus::server::xyz::openbmc_project::logging::Entry::eventId();
+     if (value != current)
+@@ -94,6 +99,10 @@
+ 
+ std::string Entry::resolution(std::string value)
+ {
++    if (value.size() > 1024)
++    {
++        throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++    }
+     auto current =
+         sdbusplus::server::xyz::openbmc_project::logging::Entry::resolution();
+     if (value != current)

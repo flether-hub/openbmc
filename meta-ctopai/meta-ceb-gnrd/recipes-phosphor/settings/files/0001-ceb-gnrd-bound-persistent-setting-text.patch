@@ -1,0 +1,68 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Bound variable-length persistent data on CEB-GNRD
+
+Upstream-Status: Inappropriate [board storage policy]
+
+--- a/settings_manager.hpp.mako
++++ b/settings_manager.hpp.mako
+@@ -65,12 +65,52 @@
+ #include <cereal/types/vector.hpp>
+ #include <fstream>
+ #include <utility>
++#include <string>
++#include <type_traits>
++#include <vector>
+ #include <filesystem>
+ #include <regex>
+ #include <phosphor-logging/elog.hpp>
+ #include <phosphor-logging/elog-errors.hpp>
+ #include <phosphor-logging/lg2.hpp>
+ #include <xyz/openbmc_project/Common/error.hpp>
++
++// This template discards the size check for fixed-length property types.
++template <typename T>
++inline void checkPersistentSettingSize(const T& value)
++{
++    using Value = std::decay_t<T>;
++    if constexpr (std::is_same_v<Value, std::string>)
++    {
++        if (value.size() > 1024)
++        {
++            throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++        }
++    }
++    else if constexpr (requires { value.size(); value.begin(); value.end(); })
++    {
++        if (value.size() > 64)
++        {
++            throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++        }
++        std::size_t total = 0;
++        for (const auto& item : value)
++        {
++            if constexpr (std::is_same_v<std::decay_t<decltype(item)>, std::string>)
++            {
++                if (item.size() > 1024)
++                {
++                    throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++                }
++                total += item.size();
++            }
++        }
++        if (total > 4096)
++        {
++            throw sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument();
++        }
++    }
++}
+ 
+ /* The DBus busname to own */
+ #define SETTINGS_BUSNAME "xyz.openbmc_project.Settings"
+@@ -203,6 +243,7 @@
+ <% fname = "validate" + propName %>\
+         decltype(std::declval<Iface${index}>().${t}()) ${t}(decltype(std::declval<Iface${index}>().${t}()) value) override
+         {
++            checkPersistentSettingSize(value);
+             auto result = Iface${index}::${t}();
+             if (value != result)
+             {

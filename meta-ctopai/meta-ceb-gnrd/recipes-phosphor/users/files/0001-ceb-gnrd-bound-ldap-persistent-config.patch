@@ -1,0 +1,111 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Bound variable-length persistent data on CEB-GNRD
+
+Upstream-Status: Inappropriate [board storage policy]
+
+--- a/phosphor-ldap-config/ldap_config.cpp
++++ b/phosphor-ldap-config/ldap_config.cpp
+@@ -415,6 +415,10 @@
+ 
+ std::string Config::ldapBindDNPassword(std::string value)
+ {
++    if (value.size() > 1024)
++    {
++        throw InvalidArgument();
++    }
+     // Don't update the D-bus object, this is just to
+     // facilitate if user wants to change the bind dn password
+     // once d-bus object gets created.
+@@ -442,6 +446,10 @@
+ 
+ std::string Config::ldapServerURI(std::string value)
+ {
++    if (value.size() > 1024)
++    {
++        throw InvalidArgument();
++    }
+     std::string val;
+     try
+     {
+@@ -501,6 +509,10 @@
+ 
+ std::string Config::ldapBindDN(std::string value)
+ {
++    if (value.size() > 1024)
++    {
++        throw InvalidArgument();
++    }
+     std::string val;
+     try
+     {
+@@ -544,6 +556,10 @@
+ 
+ std::string Config::ldapBaseDN(std::string value)
+ {
++    if (value.size() > 1024)
++    {
++        throw InvalidArgument();
++    }
+     std::string val;
+     try
+     {
+@@ -663,6 +679,10 @@
+ 
+ std::string Config::userNameAttribute(std::string value)
+ {
++    if (value.size() > 128)
++    {
++        throw InvalidArgument();
++    }
+     std::string val;
+     try
+     {
+@@ -695,6 +715,10 @@
+ 
+ std::string Config::groupNameAttribute(std::string value)
+ {
++    if (value.size() > 128)
++    {
++        throw InvalidArgument();
++    }
+     std::string val;
+     try
+     {
+@@ -875,6 +899,11 @@
+ sdbusplus::object_path Config::create(std::string groupName,
+                                       std::string privilege)
+ {
++    if (PrivilegeMapperList.size() >= 64)
++    {
++        elog<NotAllowed>(NotAllowedArgument::REASON(
++            "LDAP role mapping limit reached"));
++    }
+     checkPrivilegeMapper(groupName);
+     checkPrivilegeLevel(privilege);
+ 
+@@ -915,6 +944,10 @@
+ }
+ void Config::checkPrivilegeMapper(const std::string& groupName)
+ {
++    if (groupName.size() > 256)
++    {
++        throw InvalidArgument();
++    }
+     if (groupName.empty())
+     {
+         lg2::error("Group name is empty");
+--- a/phosphor-ldap-config/ldap_config_mgr.cpp
++++ b/phosphor-ldap-config/ldap_config_mgr.cpp
+@@ -81,6 +81,12 @@
+     CreateIface::Create::Type ldapType, std::string groupNameAttribute,
+     std::string userNameAttribute)
+ {
++    if (ldapServerURI.size() > 1024 || ldapBindDN.size() > 1024 ||
++        ldapBaseDN.size() > 1024 || ldapBindDNPassword.size() > 1024 ||
++        groupNameAttribute.size() > 128 || userNameAttribute.size() > 128)
++    {
++        throw InvalidArgument();
++    }
+     bool secureLDAP = false;
+ 
+     if (isValidLDAPURI(ldapServerURI, ldapsScheme))

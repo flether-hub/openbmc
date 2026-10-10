@@ -557,12 +557,30 @@ USB 页的“无端口错误”对应空的错误集合，不代表已经收到�
 | 系统 warning/error 文本 | `/var/log/bmc-system.log`，512 KiB 轮转，保留当前文件和 5 份历史，目标约 3 MiB |
 | systemd core dump | 不保存 core 二进制；journal 保留最新崩溃摘要，启动时清理旧 core 文件 |
 | BMC 诊断转储 | 总预算 512 KiB，单份预算 200 KiB |
-| D-Bus 事件条目 | 错误最多 64 条，信息最多 64 条 |
+| D-Bus 事件条目 | 错误最多 64 条，信息最多 64 条；消息最多 1 KiB，附加数据合计最多 4 KiB / 32 项；EventId 256 B、Resolution 1 KiB |
+| 证书及 CSR | 单份输入证书最多 32 KiB；CA 列表最多 256 KiB，沿用 CA 数量上限；CSR 字段 256 B、SAN 最多 32 项；失败批量导入清理临时目录 |
+| LDAP 配置 | 每个目录最多 64 个角色映射；组名 256 B，URI / DN / 密码 1 KiB，属性名 128 B |
+| Settings 持久属性 | 文本最多 1 KiB；数组最多 64 项，文本数组合计最多 4 KiB |
+| Inventory 持久缓存 | 单份最多 16 KiB，总数据最多 512 KiB；目录和文件条目预算 1024，路径长度和深度也有限制 |
+| BIOS 属性配置 | 基础表加待生效属性的序列化数据最多 256 KiB；两张表各最多 1024 项 |
+| bmcweb 持久会话 | 最多 64 个，Context 最多 256 字节；Basic/mTLS 临时认证不占此限额 |
+| Redfish 事件订阅 | 沿用上游数量限制，创建和修改请求最多 16 KiB，避免过滤条件/请求头占满 rwfs |
+| systemd pstore | 写入 RAM journal，不再累积 `/var/lib/systemd/pstore` 外部档案 |
+| 旧版持久 journal / pstore | 启动时分别保留总量不超过 1 MiB / 512 KiB 的最新完整文件 |
 | 模拟器 panel.log / qemu.log / host.log | 每类当前文件和 .1 各最多 8 MiB（合计最多 48 MiB） |
 | 可选 management.pcap | 默认关闭；达到 64 MiB 后停止抓包，仿真器继续运行 |
 
-SEL/Redfish/系统告警文本每分钟检查一次，突发写入可在检查前超过轮转阈值；
+SEL/Redfish/系统告警文本由 rsyslog 在写入时同步轮转；不再由分钟定时器轮转，
+避免两个轮转器竞争。单条消息和批次可使文件略超阈值，因此这不是文件系统硬配额。
+原 `ceb-gnrd-sel-logrotate.timer` 保留名称用于升级兼容，每分钟监测 rwfs 可用空间：
+低于 2 MiB 告警，恢复到 3 MiB 后解除；不会删除设置或用户上传文件。
+启动迁移会裁掉三类旧文本日志超限的头部，保留最新完整行。
 journal 的预算是清理目标，活动文件可能短暂超出。
+
+固定文件覆盖写入的风扇/开盖/电源策略、网络配置、FRU 和 SEL ID 状态不按时间累积；
+POST 使用两轮、每轮 512 条的环形历史，dump 已有总量与单份限制。
+固件上传、硬件检查报告和 BIOS 更新临时文件位于 `/tmp` 或 `/run`，不占 rwfs。
+上述预算约束自动写入的诊断数据；手工在持久目录上传文件仍需自行管理空间。
 抓包每秒检查，达到阈值时保留文件，大小可多出该检查间隔内的流量。
 这些限制不会影响固件镜像、BIOS Flash 或 FRU EEPROM 文件。
 
