@@ -1,3 +1,6 @@
+FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
+SRC_URI:append:ceb-gnrd = " file://0001-hostnamed-allow-networkd-transient-hostname-without-polkit.patch"
+
 # timesyncd is compiled and packaged in systemd by the Phosphor recipe, but
 # OE only registers selected split packages with the systemd class. Register
 # the main package too, so rootfs installation enables timesyncd and creates

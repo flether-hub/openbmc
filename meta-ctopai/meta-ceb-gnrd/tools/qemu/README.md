@@ -81,7 +81,11 @@ FruDevice 写入后会读回物理 EEPROM 并比对；成功日志 `FRU EEPROM w
 
 两个 BMC 网口默认使用 DHCP 获取 IPv4 地址。模拟器的 eth0 DHCP 地址池从
 `192.168.185.200` 开始，与上述端口转发目标一致；eth1 使用独立的 user 网络。
-eth1 的 NC-SI 链路仍在主机上电后启用。实板的地址、网关和 DNS 由 DHCP 服务器提供。
+eth1 的 NC-SI 链路仅在主机上电且 BIOS POST complete 后启用。
+依据 power-control 发布的 `OperatingSystemState=Standby` 判断 POST 完成；
+主机关机或 POST 完成信号撤销时关闭接口，停止初始化重试。
+状态暂时不可读时暂停初始化；无 carrier 时先按 30 秒间隔尝试，
+三次后改为 300 秒间隔恢复。实板的地址、网关和 DNS 由 DHCP 服务器提供。
 
 转发只绑定回环地址。从其他电脑访问，可建立 SSH 隧道：
 
@@ -549,14 +553,15 @@ USB 页的“无端口错误”对应空的错误集合，不代表已经收到�
 | Web POST 表格 | Created 默认倒序，同一秒内按 POST 接收顺序倒序 |
 | IPMI SEL 文件 | 15 KiB 轮转，保留当前文件和 1 份历史 |
 | Redfish 事件文件 | 64 KiB 轮转，保留当前文件和 1 份历史 |
-| systemd journal | 持久日志预算 1 MiB，最多 8 个文件；运行时日志预算 8 MiB；最多 2 天 |
+| systemd journal | 仅存 RAM，预算 8 MiB，最多 8 个文件；最多 2 天 |
+| 系统 warning/error 文本 | `/var/log/bmc-system.log`，512 KiB 轮转，保留当前文件和 5 份历史，目标约 3 MiB |
 | systemd core dump | 不保存 core 二进制；journal 保留最新崩溃摘要，启动时清理旧 core 文件 |
 | BMC 诊断转储 | 总预算 512 KiB，单份预算 200 KiB |
 | D-Bus 事件条目 | 错误最多 64 条，信息最多 64 条 |
 | 模拟器 panel.log / qemu.log / host.log | 每类当前文件和 .1 各最多 8 MiB（合计最多 48 MiB） |
 | 可选 management.pcap | 默认关闭；达到 64 MiB 后停止抓包，仿真器继续运行 |
 
-SEL/Redfish 每分钟检查一次，突发写入可在检查前超过轮转阈值；
+SEL/Redfish/系统告警文本每分钟检查一次，突发写入可在检查前超过轮转阈值；
 journal 的预算是清理目标，活动文件可能短暂超出。
 抓包每秒检查，达到阈值时保留文件，大小可多出该检查间隔内的流量。
 这些限制不会影响固件镜像、BIOS Flash 或 FRU EEPROM 文件。
@@ -573,11 +578,13 @@ POST 管理器保留所有实际接收的码值，包括 `0x00`、重复的 `0x0
 
 板级 SPI Flash 为 64 MiB，其中 rofs 为 40 MiB、rwfs 为 14 MiB。
 日志与配置共同使用 rwfs；镜像剩余空间不能代替 rwfs 剩余空间。
-持久 journal 3 MiB、诊断转储 512 KiB、SEL/Redfish 约 158 KiB，
+持久 warning/error 文本目标 3 MiB、诊断转储 512 KiB、SEL/Redfish 约 158 KiB，
 合计约 3.66 MiB，另外还需计算按条数限制的 D-Bus 事件、两轮 POST、配置及文件系统开销。
-journal 设置至少保留 4 MiB 空闲作为清理目标；这不是其他程序写入的全局磁盘配额。
+JFFS2 不支持 binary journal 所需的可写 mmap，因此 journald 使用 `Storage=volatile`。
+`journalctl -b` 查看本次启动日志；重启后的历史告警查看 `/var/log/bmc-system.log*`，
+不再保存跨启动的完整 binary journal。SEL 和 Redfish 事件日志仍保留在 rwfs。
 core 二进制不再写入 Flash，也不再生成堆栈分析；崩溃信号、进程和服务重启原因仍记录在 journal。
-升级后启动清理旧 core 载荷并压缩 journal 保留范围，不删除业务配置。
+升级后启动清理旧 core 载荷并限制 RAM journal 保留范围；旧持久 journal 文件保留供诊断。
 实际容量需在 BMC 检查 `df -k /var/lib /var/log` 和 `du -k -d 2 /var/lib /var/log`，
 应保留至少 4 MiB 空闲；若不足，需要定位实际占用，不能只依靠配置预算保证。
 

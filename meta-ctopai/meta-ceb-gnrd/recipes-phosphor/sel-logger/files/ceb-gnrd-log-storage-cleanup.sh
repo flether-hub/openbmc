@@ -1,5 +1,5 @@
 #!/bin/sh
-# Migrate the former 4 MiB core/journal budgets on the 10 MiB rwfs.
+# Remove legacy core payloads; persistent warning text is rotated separately.
 # Core payloads are now disabled; their crash summaries remain in journal.
 set -eu
 removed=0
@@ -10,7 +10,6 @@ for file in /var/lib/systemd/coredump/core.*; do
     removed=$((removed + 1))
 done
 echo "Log storage: removed $removed old core payloads; rwfs=14 MiB"
-# Vacuum only archived journals. Rotate first so the previous active file can
-# be reclaimed as well; leave the newest journal data up to the new budget.
-journalctl --rotate --vacuum-size=3M --vacuum-files=24 || true
+# Vacuum only the volatile journal; preserve old persistent files for diagnosis.
+journalctl --directory=/run/log/journal --vacuum-size=8M --vacuum-files=8 || true
 df -k /var/lib /var/log

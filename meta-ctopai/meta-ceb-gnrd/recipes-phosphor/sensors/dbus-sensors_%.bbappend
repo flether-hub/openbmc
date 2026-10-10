@@ -13,6 +13,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0006-psu-log-filtered-devices-at-debug-level.patch \
     file://0007-psu-log-cancelled-poll-timer-at-debug-level.patch \
     file://0008-fan-log-unmatched-inputs-at-debug-level.patch \
+    file://0009-psu-log-unmatched-devices-at-debug-level.patch \
+    file://0010-hwmon-temp-skip-peci-auxiliary-devices.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \

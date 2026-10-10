@@ -16,6 +16,21 @@
     endscript
 }
 
+# Warning/error text replaces persistent binary journals on JFFS2.
+# Current file plus five copies target 3 MiB. The minute timer allows temporary
+# overshoot between rotations; this is not a hard quota.
+/var/log/bmc-system.log {
+    size 512k
+    rotate 5
+    nodateext
+    nocompress
+    missingok
+    notifempty
+    postrotate
+        /bin/systemctl kill --signal=HUP rsyslog.service >/dev/null 2>&1 || true
+    endscript
+}
+
 # The Redfish event log (web "Event logs"), written by rsyslog from journal entries
 # with a REDFISH_MESSAGE_ID; bmcweb reads redfish and redfish.1.
 /var/log/redfish {

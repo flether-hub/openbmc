@@ -1,0 +1,31 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] hwmon-temp: skip PECI auxiliary devices before I2C parsing
+
+The hwmon scan includes PECI CPU and DIMM temperature inputs. Their device
+names are auxiliary device names, not I2C bus-address pairs, so passing them
+to getDeviceBusAddr produces misleading "found bad device" errors for every
+input on every rescan. These temperatures are handled by ceb-gnrd-temp-max
+on this board. Skip these known auxiliary device types before I2C parsing;
+retain malformed I2C device diagnostics and normal temperature discovery.
+
+Upstream-Status: Inappropriate [board-specific PECI sensor ownership]
+---
+--- a/src/hwmon-temp/HwmonTempMain.cpp
++++ b/src/hwmon-temp/HwmonTempMain.cpp
+@@ -333,6 +333,16 @@
+                     deviceName = device.stem();
+                 }
+ 
++                // PECI auxiliary devices are not I2C bus-address pairs.
++                // Their CPU/DIMM inputs belong to ceb-gnrd-temp-max.
++                if (deviceName.starts_with("peci_cpu.cputemp.") ||
++                    deviceName.starts_with("peci_cpu.dimmtemp."))
++                {
++                    lg2::debug("Skipping PECI auxiliary device '{NAME}'",
++                               "NAME", deviceName);
++                    continue;
++                }
++
+                 uint64_t bus = 0;
+                 uint64_t addr = 0;
+                 if (!getDeviceBusAddr(deviceName, bus, addr))

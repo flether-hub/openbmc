@@ -1,4 +1,4 @@
-SUMMARY = "Gate the host-powered CEB-GNRD NC-SI interface on chassis power"
+SUMMARY = "Gate CEB-GNRD NC-SI on host power and BIOS POST complete"
 LICENSE = "Apache-2.0"
 LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 

@@ -1,0 +1,27 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] psu: log unmatched discovered devices at debug level
+
+PSU hwmon devices can be present before their Entity-Manager configuration
+is available. Configuration changes trigger another scan, and an unmatched
+device during discovery is not a sensor read failure. Keep this diagnostic
+at debug level without changing matching, rescans or genuine error handling.
+
+Upstream-Status: Pending
+---
+--- a/src/psu/PSUSensorMain.cpp
++++ b/src/psu/PSUSensorMain.cpp
+@@ -527,9 +527,11 @@
+         }
+         if (interfacePath == nullptr)
+         {
+-            // To avoid this error message, add your export map entry,
+-            // from Entity Manager, to sensorTypes at the top of this file.
+-            lg2::error("failed to find match for '{NAME}'", "NAME", deviceName);
++            // The hwmon device may precede its Entity-Manager configuration.
++            // Configuration changes trigger another scan; this is not a read
++            // failure of an already configured PSU sensor.
++            lg2::debug("Skipping PSU device '{NAME}': no matching configuration",
++                       "NAME", deviceName);
+             continue;
+         }
+ 

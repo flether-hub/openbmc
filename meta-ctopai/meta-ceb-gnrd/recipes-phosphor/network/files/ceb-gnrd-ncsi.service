@@ -1,5 +1,5 @@
 [Unit]
-Description=Gate host-powered NC-SI interface on chassis power state
+Description=Gate host-powered NC-SI interface on power and BIOS POST complete
 After=xyz.openbmc_project.Chassis.Control.Power@0.service systemd-networkd.service
 Wants=xyz.openbmc_project.Chassis.Control.Power@0.service systemd-networkd.service
 

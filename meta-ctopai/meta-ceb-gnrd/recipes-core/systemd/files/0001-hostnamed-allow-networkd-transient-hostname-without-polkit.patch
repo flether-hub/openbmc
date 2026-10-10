@@ -1,0 +1,54 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] hostnamed: allow networkd transient hostname without polkit
+
+The board uses networkd and hostnamed without polkit. DHCP UseHostname=true
+therefore fails authorization for the systemd-network user. Resolve that
+user's UID and use hostnamed's existing good_user authorization only for
+SetHostname in builds without polkit. Lookup failure leaves authorization
+unchanged. Static hostname and machine-info setters keep their checks.
+
+Keep hostnamed running as root so Web static hostname writes still work;
+do not give networkd CAP_SYS_ADMIN or install a polkit daemon.
+
+Upstream-Status: Inappropriate [board-specific authorization policy]
+---
+--- a/src/hostname/hostnamed.c
++++ b/src/hostname/hostnamed.c
+@@ -43,6 +43,7 @@
+ #include "strv.h"
+ #include "time-util.h"
+ #include "utf8.h"
++#include "user-util.h"
+ #include "varlink-io.systemd.Hostname.h"
+ #include "varlink-io.systemd.service.h"
+ #include "varlink-util.h"
+@@ -1331,6 +1332,7 @@
+ static int method_set_hostname(sd_bus_message *m, void *userdata, sd_bus_error *error) {
+         Context *c = ASSERT_PTR(userdata);
+         const char *name;
++        uid_t network_uid = UID_INVALID;
+         int interactive, r;
+ 
+         assert(m);
+@@ -1351,11 +1353,20 @@
+ 
+         name = substituted;
+ 
++#if !ENABLE_POLKIT
++        /* DHCP may update only the transient hostname. Keep the privileged
++         * hostnamed service and all other setters' authorization unchanged. */
++        const char *network_user = "systemd-network";
++        r = get_user_creds(&network_user, &network_uid, NULL, NULL, NULL, 0);
++        if (r < 0)
++                network_uid = UID_INVALID;
++#endif
++
+         r = bus_verify_polkit_async_full(
+                         m,
+                         "org.freedesktop.hostname1.set-hostname",
+                         /* details= */ NULL,
+-                        /* good_user= */ UID_INVALID,
++                        /* good_user= */ network_uid,
+                         interactive ? POLKIT_ALLOW_INTERACTIVE : 0,
+                         &c->polkit_registry,
+                         error);

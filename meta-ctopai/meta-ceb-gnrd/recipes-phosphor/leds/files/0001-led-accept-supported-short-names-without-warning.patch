@@ -1,0 +1,31 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] led: log supported short names at debug level
+
+getLedDescr already supports one-part legacy labels and two-part
+color:function names, with upstream coverage for both. Warning that they
+are malformed contradicts the parser and produces warnings for the board's
+bmc-heartbeat, fault and identify LEDs. Log supported short forms at debug
+level, retaining warnings for unexpected part counts. Leave parsing, sysfs
+names, D-Bus paths and physical LED control unchanged.
+
+Upstream-Status: Pending
+---
+--- a/sysfs.cpp
++++ b/sysfs.cpp
+@@ -175,7 +175,15 @@
+-    if (words.size() != 3)
++    if (words.size() == 1 || words.size() == 2)
++    {
++        // Legacy labels and shortened color:function names are supported
++        // by the parser below; they are not malformed LED descriptions.
++        lg2::debug(
++            "Using supported short LED description '{DESC}'",
++            "DESC", name);
++    }
++    else if (words.size() != 3)
+     {
+         lg2::warning(
+             "LED description '{DESC}' not well formed, expected 3 parts but got {NPARTS}",
+             "DESC", name, "NPARTS", words.size());
+     }
+ 

@@ -553,7 +553,21 @@ def peripherals_network():
          'cat /sys/class/net/eth0/speed /sys/class/net/eth0/duplex'])
     require('NC-SI eth1 exists', Path('/sys/class/net/eth1').exists())
     if HOST == 'on':
-        require('host-on NC-SI carrier', read('/sys/class/net/eth1/carrier') == '1')
+        rc, os_state = prop('xyz.openbmc_project.State.OperatingSystem',
+                            '/xyz/openbmc_project/state/host0',
+                            'xyz.openbmc_project.State.OperatingSystem.Status',
+                            'OperatingSystemState')
+        if rc == 0 and os_state.strip() == 's "xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.Standby"':
+            require('POST-complete NC-SI carrier', read('/sys/class/net/eth1/carrier') == '1')
+        elif rc == 0 and os_state.strip() == 's "xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.Inactive"':
+            result('SKIP', 'NC-SI carrier', 'BIOS POST incomplete; interface must remain down')
+            try:
+                require('pre-POST NC-SI administratively down',
+                        not (int(read('/sys/class/net/eth1/flags'), 0) & 1))
+            except ValueError:
+                result('FAIL', 'NC-SI flags readable')
+        else:
+            result('FAIL', 'NC-SI POST state readable', f'exit={rc}; {os_state[-200:].strip()}')
     elif HOST == 'off':
         try:
             require('host-off NC-SI administratively down', not (int(read('/sys/class/net/eth1/flags'), 0) & 1))
