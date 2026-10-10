@@ -1,0 +1,20 @@
+Subject: [PATCH] psu: treat cancelled polling timers as normal lifecycle events
+
+Cancelling the wait timer while destroying or replacing a sensor reports
+operation_aborted. This is not a failed PSU read or scheduling failure.
+Log it at debug level and retain the existing early return.
+
+Upstream-Status: Pending
+---
+--- a/src/psu/PSUSensor.cpp
++++ b/src/psu/PSUSensor.cpp
+@@ -181,7 +181,8 @@
+     waitTimer.async_wait([weakRef](const boost::system::error_code& ec) {
+         if (ec == boost::asio::error::operation_aborted)
+         {
+-            lg2::error("Failed to reschedule");
++            // Timer cancellation is expected when replacing a sensor.
++            lg2::debug("PSU sensor polling timer cancelled");
+             return;
+         }
+         std::shared_ptr<PSUSensor> self = weakRef.lock();

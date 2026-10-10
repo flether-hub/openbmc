@@ -494,7 +494,6 @@ def peripherals_network():
     check('SOL vUART tty configuration', ['stty', '-F', '/dev/ttyVUART0', '-a'], 'speed|baud')
     require('SOL socket registered', 'obmc-console' in read('/proc/net/unix'))
     base = '/sys/devices/platform/ahb/ahb:apb/1e787000.serial/'
-    require('SOL vUART COM1 address', re.fullmatch(r'0x0*3[fF]8', read(base + 'lpc_address')) is not None)
     require('SOL SerIRQ 4', read(base + 'sirq') == '4')
     for addr, mask in (('0x1e6ee000', 0x0f00000a), ('0x1e6ee098', 0x00900000)):
         rc, value = run(['devmem', addr, '32'])

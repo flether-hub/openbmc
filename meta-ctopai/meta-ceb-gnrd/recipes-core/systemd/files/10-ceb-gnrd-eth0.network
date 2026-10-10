@@ -3,3 +3,5 @@ Name=eth0
 
 [Network]
 DHCP=ipv4
+NTP=time.windows.com
+NTP=ntp.ntsc.ac.cn

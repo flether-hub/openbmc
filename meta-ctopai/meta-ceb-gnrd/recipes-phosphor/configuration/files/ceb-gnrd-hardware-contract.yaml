@@ -44,7 +44,7 @@ interfaces:
       - { bus_signal: JW6375_PMBCLK1_PMBDATA1, svid_addresses: [0x00, 0x01], pmbus_address_low_nibble: 0x3 }
     spi:
       - { controller: AST2600_SPI1, chip_select: 0, signal: FLASH_SPI1, device: Macronix_MX25U51245GMI00, capacity_bytes: 67108864, bus_width: 1, use: BIOS_update_only, mtd_label: host-bios, pins: { CS0: AD13, CLK: AB11, MOSI: AC11, MISO: AA11 } }
-      - { controller: AST2600_FMC_FIRMWARE_SPI, chip_select: 0, signal: BMC_FIRMWARE_SPI, device: Winbond_W25Q512JVFIQ, capacity_bytes: 67108864, bus_width: 2, mtd_layout: OpenBMC_64MiB, pinctrl: [], routing: dedicated-FWSPI-boot-pads-without-pinctrl-override-matches-board-dump, pins: { CS0: AB14, CLK: AF13, MOSI: AC14, MISO: AB13, DQ2: AE12_GPIOY4, DQ3: AF12_GPIOY5 }, reset_signal: BMC_SRST_N }
+      - { controller: AST2600_FMC_FIRMWARE_SPI, chip_select: 0, signal: BMC_FIRMWARE_SPI, device: Winbond_W25Q512JVFIQ, capacity_bytes: 67108864, bus_width: 4, mtd_layout: OpenBMC_64MiB, pinctrl: [FWQSPI], uboot_pinctrl: [FMCQUAD], routing: dedicated-FWSPI-boot-pads-with-DQ2-DQ3-on-AE12-AF12, pins: { CS0: AB14, CLK: AF13, MOSI: AC14, MISO: AB13, DQ2: AE12_GPIOY4, DQ3: AF12_GPIOY5 }, reset_signal: BMC_SRST_N }
 
       - { controller: AST2600_SPI2, signal: FLASH_SPI2, status: reserved_unused, note: reserved interface only; not connected to any flash on this board, pins: { CS0: AE8, CLK: AF8, MOSI: AB9, MISO: AD9, DQ2: AF9, DQ3: AB10 } }
 
