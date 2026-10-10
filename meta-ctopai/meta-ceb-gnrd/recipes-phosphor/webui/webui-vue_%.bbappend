@@ -37,6 +37,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0035-ceb-gnrd-boot-checkpoint-details.patch \
     file://0036-ceb-gnrd-colored-navigation-icons.patch \
     file://0037-ceb-gnrd-refresh-confirmed-time-mode.patch \
+    file://0038-ceb-gnrd-colored-openbmc-logos.patch \
     file://zh-CN.json \
 "
 

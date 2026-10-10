@@ -2,6 +2,7 @@ Subject: [PATCH] ceb-gnrd: use colored function icons in primary navigation
 
 Use compact local SVG dashboard, log, server, console, gear and shield-lock
 icons. Pale backings preserve contrast on both normal and selected rows.
+Use slightly larger icons with centered text alignment and a compact gap.
 Keep navigation labels, routes, permissions and expansion behavior intact.
 
 Upstream-Status: Inappropriate [CEB-GNRD UI styling]
@@ -41,7 +42,7 @@ Upstream-Status: Inappropriate [CEB-GNRD UI styling]
      iconExpand: IconChevronUp,
 --- /dev/null
 +++ b/src/components/AppNavigation/NavigationIcons.js
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,79 @@
 +import { defineComponent, h } from 'vue';
 +
 +// Decorative SVGs: the adjacent translated navigation label is the accessible
@@ -60,7 +61,14 @@ Upstream-Status: Inappropriate [CEB-GNRD UI styling]
 +            height: 24,
 +            'aria-hidden': 'true',
 +            focusable: 'false',
-+            style: { fill: 'none', flexShrink: 0 },
++            style: {
++              fill: 'none',
++              flexShrink: 0,
++              width: '1.4rem',
++              height: '1.4rem',
++              verticalAlign: 'middle',
++              marginInlineEnd: '0.75rem',
++            },
 +          },
 +          [
 +            h('rect', { x: 0, y: 0, width: 24, height: 24, rx: 5, fill: background }),
