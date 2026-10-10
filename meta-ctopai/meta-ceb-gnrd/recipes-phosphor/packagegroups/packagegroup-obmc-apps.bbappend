@@ -38,13 +38,15 @@ RDEPENDS:${PN}-extras:append:ceb-gnrd = " \
         u-boot-fw-utils \
         ipmitool \
         curl \
-        openssh-scp \
         ceb-gnrd-check \
         ceb-gnrd-health \
         "
 
 RDEPENDS:${PN}-extras:remove:ceb-gnrd = "phosphor-state-manager-chassis"
 RDEPENDS:${PN}-chassis-state-mgmt:remove:ceb-gnrd = "obmc-phosphor-power"
+
+# File transfer uses SCP/SFTP or TFTP; rsync is not needed on this board.
+RDEPENDS:${PN}-devtools:remove:ceb-gnrd = "rsync"
 
 # The BMC must never shut the system down because of a sensor threshold.
 # phosphor-fan-monitor pulls in phosphor-fan's sensor-monitor ("Sensor Monitor"),
