@@ -8,6 +8,7 @@ SRC_URI:append:ceb-gnrd = " \
 	file://0002-ceb-gnrd-pass-boot-reset-cause-to-linux.patch \
 	file://0003-ceb-gnrd-fill-missing-default-mac.patch \
 	file://0004-ceb-gnrd-reserve-32m-vga-before-ddr-init.patch \
+	file://0005-ceb-gnrd-sync-runtime-network-after-env-migration.patch \
 	file://ast2600-ceb-gnrd.dts \
 	file://ceb-gnrd-env.h \
 	file://ceb-gnrd-ddr4.cfg \

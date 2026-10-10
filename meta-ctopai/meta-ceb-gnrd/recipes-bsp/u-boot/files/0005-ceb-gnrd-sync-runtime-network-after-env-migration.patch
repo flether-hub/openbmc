@@ -1,0 +1,40 @@
+Subject: [PATCH] ceb-gnrd: synchronize runtime IPs after environment migration
+
+env_set() uses H_PROGRAMMATIC, which deliberately skips the net.c address
+callbacks. Migrating ipaddr in board_late_init therefore changes printenv
+without updating net_ip used by TFTP. Synchronize runtime addresses from
+the final environment, including custom values, before NIC initialization.
+Keep global network callback behavior and SPI default boot unchanged.
+
+Upstream-Status: Inappropriate [CEB-GNRD environment migration]
+---
+--- a/board/aspeed/evb_ast2600/evb_ast2600.c
++++ b/board/aspeed/evb_ast2600/evb_ast2600.c
+@@ -5,6 +5,9 @@
+ #include <common.h>
+ #include <environment.h>
++#if defined(CONFIG_CMD_NET) && !defined(CONFIG_SPL_BUILD)
++#include <net.h>
++#endif
+ #include <asm/io.h>
+ #include <asm/arch/aspeed_scu_info.h>
+ #include <fdt_support.h>
+ #include <asm/arch/boot0.h>
+@@ -217,6 +220,17 @@
+ 		       defaults[i].name, defaults[i].address);
+ 	}
++#ifdef CONFIG_CMD_NET
++	/* env_set() skips network callbacks for H_PROGRAMMATIC updates.
++	 * TFTP uses these globals, not the strings displayed by printenv.
++	 * Read final values so custom saved addresses remain authoritative.
++	 */
++	net_ip = string_to_ip(env_get("ipaddr"));
++	net_gateway = string_to_ip(env_get("gatewayip"));
++	net_server_ip = string_to_ip(env_get("serverip"));
++	net_netmask = string_to_ip(env_get("netmask"));
++#endif
++
+ 	if (changed && save_ok && env_save())
+ 		printf("CEB-GNRD: defaults active, but environment save failed\n");
+ 
+ 	return 0;
