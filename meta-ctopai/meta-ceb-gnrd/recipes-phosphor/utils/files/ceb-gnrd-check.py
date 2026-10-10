@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+CHECK_REVISION = '20261010-journal-ram-ncsi-manual'
 OUT = Path('/tmp/ceb-gnrd-check')
 FILE_LIMIT = 256 * 1024
 REPORT_LIMIT = 2 * 1024 * 1024
@@ -558,7 +559,21 @@ def peripherals_network():
                             'xyz.openbmc_project.State.OperatingSystem.Status',
                             'OperatingSystemState')
         if rc == 0 and os_state.strip() == 's "xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.Standby"':
-            require('POST-complete NC-SI carrier', read('/sys/class/net/eth1/carrier') == '1')
+            enabled_rc, enabled = prop('xyz.openbmc_project.Network',
+                                       '/xyz/openbmc_project/network/eth1',
+                                       'xyz.openbmc_project.Network.EthernetInterface',
+                                       'NICEnabled')
+            if enabled_rc == 0 and enabled.strip() == 'b false':
+                result('SKIP', 'NC-SI carrier', 'interface administratively disabled')
+                try:
+                    require('disabled NC-SI administratively down',
+                            not (int(read('/sys/class/net/eth1/flags'), 0) & 1))
+                except ValueError:
+                    result('FAIL', 'NC-SI flags readable')
+            else:
+                require('NC-SI administrative setting readable', enabled_rc == 0,
+                        enabled[-200:].strip())
+                require('POST-complete NC-SI carrier', read('/sys/class/net/eth1/carrier') == '1')
         elif rc == 0 and os_state.strip() == 's "xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.Inactive"':
             result('SKIP', 'NC-SI carrier', 'BIOS POST incomplete; interface must remain down')
             try:
@@ -679,7 +694,7 @@ def storage_logs():
         info(file, argv, file)
 
 
-print(f'CEB-GNRD check: env={ENV}; read-only unless ClearLog explicitly enabled', flush=True)
+print(f'CEB-GNRD check: revision={CHECK_REVISION}; env={ENV}; read-only unless ClearLog explicitly enabled', flush=True)
 for callback in (system, ipmi_sensors_fans, memory_ecc, peripherals_network, redfish, storage_logs):
     try:
         callback()
@@ -691,7 +706,7 @@ print(summary, flush=True)
 with REPORT.open('ab') as stream:
     stream.write((summary + '\nSKIP is not PASS; resets/live input require external stimuli.\n').encode())
 print('Report: /tmp/ceb-gnrd-check/report.txt', flush=True)
-(OUT / 'results.json').write_text(json.dumps({'environment': ENV, 'host': HOST,
+(OUT / 'results.json').write_text(json.dumps({'revision': CHECK_REVISION, 'environment': ENV, 'host': HOST,
     'counts': dict(COUNT), 'results': RESULTS}, ensure_ascii=False, indent=2), encoding='utf-8')
 # Archive after the summary; tar is not subject to the per-command file limit.
 try:

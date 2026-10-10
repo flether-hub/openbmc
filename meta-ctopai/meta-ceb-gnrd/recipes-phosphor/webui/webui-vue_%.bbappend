@@ -35,6 +35,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0033-ceb-gnrd-chassis-intrusion-switch.patch \
     file://0034-ceb-gnrd-timezone-ui-language.patch \
     file://0035-ceb-gnrd-boot-checkpoint-details.patch \
+    file://0036-ceb-gnrd-colored-navigation-icons.patch \
     file://zh-CN.json \
 "
 

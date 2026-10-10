@@ -13,6 +13,10 @@ readonly OS_INTERFACE=xyz.openbmc_project.State.OperatingSystem.Status
 readonly RETRY_INTERVAL=30
 readonly MAX_RETRIES=3
 readonly RECOVERY_INTERVAL=300
+readonly POST_SETTLE_SECONDS=5
+readonly NETWORK_SERVICE=xyz.openbmc_project.Network
+readonly NETWORK_PATH=/xyz/openbmc_project/network/eth1
+readonly NETWORK_INTERFACE=xyz.openbmc_project.Network.EthernetInterface
 
 read_gate() {
     gate=unknown
@@ -33,6 +37,14 @@ read_gate() {
             gate=ready ;;
         's "xyz.openbmc_project.State.OperatingSystem.Status.OSStatus.Inactive"')
             gate=post ;;
+    esac
+    [ "$gate" = ready ] || return
+    enabled=$(busctl --timeout=2s get-property "$NETWORK_SERVICE" "$NETWORK_PATH" \
+        "$NETWORK_INTERFACE" NICEnabled 2>/dev/null || true)
+    case "$enabled" in
+        'b true') ;;
+        'b false') gate=disabled ;;
+        *) gate=unknown ;;
     esac
 }
 
@@ -56,6 +68,7 @@ last_carrier=unknown
 next_attempt=0
 retries=0
 interface_missing=0
+had_carrier=0
 while :; do
     read_gate
     now=$(monotonic_seconds)
@@ -64,9 +77,14 @@ while :; do
         retries=0
         next_attempt=$now
         last_carrier=unknown
+        had_carrier=0
         case "$gate" in
-            ready) logger -p user.info -t ceb-gnrd-ncsi "BIOS POST complete; enabling $IFACE" ;;
+            ready)
+                next_attempt=$((now + POST_SETTLE_SECONDS))
+                logger -p user.info -t ceb-gnrd-ncsi "BIOS POST complete; allowing ${POST_SETTLE_SECONDS}s for NIC readiness before enabling $IFACE"
+                ;;
             off) logger -p user.info -t ceb-gnrd-ncsi "host off; disabling $IFACE and stopping initialization" ;;
+            disabled) logger -p user.info -t ceb-gnrd-ncsi "$IFACE administratively disabled; stopping initialization" ;;
             post) logger -p user.info -t ceb-gnrd-ncsi "waiting for BIOS POST complete; disabling $IFACE" ;;
             unknown) logger -p user.info -t ceb-gnrd-ncsi "host/POST state unavailable; NC-SI initialization paused" ;;
         esac
@@ -105,11 +123,19 @@ while :; do
     fi
 
     if link_is_up && has_carrier; then
+        had_carrier=1
         retries=0
         next_attempt=$((now + RETRY_INTERVAL))
         if [ "$last_carrier" != 1 ]; then
             logger -p user.info -t ceb-gnrd-ncsi "$IFACE NC-SI carrier acquired"
             last_carrier=1
+        fi
+    elif link_is_up && [ "$had_carrier" -eq 1 ]; then
+        # Cable/carrier loss after a successful connection is monitored by
+        # the kernel. Do not repeatedly restart a discovered NC-SI channel.
+        if [ "$last_carrier" != 0 ]; then
+            logger -p user.info -t ceb-gnrd-ncsi "$IFACE carrier lost; keeping the discovered channel active for link recovery"
+            last_carrier=0
         fi
     elif [ "$now" -ge "$next_attempt" ]; then
         # Timestamp failures too. Three quick attempts then slow recovery.

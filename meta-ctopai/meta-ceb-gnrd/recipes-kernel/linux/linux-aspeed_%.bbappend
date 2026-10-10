@@ -16,6 +16,7 @@ SRC_URI:append = " \
         file://0008-hwmon-add-megcrps800-psu-driver.patch \
         file://0009-ncsi-retry-empty-discovery-on-start.patch \
         file://0010-spi-aspeed-select-data-width-for-user-writes.patch \
+        file://0011-ncsi-handle-idle-work-and-report-invalid-responses.patch \
         "
 
 # The board device tree is a new file; the dtb is built through KERNEL_DEVICETREE.

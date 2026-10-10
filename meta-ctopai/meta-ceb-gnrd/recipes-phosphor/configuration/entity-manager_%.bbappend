@@ -7,6 +7,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0002-ceb-gnrd-verify-fru-eeprom-write.patch \
     file://0003-ceb-gnrd-skip-static-platform-inventory-events.patch \
     file://0004-ceb-gnrd-megcrps800-schema.patch \
+    file://0005-ceb-gnrd-classify-busy-fru-scan-addresses.patch \
     "
 
 do_install:append:ceb-gnrd() {

@@ -1,0 +1,116 @@
+Subject: [PATCH] ceb-gnrd: use colored function icons in primary navigation
+
+Use compact local SVG dashboard, log, server, console, gear and shield-lock
+icons. Pale backings preserve contrast on both normal and selected rows.
+Keep navigation labels, routes, permissions and expansion behavior intact.
+
+Upstream-Status: Inappropriate [CEB-GNRD UI styling]
+
+--- a/src/components/AppNavigation/AppNavigationMixin.js
++++ b/src/components/AppNavigation/AppNavigationMixin.js
+@@ -1,9 +1,11 @@
+-import IconDashboard from '@carbon/icons-vue/es/dashboard/16';
+-import IconTextLinkAnalysis from '@carbon/icons-vue/es/text-link--analysis/16';
+-import IconDataCheck from '@carbon/icons-vue/es/data--check/16';
+-import IconSettingsAdjust from '@carbon/icons-vue/es/settings--adjust/16';
+-import IconSettings from '@carbon/icons-vue/es/settings/16';
+-import IconSecurity from '@carbon/icons-vue/es/security/16';
++import {
++  IconDashboard,
++  IconLogs,
++  IconHardware,
++  IconOperations,
++  IconSettings,
++  IconSecurity,
++} from './NavigationIcons';
+ import IconChevronUp from '@carbon/icons-vue/es/chevron--up/16';
+ import IconDataBase from '@carbon/icons-vue/es/data--base--alt/16';
+ import i18n from '@/i18n';
+@@ -17,9 +19,9 @@
+ const AppNavigationMixin = {
+   components: {
+     iconOverview: IconDashboard,
+-    iconLogs: IconTextLinkAnalysis,
+-    iconHealth: IconDataCheck,
+-    iconControl: IconSettingsAdjust,
++    iconLogs: IconLogs,
++    iconHealth: IconHardware,
++    iconControl: IconOperations,
+     iconSettings: IconSettings,
+     iconSecurityAndAccess: IconSecurity,
+     iconExpand: IconChevronUp,
+--- /dev/null
++++ b/src/components/AppNavigation/NavigationIcons.js
+@@ -0,0 +1,72 @@
++import { defineComponent, h } from 'vue';
++
++// Decorative SVGs: the adjacent translated navigation label is the accessible
++// name. A pale backing keeps the same colors legible on the selected dark row.
++function navigationIcon(name, background, shapes) {
++  return defineComponent({
++    name,
++    setup() {
++      return () =>
++        h(
++          'svg',
++          {
++            xmlns: 'http://www.w3.org/2000/svg',
++            viewBox: '0 0 24 24',
++            width: 24,
++            height: 24,
++            'aria-hidden': 'true',
++            focusable: 'false',
++            style: { fill: 'none', flexShrink: 0 },
++          },
++          [
++            h('rect', { x: 0, y: 0, width: 24, height: 24, rx: 5, fill: background }),
++            ...shapes.map(([tag, attributes]) => h(tag, attributes)),
++          ],
++        );
++    },
++  });
++}
++
++export const IconDashboard = navigationIcon('NavigationDashboard', '#e7efff', [
++  ['rect', { x: 4, y: 4, width: 16, height: 16, rx: 2, fill: '#2563c9' }],
++  ['rect', { x: 6, y: 6, width: 5, height: 5, rx: 1, fill: '#ffffff' }],
++  ['rect', { x: 13, y: 6, width: 5, height: 3, rx: 1, fill: '#8fc7ff' }],
++  ['rect', { x: 6, y: 13, width: 5, height: 5, rx: 1, fill: '#8fc7ff' }],
++  ['path', { d: 'M13 17v-5m3 5v-7m2 7v-4', stroke: '#ffffff', 'stroke-width': 1.5 }],
++]);
++
++export const IconLogs = navigationIcon('NavigationLogs', '#fff0d9', [
++  ['path', { d: 'M6 3h9l4 4v14H6z', fill: '#b75c0b' }],
++  ['path', { d: 'M15 3v5h4', fill: '#ffc36b' }],
++  ['path', { d: 'M10 11h6m-6 4h6m-6 4h4', stroke: '#ffffff', 'stroke-width': 1.5, 'stroke-linecap': 'round' }],
++  ['circle', { cx: 8, cy: 11, r: 0.7, fill: '#ffdca0' }],
++  ['circle', { cx: 8, cy: 15, r: 0.7, fill: '#ffdca0' }],
++  ['circle', { cx: 8, cy: 19, r: 0.7, fill: '#ffdca0' }],
++]);
++
++export const IconHardware = navigationIcon('NavigationHardware', '#def4e8', [
++  ['rect', { x: 4, y: 4, width: 16, height: 7, rx: 2, fill: '#19804c' }],
++  ['rect', { x: 4, y: 13, width: 16, height: 7, rx: 2, fill: '#19804c' }],
++  ['path', { d: 'M7 7.5h6M7 16.5h6', stroke: '#ffffff', 'stroke-width': 1.5, 'stroke-linecap': 'round' }],
++  ['circle', { cx: 17, cy: 7.5, r: 1, fill: '#9bf0be' }],
++  ['circle', { cx: 17, cy: 16.5, r: 1, fill: '#9bf0be' }],
++]);
++
++export const IconOperations = navigationIcon('NavigationOperations', '#f0e7ff', [
++  ['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2, fill: '#7846b8' }],
++  ['path', { d: 'M7 8l3 3-3 3m5 1h5', stroke: '#ffffff', 'stroke-width': 1.7, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }],
++  ['circle', { cx: 18, cy: 6.5, r: 0.7, fill: '#dfb8ff' }],
++]);
++
++export const IconSettings = navigationIcon('NavigationSettings', '#e9eff7', [
++  ['path', { d: 'M10 3h4l.6 2.6 2 .9 2.4-.8 2 3.5-1.8 1.8v2l1.8 1.8-2 3.5-2.4-.8-2 .9L14 21h-4l-.6-2.6-2-.9-2.4.8-2-3.5L4.8 13v-2L3 9.2l2-3.5 2.4.8 2-.9z', fill: '#506786' }],
++  ['circle', { cx: 12, cy: 12, r: 4.2, fill: '#a9c8ed' }],
++  ['circle', { cx: 12, cy: 12, r: 2.2, fill: '#ffffff' }],
++]);
++
++export const IconSecurity = navigationIcon('NavigationSecurity', '#dcf4f4', [
++  ['path', { d: 'M12 3l8 3v6c0 4.5-4 7.7-8 9-4-1.3-8-4.5-8-9V6z', fill: '#087d86' }],
++  ['path', { d: 'M9.5 11V9a2.5 2.5 0 015 0v2', stroke: '#b5f3ef', 'stroke-width': 1.6, fill: 'none' }],
++  ['rect', { x: 8, y: 11, width: 8, height: 6, rx: 1.3, fill: '#ffffff' }],
++  ['path', { d: 'M12 13v2', stroke: '#087d86', 'stroke-width': 1.5, 'stroke-linecap': 'round' }],
++]);

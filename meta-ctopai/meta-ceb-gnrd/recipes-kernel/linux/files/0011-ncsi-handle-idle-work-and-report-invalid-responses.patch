@@ -1,0 +1,63 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ncsi: tolerate idle work and describe rejected responses
+
+Functional (0x100) and registered are idle states. Queued work in these
+states cannot advance probe/config/suspend and should not be a warning.
+Keep rejecting invalid responses; report status, length and validation
+error with a bounded warning rate. Do not bypass checksum/status checks.
+
+Upstream-Status: Inappropriate [CEB-GNRD board policy]
+
+--- a/net/ncsi/ncsi-manage.c
++++ b/net/ncsi/ncsi-manage.c
+@@ -1538,6 +1538,14 @@
+ 	struct ncsi_dev *nd = &ndp->ndev;
+ 
+ 	switch (nd->state & ncsi_dev_state_major) {
++	case ncsi_dev_state_registered:
++	case ncsi_dev_state_functional:
++		/* A final response or timeout can queue work after completion.
++		 * Neither idle state has an in-progress state machine to advance.
++		 */
++		netdev_dbg(nd->dev, "NCSI: Ignoring queued work in idle state 0x%x\n",
++			   nd->state);
++		break;
+ 	case ncsi_dev_state_probe:
+ 		ncsi_probe_channel(ndp);
+ 		break;
+--- a/net/ncsi/ncsi-rsp.c
++++ b/net/ncsi/ncsi-rsp.c
+@@ -13,6 +13,7 @@
+ #include <net/ncsi.h>
+ #include <net/net_namespace.h>
+ #include <net/sock.h>
++#include <linux/ratelimit.h>
+ #include <net/genetlink.h>
+ 
+ #include "internal.h"
+@@ -1235,9 +1236,22 @@
+ 		payload = ntohs(hdr->length);
+ 	ret = ncsi_validate_rsp_pkt(nr, payload);
+ 	if (ret) {
+-		netdev_warn(ndp->ndev.dev,
+-			    "NCSI: 'bad' packet ignored for type 0x%x\n",
+-			    hdr->type);
++		static DEFINE_RATELIMIT_STATE(warnings, 30 * HZ, 8);
++		struct ncsi_rsp_pkt_hdr response;
++		const struct ncsi_rsp_pkt_hdr *rsp =
++			skb_header_pointer(nr->rsp, skb_network_offset(nr->rsp),
++					   sizeof(response), &response);
++
++		if (__ratelimit(&warnings))
++			netdev_warn(ndp->ndev.dev,
++				    "NCSI: rejected response type=0x%x channel=0x%x "
++				    "error=%d code=0x%04x reason=0x%04x "
++				    "length=%u expected=%d revision=%u state=0x%x\n",
++				    hdr->type, hdr->channel, ret,
++				    rsp ? ntohs(rsp->code) : 0xffff,
++				    rsp ? ntohs(rsp->reason) : 0xffff,
++				    ntohs(hdr->length), payload,
++				    hdr->revision, nd->state);
+ 
+ 		if (nr->flags == NCSI_REQ_FLAG_NETLINK_DRIVEN) {
+ 			if (ret == -EPERM)

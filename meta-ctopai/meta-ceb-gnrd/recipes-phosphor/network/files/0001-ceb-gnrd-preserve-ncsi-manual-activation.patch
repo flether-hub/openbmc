@@ -1,0 +1,41 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] network: preserve manual activation for host-powered NC-SI
+
+The generated network file must not bypass the board POST gate. Preserve
+explicit NICEnabled=false as ActivationPolicy=down and keep IP/DHCP settings.
+
+Upstream-Status: Inappropriate [CEB-GNRD board policy]
+
+--- a/src/ethernet_interface.cpp
++++ b/src/ethernet_interface.cpp
+@@ -104,6 +104,16 @@
+     EthernetInterfaceIntf::dhcp4(dhcpVal.v4, true);
+     EthernetInterfaceIntf::dhcp6(dhcpVal.v6, true);
+     EthernetInterfaceIntf::ipv6AcceptRA(getIPv6AcceptRA(config), true);
++    if (interfaceName() == "eth1")
++    {
++        const auto policies =
++            config.map.getValueStrings("Link", "ActivationPolicy");
++        if (!policies.empty() &&
++            (policies.back() == "down" || policies.back() == "always-down"))
++        {
++            enabled = false;
++        }
++    }
+     EthernetInterfaceIntf::nicEnabled(enabled, true);
+     auto lldpVal = parseLLDPConf();
+     if (!lldpVal.empty())
+@@ -913,6 +923,13 @@
+         {
+             link["ActivationPolicy"].emplace_back("down");
+         }
++        else if (interfaceName() == "eth1")
++        {
++            // The board power/POST monitor owns NC-SI administrative state.
++            // Keep this in generated 00-bmc-eth1.network, which takes
++            // precedence over the board fallback 10-bmc-eth1-ncsi.network.
++            link["ActivationPolicy"].emplace_back("manual");
++        }
+     }
+     {
+         auto& network = config.map["Network"].emplace_back();
