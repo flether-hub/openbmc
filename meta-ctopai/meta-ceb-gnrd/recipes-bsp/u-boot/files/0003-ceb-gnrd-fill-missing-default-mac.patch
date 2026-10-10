@@ -12,7 +12,7 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
  #include <asm/io.h>
  #include <asm/arch/aspeed_scu_info.h>
  #include <fdt_support.h>
-@@ -165,3 +166,47 @@
+@@ -165,3 +166,61 @@
  	return ret;
  }
  #endif
@@ -20,7 +20,8 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
 +#if defined(CEB_GNRD_ENV) && !defined(CONFIG_SPL_BUILD)
 +/* A valid saved environment replaces the whole compiled default environment.
 + * Migrate missing MAC and network boot defaults before NIC initialization.
-+ * Preserve provisioned addresses, bootcmd and existing nonempty variables.
++ * Replace only legacy factory network addresses; preserve custom addresses,
++ * bootcmd and other existing nonempty variables.
 + */
 +int board_late_init(void)
 +{
@@ -30,6 +31,9 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
 +	} defaults[] = {
 +		{ "ethaddr", CEB_GNRD_DEFAULT_MAC0 },
 +		{ "eth1addr", CEB_GNRD_DEFAULT_MAC1 },
++		{ "ipaddr", __stringify(CONFIG_IPADDR) },
++		{ "gatewayip", __stringify(CONFIG_GATEWAYIP) },
++		{ "serverip", __stringify(CONFIG_SERVERIP) },
 +		{ "netboot_server", CEB_GNRD_NETBOOT_SERVER },
 +		{ "netboot_gateway", CEB_GNRD_NETBOOT_GATEWAY },
 +		{ "netboot_kernel", CEB_GNRD_NETBOOT_KERNEL },
@@ -43,15 +47,25 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
 +	for (i = 0; i < ARRAY_SIZE(defaults); ++i) {
 +		const char *value = env_get(defaults[i].name);
 +
-+		if (value && *value)
-+			continue;
++		if (value && *value) {
++			const char *legacy = NULL;
++
++			if (!strcmp(defaults[i].name, "ipaddr"))
++				legacy = "192.168.0.45";
++			else if (!strcmp(defaults[i].name, "gatewayip"))
++				legacy = "192.168.0.1";
++			else if (!strcmp(defaults[i].name, "serverip"))
++				legacy = "192.168.0.81";
++			if (!legacy || strcmp(value, legacy))
++				continue;
++		}
 +		if (env_set(defaults[i].name, defaults[i].address)) {
-+			printf("CEB-GNRD: cannot set missing %s\n", defaults[i].name);
++			printf("CEB-GNRD: cannot set default %s\n", defaults[i].name);
 +			save_ok = false;
 +			continue;
 +		}
 +		changed = true;
-+		printf("CEB-GNRD: filled missing %s=%s\n",
++		printf("CEB-GNRD: updated default %s=%s\n",
 +		       defaults[i].name, defaults[i].address);
 +	}
 +	if (changed && save_ok && env_save())

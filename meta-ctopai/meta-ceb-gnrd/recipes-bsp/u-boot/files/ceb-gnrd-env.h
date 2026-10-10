@@ -11,6 +11,8 @@
  * environment. A valid saved environment takes precedence over defaults;
  * board_late_init fills missing MAC variables in an existing environment and
  * saves the migration once. Existing nonempty variables are preserved.
+ * Legacy factory ipaddr/gatewayip/serverip on 192.168.0.x are migrated to
+ * the compiled board defaults; custom network addresses remain unchanged.
  *
  * bootnet: load the kernel FIT via TFTP into RAM and boot it without flashing.
  * Usage: run bootnet. Default bootcmd remains run bootspi. The FIT initramfs
