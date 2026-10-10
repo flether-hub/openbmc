@@ -1,0 +1,104 @@
+Subject: [PATCH] ceb-gnrd: use standard network variables for TFTP boot
+
+Remove duplicate server/gateway aliases from the defaults. Migrate only the
+old factory bootnet command, retaining custom alias values before removing
+them. Preserve custom scripts and their aliases. Save once and synchronize
+runtime network state after migration as before.
+
+Upstream-Status: Inappropriate [CEB-GNRD environment migration]
+
+--- a/board/aspeed/evb_ast2600/evb_ast2600.c
++++ b/board/aspeed/evb_ast2600/evb_ast2600.c
+@@ -187,8 +187,6 @@
+ 		{ "ipaddr", __stringify(CONFIG_IPADDR) },
+ 		{ "gatewayip", __stringify(CONFIG_GATEWAYIP) },
+ 		{ "serverip", __stringify(CONFIG_SERVERIP) },
+-		{ "netboot_server", CEB_GNRD_NETBOOT_SERVER },
+-		{ "netboot_gateway", CEB_GNRD_NETBOOT_GATEWAY },
+ 		{ "netboot_kernel", CEB_GNRD_NETBOOT_KERNEL },
+ 		{ "netboot_addr", CEB_GNRD_NETBOOT_ADDR },
+ 		{ "bootnet", CEB_GNRD_BOOTNET },
+@@ -196,9 +194,51 @@
+ 	bool changed = false;
+ 	bool save_ok = true;
+ 	unsigned int i;
++	static const char legacy_bootnet[] =
++		"setenv serverip ${netboot_server} && "
++		"setenv gatewayip ${netboot_gateway} && "
++		"tftpboot ${netboot_addr} ${netboot_kernel} && "
++		"bootm ${netboot_addr}";
++	const char *bootnet = env_get("bootnet");
++	bool migrate_bootnet = bootnet && !strcmp(bootnet, legacy_bootnet);
++	bool uses_standard_network = !bootnet || !*bootnet || migrate_bootnet ||
++		!strcmp(bootnet, CEB_GNRD_BOOTNET);
++
++	/* Preserve custom alias addresses used by the old factory command.
++	 * Factory aliases do not override an explicitly configured standard IP.
++	 * Custom bootnet scripts retain their aliases and are never rewritten.
++	 */
++	if (migrate_bootnet) {
++		static const struct {
++			const char *alias;
++			const char *standard;
++			const char *factory;
++		} aliases[] = {
++			{ "netboot_server", "serverip", "192.168.185.84" },
++			{ "netboot_gateway", "gatewayip", "192.168.185.1" },
++		};
++
++		for (i = 0; i < ARRAY_SIZE(aliases); ++i) {
++			const char *value = env_get(aliases[i].alias);
++
++			if (!value || !*value || !strcmp(value, aliases[i].factory))
++				continue;
++			if (env_set(aliases[i].standard, value)) {
++				printf("CEB-GNRD: cannot migrate %s\n", aliases[i].alias);
++				save_ok = false;
++				continue;
++			}
++			changed = true;
++		}
++	}
+ 
+ 	for (i = 0; i < ARRAY_SIZE(defaults); ++i) {
+ 		const char *value = env_get(defaults[i].name);
++
++		/* Leave the legacy command usable if an alias could not migrate. */
++		if (migrate_bootnet && !save_ok &&
++		    !strcmp(defaults[i].name, "bootnet"))
++			continue;
+ 
+ 		if (value && *value) {
+ 			const char *legacy = NULL;
+@@ -209,6 +249,8 @@
+ 				legacy = "192.168.0.1";
+ 			else if (!strcmp(defaults[i].name, "serverip"))
+ 				legacy = "192.168.0.81";
++			else if (!strcmp(defaults[i].name, "bootnet") && migrate_bootnet)
++				legacy = legacy_bootnet;
+ 			if (!legacy || strcmp(value, legacy))
+ 				continue;
+ 		}
+@@ -220,6 +262,22 @@
+ 		changed = true;
+ 		printf("CEB-GNRD: updated default %s=%s\n",
+ 		       defaults[i].name, defaults[i].address);
++	}
++	if (uses_standard_network && save_ok) {
++		static const char * const obsolete[] = {
++			"netboot_server", "netboot_gateway",
++		};
++
++		for (i = 0; i < ARRAY_SIZE(obsolete); ++i) {
++			if (!env_get(obsolete[i]))
++				continue;
++			if (env_set(obsolete[i], NULL)) {
++				printf("CEB-GNRD: cannot remove %s\n", obsolete[i]);
++				save_ok = false;
++			} else {
++				changed = true;
++			}
++		}
+ 	}
+ #ifdef CONFIG_CMD_NET
+ 	/* env_set() skips network callbacks for H_PROGRAMMATIC updates.

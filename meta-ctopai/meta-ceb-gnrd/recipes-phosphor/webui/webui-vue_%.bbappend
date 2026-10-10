@@ -36,6 +36,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0034-ceb-gnrd-timezone-ui-language.patch \
     file://0035-ceb-gnrd-boot-checkpoint-details.patch \
     file://0036-ceb-gnrd-colored-navigation-icons.patch \
+    file://0037-ceb-gnrd-refresh-confirmed-time-mode.patch \
     file://zh-CN.json \
 "
 

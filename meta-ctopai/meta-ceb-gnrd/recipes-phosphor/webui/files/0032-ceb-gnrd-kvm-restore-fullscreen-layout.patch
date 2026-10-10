@@ -8,7 +8,7 @@ when the component is removed and handle fullscreen API rejection.
 Keep the toolbar on one line; scroll the actions within their column when
 the viewport is too narrow instead of wrapping buttons or widening the page.
 
-Size the embedded video panel to 80% of the available content width and
+Size the embedded video panel to 70% of the available content width and
 retain the remote aspect ratio. Popup and fullscreen panels use full width.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
@@ -207,7 +207,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +}
 +
 +#terminal-kvm {
-+  width: 80%;
++  width: 70%;
 +  min-width: 0;
 +  max-width: 100%;
 +  overflow: hidden;

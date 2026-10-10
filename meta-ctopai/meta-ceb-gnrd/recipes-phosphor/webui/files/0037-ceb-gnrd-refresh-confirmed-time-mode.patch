@@ -1,0 +1,112 @@
+Subject: [PATCH] ceb-gnrd: reflect confirmed Manual/NTP mode after saving
+
+Do not mutate Vuex state or reset the selected mode before sending the form.
+Observe NTP mode updates as well as server updates. Propagate protocol PATCH
+and GET errors, read back the applied settings, and report success only when
+the returned mode matches the request. Keep the NTP-stop delay for manual
+clock updates.
+
+Upstream-Status: Inappropriate [CEB-GNRD UI fix]
+
+--- a/src/views/Settings/DateTime/DateTime.vue
++++ b/src/views/Settings/DateTime/DateTime.vue
+@@ -284,6 +284,11 @@
+     ntpServers() {
+       this.setNtpValues();
+     },
++    isNtpProtocolEnabled(value) {
++      if (typeof value === 'boolean') {
++        this.form.configurationSelected = value ? 'ntp' : 'manual';
++      }
++    },
+     manualDate() {
+       this.emitChange();
+     },
+@@ -302,7 +307,12 @@
+     Promise.all([
+       this.$store.dispatch('global/getBmcTime'),
+       this.$store.dispatch('dateTime/getNtpData'),
+-    ]).finally(() => this.endLoader());
++    ])
++      .catch((error) => {
++        console.error('Unable to load date and time settings:', error);
++        this.errorToast(this.$t('global.status.error'));
++      })
++      .finally(() => this.endLoader());
+   },
+   methods: {
+     emitChange() {
+@@ -360,16 +370,12 @@
+ 
+         dateTimeForm.ntpServersArray = [...ntpArrayFiltered];
+ 
+-        [this.ntpServers[0], this.ntpServers[1], this.ntpServers[2]] = [
+-          ...dateTimeForm.ntpServersArray,
+-        ];
+-
+-        this.setNtpValues();
+       }
+ 
+       this.$store
+         .dispatch('dateTime/updateDateTime', dateTimeForm)
+         .then((success) => {
++          this.setNtpValues();
+           this.successToast(success);
+         })
+         .then(() => {
+--- a/src/store/modules/Settings/DateTimeStore.js
++++ b/src/store/modules/Settings/DateTimeStore.js
+@@ -23,14 +23,21 @@
+         .then((response) => {
+           const ntpServers = response.data.NTP.NTPServers;
+           const isNtpProtocolEnabled = response.data.NTP.ProtocolEnabled;
++          if (
++            typeof isNtpProtocolEnabled !== 'boolean' ||
++            !Array.isArray(ntpServers)
++          ) {
++            throw new Error('Invalid NTP configuration response');
++          }
+           commit('setNtpServers', ntpServers);
+           commit('setIsNtpProtocolEnabled', isNtpProtocolEnabled);
+         })
+         .catch((error) => {
+           console.log(error);
++          throw error;
+         });
+     },
+-    async updateDateTime({ state }, dateTimeForm) {
++    async updateDateTime({ state, dispatch }, dateTimeForm) {
+       const ntpData = {
+         NTP: {
+           ProtocolEnabled: dateTimeForm.ntpProtocolEnabled,
+@@ -42,15 +49,9 @@
+ 
+       const bmcPath = await this.dispatch('global/getBmcPath');
+ 
+-      // Try to update NTP settings, but continue with DateTime even if it fails
++      // A failed mode change must not report success or set manual time.
+       return await api
+         .patch(`${bmcPath}/NetworkProtocol`, ntpData)
+-        .catch((error) => {
+-          console.warn(
+-            'NTP settings update failed, continuing with DateTime update:',
+-            error,
+-          );
+-        })
+         .then(async () => {
+           if (!dateTimeForm.ntpProtocolEnabled) {
+             const dateTimeData = {
+@@ -77,7 +78,12 @@
+             });
+           }
+         })
+-        .then(() => {
++        .then(async () => {
++          // Refresh the authoritative mode and servers before showing success.
++          await dispatch('getNtpData');
++          if (state.isNtpProtocolEnabled !== dateTimeForm.ntpProtocolEnabled) {
++            throw new Error('NTP mode did not match the saved selection');
++          }
+           return i18n.global.t('pageDateTime.toast.successSaveDateTime');
+         })
+         .catch((error) => {
