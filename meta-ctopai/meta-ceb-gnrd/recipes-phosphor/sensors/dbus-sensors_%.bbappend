@@ -12,6 +12,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0005-fan-use-resolved-pwm-enable-path.patch \
     file://0006-psu-log-filtered-devices-at-debug-level.patch \
     file://0007-psu-log-cancelled-poll-timer-at-debug-level.patch \
+    file://0008-fan-log-unmatched-inputs-at-debug-level.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \

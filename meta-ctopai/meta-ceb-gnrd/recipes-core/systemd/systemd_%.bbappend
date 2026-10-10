@@ -1,3 +1,13 @@
+# timesyncd is compiled and packaged in systemd by the Phosphor recipe, but
+# OE only registers selected split packages with the systemd class. Register
+# the main package too, so rootfs installation enables timesyncd and creates
+# its dbus-org.freedesktop.timesync1.service alias for phosphor-networkd.
+# Use the normal service enablement path so timedated/Web can still disable
+# NTP when the user selects manual time.
+SYSTEMD_PACKAGES:append:ceb-gnrd = " ${PN}"
+SYSTEMD_SERVICE:${PN}:append:ceb-gnrd = " systemd-timesyncd.service"
+SYSTEMD_AUTO_ENABLE:${PN}:ceb-gnrd = "enable"
+
 # Derive the ttyS4 instance from the installed upstream template so agetty,
 # credentials, device binding and terminal handling follow systemd updates.
 do_install:append:ceb-gnrd() {

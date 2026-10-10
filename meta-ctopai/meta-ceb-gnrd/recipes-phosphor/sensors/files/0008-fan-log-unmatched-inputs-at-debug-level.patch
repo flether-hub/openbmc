@@ -1,0 +1,23 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] fan: log unmatched scanned inputs at debug level
+
+The fan scanner enumerates hwmon inputs that may belong to other sensor
+services or have no Entity-Manager configuration yet. Skipping such inputs
+is expected during discovery. Keep real configuration and read failures at
+error level, without changing sensor selection or retry behavior.
+
+Upstream-Status: Pending
+---
+--- a/src/fan/FanMain.cpp
++++ b/src/fan/FanMain.cpp
+@@ -397,8 +397,8 @@
+             if (sensorData == nullptr)
+             {
+-                lg2::error("failed to find match for '{PATH}'", "PATH",
+-                           path.string());
++                lg2::debug("Skipping unmatched fan input '{PATH}'", "PATH",
++                           path.string());
+                 continue;
+             }
+ 
+             auto findSensorName = baseConfiguration->second.find("Name");
