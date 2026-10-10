@@ -8,20 +8,17 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
 
 --- a/src/views/Operations/SerialOverLan/SerialOverLanConsole.vue
 +++ b/src/views/Operations/SerialOverLan/SerialOverLanConsole.vue
-@@ -5,6 +5,12 @@
+@@ -5,6 +5,9 @@
        :aria-label="$t('pageSerialOverLan.accessDeniedAriaLabel')"
      />
      <template v-else>
-+      <p class="small text-muted">
-+        {{ $t('pageSerialOverLan.physicalSource') }}
-+      </p>
 +      <alert variant="info" :small="true" class="mb-3">
 +        <p class="mb-0">{{ $t('pageSerialOverLan.readOnlyHint') }}</p>
 +      </alert>
        <b-row class="d-flex">
          <b-col sm="4" md="6">
            <alert
-@@ -14,7 +20,7 @@
+@@ -14,7 +17,7 @@
              class="mt-4"
            >
              <p class="col-form-label">
@@ -30,7 +27,7 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
              </p>
            </alert>
          </b-col>
-@@ -82,6 +88,7 @@
+@@ -82,6 +85,7 @@
    data() {
      return {
        resizeConsoleWindow: null,
@@ -38,7 +35,7 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
      };
    },
    computed: {
-@@ -89,7 +96,7 @@
+@@ -89,7 +93,7 @@
        return this.$store.getters['global/serverStatus'];
      },
      connection() {
@@ -47,7 +44,7 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
      },
      serverStatusIcon() {
        return this.connection ? 'success' : 'danger';
-@@ -112,6 +119,7 @@
+@@ -112,6 +116,7 @@
    methods: {
      openTerminal() {
        const token = this.$store.getters['authentication/token'];
@@ -55,7 +52,7 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
        this.ws = new WebSocket(`wss://${window.location.host}/console/default`, [
          token,
        ]);
-@@ -137,10 +145,12 @@
+@@ -137,10 +142,12 @@
          fontFamily:
            'SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace',
          scrollback: 10000,
@@ -69,7 +66,7 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
        this.term.loadAddon(attachAddon);
  
        const fitAddon = new FitAddon();
-@@ -154,23 +164,22 @@
+@@ -154,23 +161,22 @@
        }, 1000);
        window.addEventListener('resize', this.resizeConsoleWindow);
  
@@ -107,7 +104,7 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
        this.term?.dispose();
        this.term = null;
        this.ws?.close();
-@@ -178,7 +187,7 @@
+@@ -178,7 +184,7 @@
      },
      openConsoleWindow() {
        window.open(
@@ -123,7 +120,7 @@ Upstream-Status: Inappropriate [CEB-GNRD serial topology]
      },
      "pageSerialOverLan": {
 +        "useVuart": "Use vUART (unavailable)",
-+        "readOnlyHint": "SOL is currently read-only. Only console output is supported; keyboard input and paste are not supported.",
++        "readOnlyHint": "SOL: UART3 / ttyS2, 115200 baud (default); output only, no keyboard input or paste.",
 +        "physicalSource": "Physical serial port: UART3 / ttyS2, 115200 baud (default)",
 +        "vuartSource": "vUART: host COM1 over eSPI / ttyVUART0, 115200 baud",
 +        "connectionHint": "Console disconnected. Confirm the host is powered on and the selected serial source is available.",
