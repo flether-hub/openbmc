@@ -18,7 +18,10 @@
     compatible = "ctopai,ceb-gnrd", "aspeed,ast2600";
 
     /* One SK hynix H5AN8G6NDJR-XNC, 8 Gbit x16 = 1 GiB.
-     * U-Boot narrows this range to exclude hardware-reserved VGA memory. */
+     * U-Boot narrows this physical range to exclude VGA/SSP and ECC parity.
+     * Do not hard-code the resulting size: it depends on detected RAM and
+     * VGA straps. The inherited video/framebuffer pools allocate dynamically
+     * inside the memory range handed over by U-Boot. */
     memory@80000000 {
         reg = <0x80000000 0x40000000>;
     };

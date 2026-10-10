@@ -10,6 +10,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0003-ceb-gnrd-gate-chassis-adc-and-delayed-alarms.patch \
     file://0004-ceb-gnrd-persistent-intrusion-enable.patch \
     file://0005-fan-use-resolved-pwm-enable-path.patch \
+    file://0006-psu-log-filtered-devices-at-debug-level.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \

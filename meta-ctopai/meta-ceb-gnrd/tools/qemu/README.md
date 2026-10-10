@@ -246,7 +246,9 @@ BIOS 更新沿用自己的分区选择，不受 BMC 选项影响。
 硬件为单颗 SK hynix H5AN8G6NDJR-XNC，8 Gbit、512M x16、96-ball FBGA，
 容量为 1 GiB，而不是 8 GiB。Linux 和 U-Boot 板级设备树均明确声明
 `0x80000000 + 0x40000000`；Linux 原来继承 EVB 的 2 GiB 声明，现已修正。
-U-Boot SPL 实际探测容量并扣除硬件 VGA/SSP 保留内存，然后传递可用范围给 Linux。
+U-Boot SPL 实际探测容量，扣除硬件 VGA/SSP 保留内存，初始化 ECC 并预留校验存储，
+然后传递缩减后的可用范围给 Linux。当前 1 GiB、32 MiB VGA、无 SSP 保留时，
+可用范围为 `0x80000000 + 0x37100000`（881 MiB），再由 Linux 分配 CMA/DMA 池。
 
 | 项目 | 板级配置 / 当前源代码值 |
 | --- | --- |
@@ -266,9 +268,10 @@ U-Boot SPL 实际探测容量并扣除硬件 VGA/SSP 保留内存，然后传递
 | DRAM ODT / 输出阻抗 | RTT_NOM=48 ohm、RTT_PARK=48 ohm、RTT_WR 关闭、RON=34 ohm |
 | 写数据眼偏移 | `CONFIG_ASPEED_DDR4_WR_DATA_EYE_TRAINING_RESULT_OFFSET=0x10` |
 | 训练 / 自检 | PHY 自动训练、失败重训；初始化自检开启，`CONFIG_ASPEED_BYPASS_SELFTEST` 关闭 |
-| ECC | 未启用 `aspeed,ecc-enabled`，当前无 inline ECC 预留；x16 不表示一定无法启用 AST2600 inline ECC |
+| ECC | U-Boot `aspeed,ecc-enabled` 开启，`aspeed,ecc-size-mb=0` 覆盖全部扣除 VGA/SSP 后的可用 RAM；驱动完成清零初始化并按 8/9、向下取整到 MiB 计算受保护的数据容量 |
+| ECC 监测 | Linux `CONFIG_EDAC=y`、`CONFIG_EDAC_ASPEED=y`；控制器纠错与不可纠错事件由 EDAC 记录 |
 | SSP 保留 | `CONFIG_ASPEED_SSP_RERV_MEM=0x0` |
-| 硬件 VGA 保留 | 由 SCU500[14:13] strap 决定；0/1 对应 16 MiB、2 对应 32 MiB、3 对应 64 MiB；VGA fuse 禁用时为 0 |
+| 硬件 VGA 保留 | U-Boot `aspeed,vga-size-mb=32` 设置 SCU500[14:13] 和 MCR04[3:2] 为 2，保留 32 MiB；VGA fuse 禁用时为 0。必须更新 SPL/U-Boot，单独更新 kernel/rofs 无法改变此项 |
 | 视频引擎 DMA 池 | Linux `video_engine_memory`：64 MiB，16 MiB 对齐，reusable shared-dma-pool |
 | framebuffer DMA 池 | Linux `gfx_memory`：16 MiB，16 MiB 对齐，reusable shared-dma-pool；与硬件 VGA 保留不是同一项 |
 | Linux 内存模型 | ARM32、`CONFIG_VMSPLIT_2G=y`、`CONFIG_HIGHMEM=y`、SMP 两核；Swap 关闭 |

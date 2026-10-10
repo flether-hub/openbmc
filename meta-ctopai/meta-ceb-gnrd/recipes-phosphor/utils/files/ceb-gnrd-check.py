@@ -445,6 +445,44 @@ def ipmi_sensors_fans():
         result('SKIP', 'PECI live enumeration', 'host off/unknown')
 
 
+def memory_ecc():
+    section('BMC DDR ECC')
+    if ENV == 'qemu':
+        result('SKIP', 'physical DDR ECC', 'QEMU does not validate physical DDR correction')
+        return
+    registers = {}
+    for name, address in (('config', '0x1e6e0004'), ('range', '0x1e6e0054')):
+        rc, text = run(['devmem', address, '32'])
+        try:
+            if rc != 0:
+                raise ValueError(text.strip())
+            registers[name] = int(text.strip(), 0)
+        except ValueError:
+            result('FAIL', 'ECC ' + name + ' register readable', text.strip())
+            return
+    enabled = bool(registers['config'] & (1 << 7))
+    require('BMC DDR ECC enabled', enabled, f"MCR04=0x{registers['config']:08x}")
+    if enabled:
+        protected = (registers['range'] & 0x7ff00000) + (1 << 20)
+        try:
+            reg = Path('/sys/firmware/devicetree/base/memory@80000000/reg').read_bytes()
+            if len(reg) != 8:
+                raise ValueError('expected one 32-bit address/size pair')
+            base, size = int.from_bytes(reg[:4], 'big'), int.from_bytes(reg[4:], 'big')
+            require('Linux RAM inside ECC data range',
+                    base == 0x80000000 and 0 < size <= protected,
+                    f'RAM={size >> 20} MiB, protected={protected >> 20} MiB')
+        except (OSError, ValueError) as exc:
+            result('FAIL', 'ECC Linux memory range readable', str(exc))
+    controller = Path('/sys/devices/system/edac/mc/mc0')
+    require('ASPEED EDAC memory controller registered', controller.is_dir())
+    for counter in ('ce_count', 'ue_count'):
+        value = read(controller / counter)
+        require('EDAC ' + counter + ' readable', value.isdecimal(), value)
+        if counter == 'ue_count' and value.isdecimal():
+            require('no uncorrectable DDR ECC errors', int(value) == 0, value)
+
+
 def peripherals_network():
     section('3. eSPI/KCS/POST/SOL, RTC, USB/VGA and network')
     for node in ('/dev/ipmi-kcs3', '/dev/aspeed-lpc-snoop0', '/dev/ttyS2', '/dev/ttyVUART0', '/dev/rtc0', '/dev/video0', '/dev/nbd0'):
@@ -619,7 +657,7 @@ def storage_logs():
 
 
 print(f'CEB-GNRD check: env={ENV}; read-only unless ClearLog explicitly enabled', flush=True)
-for callback in (system, ipmi_sensors_fans, peripherals_network, redfish, storage_logs):
+for callback in (system, ipmi_sensors_fans, memory_ecc, peripherals_network, redfish, storage_logs):
     try:
         callback()
     except Exception as exc:

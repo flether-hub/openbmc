@@ -1,0 +1,26 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] psu: log unsupported scanned devices at debug level
+
+The PSU scanner enumerates all hwmon and IIO devices. Filtering ADC, fan,
+PECI and other non-PSU drivers is expected, not an error. Keep diagnostics
+at debug level without changing device selection or genuine PSU errors.
+
+Upstream-Status: Pending
+---
+--- a/src/psu/PSUSensorMain.cpp
++++ b/src/psu/PSUSensorMain.cpp
+@@ -410,10 +410,10 @@
+                                      return a.second.name == pmbusName;
+                                  }) == sensorTypes.end())
+         {
+-            // To avoid this error message, add your driver name to
+-            // the pmbusNames vector at the top of this file.
+-            lg2::error("'{NAME}' not found in sensor whitelist", "NAME",
+-                       pmbusName);
++            // The scan includes non-PSU hwmon and IIO devices. Skipping
++            // drivers outside the supported PSU list is normal filtering.
++            lg2::debug("Skipping '{NAME}': not a supported PSU sensor driver",
++                       "NAME", pmbusName);
+             continue;
+         }
+ 

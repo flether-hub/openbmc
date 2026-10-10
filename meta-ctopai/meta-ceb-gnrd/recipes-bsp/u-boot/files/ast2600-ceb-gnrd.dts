@@ -26,8 +26,14 @@
 	/* ASPEED internal MPLL clock; DDR4-1600 has an 800-MHz CK pair.
 	 * The pinned driver programs MPLL from CONFIG_ASPEED_DDR4_1600. */
 	clock-frequency = <400000000>;
-	/delete-property/ aspeed,ecc-enabled;
-	/delete-property/ aspeed,ecc-size-mb;
+	/* Enable controller inline ECC before SPL loads U-Boot into DDR.
+	 * Zero uses all detected RAM after VGA/SSP reservations. The existing
+	 * driver scrubs ECC data, reserves parity storage, and reports the
+	 * reduced size to U-Boot/Linux (881 MiB with 1 GiB + 32 MiB VGA). */
+	/* Override only the VGA strap field before DDR/ECC initialization. */
+	aspeed,vga-size-mb = <32>;
+	aspeed,ecc-enabled;
+	aspeed,ecc-size-mb = <0>;
 };
 
 /* Keep UART5 available from SPL through U-Boot for board bring-up logs. */

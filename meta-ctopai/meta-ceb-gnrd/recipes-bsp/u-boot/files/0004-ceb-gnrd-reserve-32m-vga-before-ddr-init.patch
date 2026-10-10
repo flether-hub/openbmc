@@ -1,0 +1,97 @@
+Subject: [PATCH] ram: aspeed: allow a board VGA reservation before DDR init
+
+Upstream-Status: Inappropriate [CEB-GNRD board memory partition]
+
+Keep SCU and SDRAM VGA size fields consistent. Reinitialize on partition
+changes so warm boot cannot reuse an ECC range overlapping the VGA area.
+Boards without the property retain their existing strap-derived behavior.
+
+--- a/drivers/ram/aspeed/sdram_ast2600.c
++++ b/drivers/ram/aspeed/sdram_ast2600.c
+@@ -32,6 +32,7 @@
+ #define AST_SCU_MPLL_EXT	0x224
+ #define AST_SCU_FPGA_PLL	0x400
+ #define AST_SCU_HW_STRAP	0x500
++#define AST_SCU_HW_STRAP_CLR	0x504
+ #define AST_SCU_EFUSE_DATA	0x594
+ 
+ 
+@@ -894,7 +895,8 @@
+ 	writel(0, &regs->intr_ctrl);
+ }
+ 
+-static bool ast2600_sdrammc_init_required(struct udevice *dev)
++static bool ast2600_sdrammc_init_required(struct udevice *dev,
++					   u32 vga_hwconf)
+ {
+ 	struct dram_info *priv = dev_get_priv(dev);
+ 	struct ast2600_sdrammc_regs *regs = priv->regs;
+@@ -915,6 +917,16 @@
+ 	if (ecc_requested != ecc_enabled)
+ 		return true;
+ 
++	/* A different VGA partition also changes the ECC data/parity boundary.
++	 * Reinitialize before SPL loads anything into DDR, rather than reuse it.
++	 */
++	if (vga_hwconf &&
++	    (((readl(priv->scu + AST_SCU_HW_STRAP) &
++	       SCU_HWSTRAP_VGAMEM_MASK) >> SCU_HWSTRAP_VGAMEM_SHIFT) != vga_hwconf ||
++	     ((readl(&regs->config) & SDRAM_CONF_VGA_SIZE_MASK) >>
++	      SDRAM_CONF_VGA_SIZE_SHIFT) != vga_hwconf))
++		return true;
++
+ 	return false;
+ }
+ 
+@@ -923,8 +935,28 @@
+ 	struct dram_info *priv = (struct dram_info *)dev_get_priv(dev);
+ 	struct ast2600_sdrammc_regs *regs = priv->regs;
+ 	struct udevice *clk_dev;
++	u32 vga_size_mb, vga_hwconf = 0;
+ 	int ret;
+ 	volatile uint32_t reg;
++
++	/* Optional board override; absent/zero retains the hardware strap. */
++	vga_size_mb = dev_read_u32_default(dev, "aspeed,vga-size-mb", 0);
++	switch (vga_size_mb) {
++	case 0:
++		break;
++	case 16:
++		vga_hwconf = 1;
++		break;
++	case 32:
++		vga_hwconf = 2;
++		break;
++	case 64:
++		vga_hwconf = 3;
++		break;
++	default:
++		printf("Unsupported VGA reservation: %u MiB\n", vga_size_mb);
++		return -EINVAL;
++	}
+ 
+ 	/* find SCU base address from clock device */
+ 	ret = uclass_get_device_by_driver(UCLASS_CLK, DM_GET_DRIVER(aspeed_scu),
+@@ -940,11 +972,21 @@
+ 		return PTR_ERR(priv->scu);
+ 	}
+ 
+-	if (!ast2600_sdrammc_init_required(dev)) {
++	if (!ast2600_sdrammc_init_required(dev, vga_hwconf)) {
+ 		printf("already initialized, ");
+ 		setbits_le32(priv->scu + AST_SCU_HANDSHAKE, SCU_HANDSHAKE_MASK);
+ 		ast2600_sdrammc_update_size(priv);
+ 		return 0;
++	}
++
++	if (vga_hwconf) {
++		/* SCU500 is write-one-to-set, SCU504 write-one-to-clear.
++		 * Touch only VGA bits; the native size calculation then programs
++		 * MCR04 and excludes this same reservation before enabling ECC.
++		 */
++		writel(SCU_HWSTRAP_VGAMEM_MASK, priv->scu + AST_SCU_HW_STRAP_CLR);
++		writel(vga_hwconf << SCU_HWSTRAP_VGAMEM_SHIFT,
++		       priv->scu + AST_SCU_HW_STRAP);
+ 	}
+ 
+ #ifdef AST2600_SDRAMMC_MANUAL_CLK
