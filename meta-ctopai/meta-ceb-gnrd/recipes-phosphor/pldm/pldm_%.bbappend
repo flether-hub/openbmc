@@ -12,6 +12,8 @@ do_install:append:ceb-gnrd() {
 }
 
 FILES:${PN}:append:ceb-gnrd = " \
+    ${systemd_system_unitdir}/pldmd.service \
+    ${systemd_system_unitdir}/pldmSoftPowerOff.service \
     ${sysconfdir}/systemd/system/pldmd.service \
     ${sysconfdir}/systemd/system/pldmSoftPowerOff.service \
     "
