@@ -1,0 +1,24 @@
+Subject: [PATCH] spi: aspeed: select data bus width for user-mode writes
+
+aspeed_spi_start_user() restores ASPEED_SPI_BASE, which is single-line
+mode. The outer exec_op() width selection is therefore lost before the
+command/address phase. Switch to the requested data width after sending
+the single-line command and address, as the read path already does.
+
+Without this transition, quad page-program sends its data on one line
+despite the SPI NOR core having selected a 1-1-4 instruction.
+
+Upstream-Status: Pending
+---
+--- a/drivers/spi/spi-aspeed-smc.c
++++ b/drivers/spi/spi-aspeed-smc.c
+@@ -263,6 +263,9 @@
+ 	ret = aspeed_spi_send_cmd_addr(chip, op->addr.nbytes, op->addr.val, op->cmd.opcode);
+ 	if (ret < 0)
+ 		goto stop_user;
++	/* Command/address are single-line; select the width for data only. */
++	if (op->data.nbytes)
++		aspeed_spi_set_io_mode(chip, aspeed_spi_get_io_mode(op));
+ 	aspeed_spi_write_to_ahb(chip->ahb_base, op->data.buf.out, op->data.nbytes);
+ stop_user:
+ 	aspeed_spi_stop_user(chip);
