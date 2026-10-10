@@ -155,8 +155,8 @@ Upstream-Status: Inappropriate [CEB-GNRD flash layout and update policy]
 +            ec.clear();
 +            const auto fileStatus = fs::symlink_status(file, ec);
 +            const std::uintmax_t limit = partition == "kernel" ? 9 * 1024 * 1024 :
-+                partition == "rofs" ? 44 * 1024 * 1024 :
-+                partition == "rwfs" ? 10 * 1024 * 1024 : 896 * 1024;
++                partition == "rofs" ? 40 * 1024 * 1024 :
++                partition == "rwfs" ? 14 * 1024 * 1024 : 896 * 1024;
 +            if (ec || !fs::is_regular_file(fileStatus))
 +            {
 +                fail("invalid partition image " + file.string() + ": " + ec.message());

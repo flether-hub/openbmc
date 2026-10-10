@@ -80,8 +80,8 @@ Upstream-Status: Inappropriate [CEB-GNRD static flash layout]
 +const BMC_REGIONS_FILE = 'bmc-partitions.txt';
 +const BMC_REGIONS = [
 +  { name: 'kernel', size: '9 MiB', selected: true, required: true },
-+  { name: 'rofs', size: '44 MiB', selected: true, required: true },
-+  { name: 'rwfs', size: '10 MiB', selected: true },
++  { name: 'rofs', size: '40 MiB', selected: true, required: true },
++  { name: 'rwfs', size: '14 MiB', selected: true },
 +  { name: 'u-boot', size: '896 KiB', selected: false, warning: 'bootWarning' },
 +  { name: 'u-boot-env', size: '128 KiB', selected: false, warning: 'envWarning' },
 +];

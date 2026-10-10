@@ -9,8 +9,8 @@ for file in /var/lib/systemd/coredump/core.*; do
     rm -f -- "$file"
     removed=$((removed + 1))
 done
-echo "Log storage: removed $removed old core payloads; rwfs=10 MiB"
+echo "Log storage: removed $removed old core payloads; rwfs=14 MiB"
 # Vacuum only archived journals. Rotate first so the previous active file can
 # be reclaimed as well; leave the newest journal data up to the new budget.
-journalctl --rotate --vacuum-size=1M --vacuum-files=8 || true
+journalctl --rotate --vacuum-size=3M --vacuum-files=24 || true
 df -k /var/lib /var/log

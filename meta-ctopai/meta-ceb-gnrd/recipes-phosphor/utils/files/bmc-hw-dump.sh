@@ -953,7 +953,7 @@ ck "found PECI devices: $(ls /sys/bus/peci/devices 2>/dev/null | tr '\n' ' ')"
 ck "found hwmon names: $(cat /sys/class/hwmon/hwmon*/name 2>/dev/null | sort | uniq -c | tr -s ' ' | tr '\n' ',')"
 
 sect "flash"
-ck "expected: BMC flash 64 MiB on FMC CS0 (u-boot 0x0, env 0xe0000, kernel 0x100000, rofs 0xa00000, rwfs 0x3600000)"
+ck "expected: BMC flash 64 MiB on FMC CS0 (u-boot 0x0, env 0xe0000, kernel 0x100000, rofs 0xa00000, rwfs 0x3200000)"
 ck "expected: host BIOS 64 MiB on SPI1 CS0 (MX25U51245G), shared through GPIOM1"
 grep -E '^(dev:|mtd[0-9])' "$OUT/mtd.txt" 2>/dev/null | head -n 20 | sed 's/^/    found /' >> "$CK"
 
@@ -1458,7 +1458,7 @@ Row	Category	Interface	SoC resource/pin	Device/connection	Address/channel	Eviden
 155	Flash 分区	u-boot-env	FMC CS0	BMC 64 MiB SPI NOR	offset=0x000e0000	flash-config.txt mtd.txt block-regs.txt
 156	Flash 分区	kernel	FMC CS0	BMC 64 MiB SPI NOR	offset=0x00100000	flash-config.txt mtd.txt block-regs.txt
 157	Flash 分区	rofs	FMC CS0	BMC 64 MiB SPI NOR	offset=0x00a00000	flash-config.txt mtd.txt block-regs.txt
-158	Flash 分区	rwfs	FMC CS0	BMC 64 MiB SPI NOR	offset=0x03600000	flash-config.txt mtd.txt block-regs.txt
+158	Flash 分区	rwfs	FMC CS0	BMC 64 MiB SPI NOR	offset=0x03200000	flash-config.txt mtd.txt block-regs.txt
 159	Flash 分区	host-bios	SPI1 CS0	BIOS 64 MiB SPI NOR	offset=0x00000000	flash-config.txt mtd.txt block-regs.txt
 160	禁用 / 预留	MAC / MDIO	MAC0 / MAC3；MDIO0 / MDIO2 / MDIO3	无配置连接		bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt
 161	禁用 / 预留	I3C 控制器	DT i3c0 / 1 / 3 / 4 / 5	无配置子设备		bus-bindings.txt dev-nodes.txt dt-hardware-cells.txt

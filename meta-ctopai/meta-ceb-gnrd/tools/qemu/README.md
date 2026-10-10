@@ -571,15 +571,26 @@ POST 管理器保留所有实际接收的码值，包括 `0x00`、重复的 `0x0
 不能仅凭重复起始码准确判断复位；需接入该硬件可观测的复位事件后再分轮。
 保持最近两轮、每轮最多 512 条及 Web 最新在前的限制。
 
-板级 SPI Flash 为 64 MiB，其中 rofs 为 44 MiB、rwfs 仅 10 MiB。
+板级 SPI Flash 为 64 MiB，其中 rofs 为 40 MiB、rwfs 为 14 MiB。
 日志与配置共同使用 rwfs；镜像剩余空间不能代替 rwfs 剩余空间。
-持久 journal 1 MiB、诊断转储 512 KiB、SEL/Redfish 约 158 KiB，
-合计约 1.66 MiB，另外还需计算按条数限制的 D-Bus 事件、两轮 POST、配置及文件系统开销。
+持久 journal 3 MiB、诊断转储 512 KiB、SEL/Redfish 约 158 KiB，
+合计约 3.66 MiB，另外还需计算按条数限制的 D-Bus 事件、两轮 POST、配置及文件系统开销。
 journal 设置至少保留 4 MiB 空闲作为清理目标；这不是其他程序写入的全局磁盘配额。
 core 二进制不再写入 Flash，也不再生成堆栈分析；崩溃信号、进程和服务重启原因仍记录在 journal。
 升级后启动清理旧 core 载荷并压缩 journal 保留范围，不删除业务配置。
 实际容量需在 BMC 检查 `df -k /var/lib /var/log` 和 `du -k -d 2 /var/lib /var/log`，
 应保留至少 4 MiB 空闲；若不足，需要定位实际占用，不能只依靠配置预算保证。
+
+从旧 44 MiB rofs / 10 MiB rwfs 布局首次迁移时，rwfs 起点由
+`0x03600000` 改为 `0x03200000`，不能保留原来的 JFFS2 数据直接启动。
+先备份板卡配置、日志和完整 Flash，再通过烧录器写入新布局的完整
+`.static.mtd` 镜像（包含匹配的 U-Boot、kernel、rofs 和新 rwfs），启动后恢复业务配置。
+不要把旧布局的 rwfs 分区原始数据覆盖到新布局中。
+首次迁移不要用只写 kernel/rofs、保留 rwfs 的 `run netupdate`，也不要使用
+旧固件 Web 的部分分区升级来迁移布局。后续同布局升级才可以保留 rwfs。
+如果恢复了旧 U-Boot 环境，保存的 `netupdate` 会覆盖新默认值；在新 U-Boot 中
+执行 `env default netupdate`、`saveenv`，使其采用新的 40 MiB rofs 大小限制。
+新布局只有约 2.855 MiB rofs 余量；每次构建检查 `image-rofs` 大小。
 
 ### RTL8211FS 与 Intel NC-SI 网络测试
 

@@ -24,7 +24,7 @@ PACKAGECONFIG:append:ceb-gnrd = " redfish-dump-log"
 EXTRA_OEMESON:append:ceb-gnrd = " -Dredfish-updateservice-use-dbus=disabled"
 
 # Firmware upload size: bmcweb rejects request bodies larger than http-body-limit
-# (default 30 MiB), and the CEB-GNRD update package is bigger (44 MiB rofs plus the
+# (default 30 MiB), and the CEB-GNRD update package is bigger (40 MiB rofs plus the
 # kernel, about 50 MiB), so the web update failed with "Error starting firmware
 # update".  Allow 80 MiB (the full 64 MiB flash image plus headroom).
 EXTRA_OEMESON:append:ceb-gnrd = " -Dhttp-body-limit=80"
