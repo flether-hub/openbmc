@@ -1,0 +1,58 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] power-control: log DC events on chassis transitions
+
+Warm reset changes HostState to Off without losing Power OK or chassis power.
+Keep host/OS/restart handling and log DC power events on chassis changes only.
+
+Upstream-Status: Pending
+---
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -579,6 +579,7 @@
+ }
+ static void setPowerState(const PowerState state)
+ {
++    const bool chassisChanged = getChassisState(powerState) != getChassisState(state);
+     powerState = state;
+     logStateTransition(state);
+ 
+@@ -589,6 +590,17 @@
+                                std::string(getChassisState(powerState)));
+     chassisIface->set_property("LastStateChangeTime", getCurrentTimeMs());
+ 
++    // HostState temporarily becomes Off during a warm reset while the
++    // chassis remains powered. Emit DC events only for chassis transitions.
++    if (chassisChanged)
++    {
++        const bool on = getChassisState(state) ==
++                        "xyz.openbmc_project.State.Chassis.PowerState.On";
++        sd_journal_send("MESSAGE=%s", on ? "Host system DC power is on" :
++                                         "Host system DC power is off",
++                        "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
++                        on ? "OpenBMC.0.1.DCPowerOn" : "OpenBMC.0.1.DCPowerOff", NULL);
++    }
+     // Save the power state for the restore policy
+     savePowerState(state);
+ }
+@@ -1605,10 +1617,6 @@
+                 pohCounterTimerStart();
+                 // Clear the restart cause set for the next restart
+                 clearRestartCause();
+-                sd_journal_send("MESSAGE=Host system DC power is on",
+-                                "PRIORITY=%i", LOG_INFO,
+-                                "REDFISH_MESSAGE_ID=%s",
+-                                "OpenBMC.0.1.DCPowerOn", NULL);
+             }
+             else
+             {
+@@ -1625,10 +1633,6 @@
+ #ifdef USE_ACBOOT
+                 resetACBootProperty();
+ #endif // USE_ACBOOT
+-                sd_journal_send("MESSAGE=Host system DC power is off",
+-                                "PRIORITY=%i", LOG_INFO,
+-                                "REDFISH_MESSAGE_ID=%s",
+-                                "OpenBMC.0.1.DCPowerOff", NULL);
+             }
+         });
+ }

@@ -1,0 +1,85 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ipmi: guard version lookup and provide an unset host GUID fallback
+
+Ignore non-image and incomplete ObjectManager entries before accessing their
+properties. Honor a configured host UUID; derive a distinct stable platform
+GUID from machine-id only when the Settings UUID is empty or zero.
+
+Upstream-Status: Pending
+---
+--- a/apphandler.cpp
++++ b/apphandler.cpp
+@@ -217,17 +217,37 @@
+             try
+             {
+                 auto& intfMap = objIter.second;
+-                auto& redundancyPriorityProps = intfMap.at(redundancyIntf);
+-                auto& versionProps = intfMap.at(versionIntf);
+-                auto& activationProps = intfMap.at(activationIntf);
+-                auto priority =
+-                    std::get<uint8_t>(redundancyPriorityProps.at("Priority"));
+-                auto purpose =
+-                    std::get<std::string>(versionProps.at("Purpose"));
+-                auto activation =
+-                    std::get<std::string>(activationProps.at("Activation"));
+-                auto version =
+-                    std::get<std::string>(versionProps.at("Version"));
++                const auto redundancy = intfMap.find(redundancyIntf);
++                const auto versionInfo = intfMap.find(versionIntf);
++                const auto activationInfo = intfMap.find(activationIntf);
++                if (redundancy == intfMap.end() || versionInfo == intfMap.end() ||
++                    activationInfo == intfMap.end())
++                {
++                    continue; // ObjectManager also returns non-image objects.
++                }
++                const auto priorityProp = redundancy->second.find("Priority");
++                const auto purposeProp = versionInfo->second.find("Purpose");
++                const auto activationProp = activationInfo->second.find("Activation");
++                const auto versionProp = versionInfo->second.find("Version");
++                if (priorityProp == redundancy->second.end() ||
++                    purposeProp == versionInfo->second.end() ||
++                    activationProp == activationInfo->second.end() ||
++                    versionProp == versionInfo->second.end())
++                {
++                    continue; // An image may still be under construction.
++                }
++                const auto* priorityValue = std::get_if<uint8_t>(&priorityProp->second);
++                const auto* purposeValue = std::get_if<std::string>(&purposeProp->second);
++                const auto* activationValue = std::get_if<std::string>(&activationProp->second);
++                const auto* versionValue = std::get_if<std::string>(&versionProp->second);
++                if (!priorityValue || !purposeValue || !activationValue || !versionValue)
++                {
++                    continue;
++                }
++                auto priority = *priorityValue;
++                auto purpose = *purposeValue;
++                auto activation = *activationValue;
++                auto version = *versionValue;
+                 if ((Version::convertVersionPurposeFromString(purpose) ==
+                      Version::VersionPurpose::BMC) &&
+                     (Activation::convertActivationsFromString(activation) ==
+@@ -1040,6 +1060,24 @@
+                    "ERROR", ec.message());
+         return ipmi::responseUnspecifiedError();
+     }
++    // Until the host supplies its UUID, use a stable platform identifier
++    // derived from the persistent machine ID, distinct from the BMC GUID.
++    // A configured nonzero host UUID always takes precedence.
++    std::string normalizedUuid = rfc4122Uuid;
++    normalizedUuid.erase(std::remove(normalizedUuid.begin(), normalizedUuid.end(), '-'),
++                         normalizedUuid.end());
++    if (normalizedUuid.empty() || normalizedUuid == std::string(32, '0'))
++    {
++        static constexpr sd_id128_t hostUuidAppId = SD_ID128_MAKE(
++            91, c4, 65, 04, e3, 75, 49, 73, 85, f3, 58, c6, d9, 26, 62, c7);
++        sd_id128_t hostUuid;
++        if (sd_id128_get_machine_app_specific(hostUuidAppId, &hostUuid) < 0)
++        {
++            return ipmi::responseUnspecifiedError();
++        }
++        char hostUuidCstr[SD_ID128_STRING_MAX];
++        rfc4122Uuid = sd_id128_to_string(hostUuid, hostUuidCstr);
++    }
+     std::array<uint8_t, 16> uuid;
+     try
+     {

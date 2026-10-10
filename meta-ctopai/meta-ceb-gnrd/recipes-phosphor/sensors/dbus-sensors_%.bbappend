@@ -9,6 +9,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0002-ceb-gnrd-megcrps800-psu.patch \
     file://0003-ceb-gnrd-gate-chassis-adc-and-delayed-alarms.patch \
     file://0004-ceb-gnrd-persistent-intrusion-enable.patch \
+    file://0005-fan-use-resolved-pwm-enable-path.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \

@@ -122,6 +122,40 @@ class TempSensor(ServiceInterface):
             self.emit_properties_changed({"Value": value})
 
 
+class SensorQuality(ServiceInterface):
+    def __init__(self, interface, property_name):
+        super().__init__(interface)
+        self.interface_name = interface
+        self.property_name = property_name
+        self.state = False
+
+    def properties(self):
+        return {self.property_name: Variant("b", self.state)}
+
+    def update(self, state):
+        if state != self.state:
+            self.state = state
+            self.emit_properties_changed({self.property_name: state})
+
+
+class Availability(SensorQuality):
+    def __init__(self):
+        super().__init__("xyz.openbmc_project.State.Decorator.Availability", "Available")
+
+    @dbus_property(access=PropertyAccess.READ)
+    def Available(self) -> "b":
+        return self.state
+
+
+class OperationalStatus(SensorQuality):
+    def __init__(self):
+        super().__init__("xyz.openbmc_project.State.Decorator.OperationalStatus", "Functional")
+
+    @dbus_property(access=PropertyAccess.READ)
+    def Functional(self) -> "b":
+        return self.state
+
+
 class _Threshold(ServiceInterface):
     """Common state of one upper threshold level; subclasses expose the
     D-Bus property names of that level."""
@@ -484,10 +518,14 @@ async def main():
     sensors = {"CPU": TempSensor("CPU_MAX_TEMP"), "DIMM": TempSensor("DIMM_MAX_TEMP")}
     assocs = {"CPU": Associations(), "DIMM": Associations()}
     thresholds = {}
+    availability = {g: Availability() for g in sensors}
+    operational = {g: OperationalStatus() for g in sensors}
     for group, sensor in sensors.items():
         path = "%s/%s" % (SENSOR_ROOT, sensor.sensor_name)
         bus.export(path, sensor)
         bus.export(path, assocs[group])
+        bus.export(path, availability[group])
+        bus.export(path, operational[group])
         unc, uc, unr = THRESHOLDS[group]
         thresholds[group] = [
             (WarningThreshold(unc), "WarningAlarmHigh", "UNC"),
@@ -499,7 +537,8 @@ async def main():
     manager = SensorObjectManager()
     for group, sensor in sensors.items():
         manager.entries.append(("%s/%s" % (SENSOR_ROOT, sensor.sensor_name), sensor,
-                                assocs[group], [t[0] for t in thresholds[group]]))
+                                assocs[group], [t[0] for t in thresholds[group]]
+                                + [availability[group], operational[group]]))
     bus.export(SENSOR_BASE, manager)
     bus.add_message_handler(manager.get_all_handler)
     await bus.request_name(BUS_NAME)
@@ -551,7 +590,7 @@ async def main():
         for group, sensor in sensors.items():
             values = [readings[path] for path, (g, _) in sources.items()
                       if g == group and path in readings
-                      and not math.isnan(readings[path])]
+                      and math.isfinite(readings[path])]
             real = max(values) if values else math.nan
             if values:
                 sensor.update(real)
@@ -559,6 +598,12 @@ async def main():
                 sensor.update(FAILSAFE_TEMP)   # no reading while the host is on: 60 % fans
             else:
                 sensor.update(0.0)             # host off: no thermal load
+            # Available means a usable control input is published. Keep the
+            # finite 70 C protection input available so PID does not replace it
+            # with the zone's lower failsafe speed. Functional distinguishes
+            # this substitute from a genuine PECI sample. Off publishes 0 C.
+            operational[group].update(not on or bool(values))
+            availability[group].update(math.isfinite(sensor.value))
             high_asserted = False
             for obj, alarm_name, level in thresholds[group]:
                 # Known power-off is not a lost reading: clear old thermal

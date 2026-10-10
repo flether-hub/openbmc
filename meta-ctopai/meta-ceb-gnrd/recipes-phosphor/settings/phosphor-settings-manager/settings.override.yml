@@ -23,3 +23,21 @@
               Default: RestorePolicy::Policy::AlwaysOn
           PowerRestoreDelay:
               Default: 0
+
+# Host-reported metadata used by IPMI Set/Get ACPI Power State. These fields
+# report ACPI status; writing them must not switch chassis power.
+/xyz/openbmc_project/control/host0/acpi_power_state:
+    - Interface: xyz.openbmc_project.Control.Power.ACPIPowerState
+      Properties:
+          SysACPIStatus:
+              Default: ACPIPowerState::ACPI::Unknown
+          DevACPIStatus:
+              Default: ACPIPowerState::ACPI::Unknown
+
+# The host may populate this UUID. IPMI uses a stable, distinct board fallback
+# until a nonzero host UUID is supplied; do not ship one UUID shared by boards.
+/xyz/openbmc_project/Common/UUID:
+    - Interface: xyz.openbmc_project.Common.UUID
+      Properties:
+          UUID:
+              Default: '""'

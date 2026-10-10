@@ -1,0 +1,19 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] fan: derive enable path from the resolved PWM file
+
+Separate pwm-fan devices each expose pwm1, regardless of the board connector
+index. Use the discovered sysfs filename for its enable attribute as well.
+
+Upstream-Status: Pending
+---
+--- a/src/fan/FanMain.cpp
++++ b/src/fan/FanMain.cpp
+@@ -570,7 +570,7 @@
+                     }
+ 
+                     std::filesystem::path pwmEnableFile =
+-                        "pwm" + std::to_string(pwm + 1) + "_enable";
++                        pwmPath.filename().string() + "_enable";
+                     std::filesystem::path enablePath =
+                         pwmPath.parent_path() / pwmEnableFile;
+                     enablePwm(enablePath);
