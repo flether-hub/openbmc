@@ -1,0 +1,128 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] net-ipmi: use the same stable BMC GUID as local IPMI and Redfish
+
+Do not use a canned shared GUID when host inventory lacks a UUID.
+Derive the BMC GUID from the same machine-id application ID used by
+Get Device GUID and Redfish. Preserve IPMI byte ordering.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+diff --git a/command/guid.cpp b/command/guid.cpp
+--- a/command/guid.cpp
++++ b/command/guid.cpp
+@@ -6,6 +6,8 @@
+ #include <phosphor-logging/elog-errors.hpp>
+ #include <phosphor-logging/lg2.hpp>
+ #include <xyz/openbmc_project/Common/error.hpp>
++
++#include <systemd/sd-id128.h>
+ 
+ #include <sstream>
+ #include <string>
+@@ -18,11 +20,6 @@
+ namespace command
+ {
+ 
+-std::unique_ptr<sdbusplus::match> matchPtr(nullptr);
+-
+-static constexpr auto propInterface = "xyz.openbmc_project.Common.UUID";
+-static constexpr auto uuidProperty = "UUID";
+-static constexpr auto subtreePath = "/xyz/openbmc_project/inventory";
+ 
+ static void rfcToGuid(std::string rfc4122, Guid& uuid)
+ {
+@@ -73,81 +70,27 @@
+         return guid.value();
+     }
+ 
+-    sdbusplus::bus_t bus{ipmid_get_sd_bus_connection()};
+-
+-    ipmi::Value propValue;
+-    try
++    // Match Get Device GUID and Redfish Managers/bmc UUID. This board's
++    // BMC identity is derived from persistent machine-id, not host inventory.
++    static constexpr sd_id128_t appId = SD_ID128_MAKE(
++        e0, e1, 73, 76, 64, 61, 47, da, a5, 0c, d0, cc, 64, 12, 45, 78);
++    sd_id128_t id;
++    const int rc = sd_id128_get_machine_app_specific(appId, &id);
++    if (rc < 0)
+     {
+-        const auto& [objPath, service] =
+-            ipmi::getDbusObject(bus, propInterface, subtreePath);
+-        // Read UUID property value from bmcObject
+-        // UUID is in RFC4122 format Ex: 61a39523-78f2-11e5-9862-e6402cfc3223
+-        propValue = ipmi::getDbusProperty(bus, service, objPath, propInterface,
+-                                          uuidProperty);
+-    }
+-    catch (const sdbusplus::exception_t& e)
+-    {
+-        lg2::error("Failed in reading BMC UUID property: {ERROR}", "ERROR", e);
++        lg2::error("Unable to derive BMC GUID from machine-id: {RC}", "RC", rc);
+         return fakeGuid;
+     }
+-
+-    std::string rfc4122Uuid = std::get<std::string>(propValue);
+-    try
+-    {
+-        // convert to IPMI format
+-        Guid tmpGuid{};
+-        rfcToGuid(rfc4122Uuid, tmpGuid);
+-        guid = tmpGuid;
+-    }
+-    catch (const InvalidArgument& e)
+-    {
+-        lg2::error("Failed in parsing BMC UUID property: {VALUE}", "VALUE",
+-                   rfc4122Uuid.c_str());
+-        return fakeGuid;
+-    }
++    char text[SD_ID128_STRING_MAX];
++    Guid value{};
++    rfcToGuid(sd_id128_to_string(id, text), value);
++    guid = value;
+     return guid.value();
+ }
+ 
+ void registerGUIDChangeCallback()
+ {
+-    if (matchPtr == nullptr)
+-    {
+-        using namespace sdbusplus::match_rules;
+-        sdbusplus::bus_t bus{ipmid_get_sd_bus_connection()};
+-
+-        try
+-        {
+-            matchPtr = std::make_unique<sdbusplus::match>(
+-                bus, propertiesChangedNamespace(subtreePath, propInterface),
+-                [](sdbusplus::message_t& m) {
+-                    try
+-                    {
+-                        std::string iface{};
+-                        std::map<std::string, ipmi::Value> pdict{};
+-                        m.read(iface, pdict);
+-                        if (iface != propInterface)
+-                        {
+-                            return;
+-                        }
+-                        auto guidStr = std::get<std::string>(pdict.at("UUID"));
+-                        Guid tmpGuid{};
+-                        rfcToGuid(guidStr, tmpGuid);
+-                        guid = tmpGuid;
+-                    }
+-                    catch (const std::exception& e)
+-                    {
+-                        // signal contained invalid guid; ignore it
+-                        lg2::error(
+-                            "Failed to parse propertiesChanged signal: {ERROR}",
+-                            "ERROR", e);
+-                    }
+-                });
+-        }
+-        catch (const std::exception& e)
+-        {
+-            lg2::error("Failed to create dbus match: {ERROR}", "ERROR", e);
+-        }
+-    }
++    // machine-id is stable for the lifetime of this process.
+ }
+ 
+ } // namespace command

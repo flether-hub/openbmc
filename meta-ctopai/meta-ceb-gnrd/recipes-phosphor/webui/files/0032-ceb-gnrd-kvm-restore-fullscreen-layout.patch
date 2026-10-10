@@ -8,7 +8,7 @@ when the component is removed and handle fullscreen API rejection.
 Keep the toolbar on one line; scroll the actions within their column when
 the viewport is too narrow instead of wrapping buttons or widening the page.
 
-Size the embedded video panel to 85% of the available content width and
+Use the same responsive page container as SOL and fill its content width;
 retain the remote aspect ratio. Popup and fullscreen panels use full width.
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific]
@@ -207,7 +207,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +}
 +
 +#terminal-kvm {
-+  width: 85%;
++  width: 100%;
 +  min-width: 0;
 +  max-width: 100%;
 +  overflow: hidden;
@@ -228,13 +228,3 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
  .button-ctrl-alt-delete {
    float: inline-end;
  }
---- a/src/views/Operations/Kvm/Kvm.vue
-+++ b/src/views/Operations/Kvm/Kvm.vue
-@@ -1,6 +1,6 @@
- <template>
--  <b-container fluid="xl">
-+  <b-container fluid>
-     <page-title />
-     <div class="terminal-container">
-       <kvm-console :is-full-window="false" />
-     </div>

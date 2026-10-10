@@ -1,0 +1,261 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] webui: bound date-time loading and avoid fixed NTP-stop wait
+
+Resolve BMC path once per date/time page session and fetch clock/protocol
+in parallel with request timeouts. Preserve cached values during navigation.
+Attempt manual time immediately; retry only the explicit NTP setting
+conflict for up to 20 seconds. Keep authoritative mode readback and report
+real request failures instead of waiting indefinitely.
+
+Upstream-Status: Inappropriate [CEB-GNRD UI integration]
+
+diff --git a/src/views/Settings/DateTime/DateTime.vue b/src/views/Settings/DateTime/DateTime.vue
+--- a/src/views/Settings/DateTime/DateTime.vue
++++ b/src/views/Settings/DateTime/DateTime.vue
+@@ -293,21 +293,14 @@
+       this.emitChange();
+     },
+     bmcTime() {
+-      this.form.manual.date = this.$filters.formatDate(
+-        this.$store.getters['global/bmcTime'],
+-      );
+-      this.form.manual.time = this.$filters
+-        .formatTime(this.$store.getters['global/bmcTime'])
+-        .slice(0, 5);
++      this.setManualValues();
+     },
+   },
+   created() {
+     this.startLoader();
+     this.setNtpValues();
+-    Promise.all([
+-      this.$store.dispatch('global/getBmcTime'),
+-      this.$store.dispatch('dateTime/getNtpData'),
+-    ])
++    this.setManualValues();
++    this.$store.dispatch('dateTime/loadDateTime')
+       .catch((error) => {
+         console.error('Unable to load date and time settings:', error);
+         this.errorToast(this.$t('global.status.error'));
+@@ -315,6 +308,11 @@
+       .finally(() => this.endLoader());
+   },
+   methods: {
++    setManualValues() {
++      if (!this.bmcTime) return;
++      this.form.manual.date = this.$filters.formatDate(this.bmcTime);
++      this.form.manual.time = this.$filters.formatTime(this.bmcTime).slice(0, 5);
++    },
+     emitChange() {
+       if (this.v$.$invalid) return;
+       this.v$.$reset(); //reset to re-validate on blur
+@@ -379,7 +377,10 @@
+           this.successToast(success);
+         })
+         .then(() => {
+-          this.$store.dispatch('global/getBmcTime');
++          this.$store.dispatch('dateTime/getBmcTime').catch((error) => {
++            console.error('Unable to refresh BMC time:', error);
++            this.errorToast(this.$t('global.status.error'));
++          });
+         })
+         .catch(({ message }) => this.errorToast(message))
+         .finally(() => {
+diff --git a/src/store/modules/Settings/DateTimeStore.js b/src/store/modules/Settings/DateTimeStore.js
+--- a/src/store/modules/Settings/DateTimeStore.js
++++ b/src/store/modules/Settings/DateTimeStore.js
+@@ -1,9 +1,24 @@
+ import api from '@/store/api';
+ import i18n from '@/i18n';
++
++const REQUEST_TIMEOUT = 10000;
++const NTP_STOP_TIMEOUT = 20000;
++
++function isNtpTimeConflict(error) {
++  const data = error?.response?.data;
++  const messages = data?.error?.['@Message.ExtendedInfo'] ||
++    data?.['@Message.ExtendedInfo'] || [];
++  return messages.some((message) =>
++    message.MessageId?.endsWith('.PropertyValueConflict') &&
++    message.MessageArgs?.includes('DateTime') &&
++    message.MessageArgs?.some((arg) => arg.includes('NTPProtocolEnabled')),
++  );
++}
+ 
+ const DateTimeStore = {
+   namespaced: true,
+   state: {
++    bmcPath: null,
+     ntpServers: [],
+     isNtpProtocolEnabled: null,
+   },
+@@ -12,86 +27,103 @@
+     isNtpProtocolEnabled: (state) => state.isNtpProtocolEnabled,
+   },
+   mutations: {
++    setBmcPath: (state, path) => (state.bmcPath = path),
+     setNtpServers: (state, ntpServers) => (state.ntpServers = ntpServers),
+     setIsNtpProtocolEnabled: (state, isNtpProtocolEnabled) =>
+       (state.isNtpProtocolEnabled = isNtpProtocolEnabled),
+   },
+   actions: {
+-    async getNtpData({ commit }) {
+-      return await api
+-        .get(`${await this.dispatch('global/getBmcPath')}/NetworkProtocol`)
+-        .then((response) => {
+-          const ntpServers = response.data.NTP.NTPServers;
+-          const isNtpProtocolEnabled = response.data.NTP.ProtocolEnabled;
+-          if (
+-            typeof isNtpProtocolEnabled !== 'boolean' ||
+-            !Array.isArray(ntpServers)
+-          ) {
+-            throw new Error('Invalid NTP configuration response');
+-          }
+-          commit('setNtpServers', ntpServers);
+-          commit('setIsNtpProtocolEnabled', isNtpProtocolEnabled);
+-        })
+-        .catch((error) => {
+-          console.log(error);
+-          throw error;
++    async getBmcPath({ state, commit }) {
++      // Cache discovery for this UI session, not the changing time/configuration.
++      if (state.bmcPath) return state.bmcPath;
++      const root = await api.get('/redfish/v1', { timeout: REQUEST_TIMEOUT });
++      let path = root.data.ManagerProvidingService?.['@odata.id'];
++      if (!path) {
++        const managers = await api.get('/redfish/v1/Managers', {
++          timeout: REQUEST_TIMEOUT,
+         });
++        path = managers.data.Members?.[0]?.['@odata.id'];
++      }
++      if (!path) throw new Error('BMC manager path is unavailable');
++      commit('setBmcPath', path);
++      return path;
++    },
++    async getBmcTime({ commit, dispatch }, bmcPath) {
++      const path = bmcPath || await dispatch('getBmcPath');
++      const response = await api.get(path, {
++        timeout: REQUEST_TIMEOUT,
++        cache: false,
++      });
++      const date = new Date(response.data.DateTime);
++      if (!response.data.DateTime || Number.isNaN(date.getTime())) {
++        throw new Error('Invalid BMC date and time response');
++      }
++      commit('global/setBmcTime', date, { root: true });
++    },
++    async getNtpData({ commit, dispatch }, bmcPath) {
++      const path = bmcPath || await dispatch('getBmcPath');
++      const response = await api.get(`${path}/NetworkProtocol`, {
++        timeout: REQUEST_TIMEOUT,
++        cache: false,
++      });
++      const ntpServers = response.data.NTP?.NTPServers;
++      const enabled = response.data.NTP?.ProtocolEnabled;
++      if (typeof enabled !== 'boolean' || !Array.isArray(ntpServers)) {
++        throw new Error('Invalid NTP configuration response');
++      }
++      commit('setNtpServers', ntpServers);
++      commit('setIsNtpProtocolEnabled', enabled);
++    },
++    async loadDateTime({ dispatch }) {
++      // Resolve once; fetch the current time and protocol configuration in parallel.
++      const path = await dispatch('getBmcPath');
++      const results = await Promise.allSettled([
++        dispatch('getBmcTime', path),
++        dispatch('getNtpData', path),
++      ]);
++      const failure = results.find((result) => result.status === 'rejected');
++      if (failure) throw failure.reason;
+     },
+     async updateDateTime({ state, dispatch }, dateTimeForm) {
+       const ntpData = {
+-        NTP: {
+-          ProtocolEnabled: dateTimeForm.ntpProtocolEnabled,
+-        },
++        NTP: { ProtocolEnabled: dateTimeForm.ntpProtocolEnabled },
+       };
+       if (dateTimeForm.ntpProtocolEnabled) {
+         ntpData.NTP.NTPServers = dateTimeForm.ntpServersArray;
+       }
+-
+-      const bmcPath = await this.dispatch('global/getBmcPath');
+-
+-      // A failed mode change must not report success or set manual time.
+-      return await api
+-        .patch(`${bmcPath}/NetworkProtocol`, ntpData)
+-        .then(async () => {
+-          if (!dateTimeForm.ntpProtocolEnabled) {
+-            const dateTimeData = {
+-              DateTime: dateTimeForm.updatedDateTime,
+-            };
+-            /**
+-             * https://github.com/openbmc/phosphor-time-manager/blob/master/README.md#special-note-on-changing-ntp-setting
+-             * When time mode is initially set to Manual from NTP,
+-             * NTP service is disabled and the NTP service is
+-             * stopping but not stopped, setting time will return an error.
+-             * There are no responses from backend to notify when NTP is stopped.
+-             * To work around, a timeout is set to allow NTP to fully stop
+-             * TODO: remove timeout if backend solves
+-             * https://github.com/openbmc/openbmc/issues/3459
+-             */
+-            const timeoutVal = state.isNtpProtocolEnabled ? 20000 : 0;
+-            return await new Promise((resolve, reject) => {
+-              setTimeout(async () => {
+-                return api
+-                  .patch(bmcPath, dateTimeData)
+-                  .then(() => resolve())
+-                  .catch(() => reject());
+-              }, timeoutVal);
+-            });
++      try {
++        const bmcPath = await dispatch('getBmcPath');
++        const wasNtpEnabled = state.isNtpProtocolEnabled;
++        await api.patch(`${bmcPath}/NetworkProtocol`, ntpData, {
++          timeout: REQUEST_TIMEOUT,
++        });
++        if (!dateTimeForm.ntpProtocolEnabled) {
++          // Try immediately. Retry only timedate1's NTP-still-active conflict;
++          // format, permission, network and other errors must not be retried.
++          const deadline = Date.now() + NTP_STOP_TIMEOUT;
++          for (;;) {
++            try {
++              await api.patch(bmcPath, { DateTime: dateTimeForm.updatedDateTime }, {
++                timeout: Math.max(1, Math.min(REQUEST_TIMEOUT, deadline - Date.now())),
++              });
++              break;
++            } catch (error) {
++              if (!wasNtpEnabled || !isNtpTimeConflict(error) ||
++                  Date.now() + 1000 >= deadline) throw error;
++              await new Promise((resolve) => setTimeout(resolve, 1000));
++            }
+           }
+-        })
+-        .then(async () => {
+-          // Refresh the authoritative mode and servers before showing success.
+-          await dispatch('getNtpData');
+-          if (state.isNtpProtocolEnabled !== dateTimeForm.ntpProtocolEnabled) {
+-            throw new Error('NTP mode did not match the saved selection');
+-          }
+-          return i18n.global.t('pageDateTime.toast.successSaveDateTime');
+-        })
+-        .catch((error) => {
+-          console.log(error);
+-          throw new Error(
+-            i18n.global.t('pageDateTime.toast.errorSaveDateTime'),
+-          );
+-        });
++        }
++        // Confirm the mode; enabling NTP does not wait for Internet synchronization.
++        await dispatch('getNtpData', bmcPath);
++        if (state.isNtpProtocolEnabled !== dateTimeForm.ntpProtocolEnabled) {
++          throw new Error('NTP mode did not match the saved selection');
++        }
++        return i18n.global.t('pageDateTime.toast.successSaveDateTime');
++      } catch (error) {
++        console.error('Unable to save date and time settings:', error);
++        throw new Error(i18n.global.t('pageDateTime.toast.errorSaveDateTime'));
++      }
+     },
+   },
+ };

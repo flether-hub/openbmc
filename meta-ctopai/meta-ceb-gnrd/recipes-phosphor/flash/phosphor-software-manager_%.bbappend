@@ -23,6 +23,7 @@ RDEPENDS:${PN}-updater:append:ceb-gnrd = " \
     bash \
     flashrom \
     libgpiod-tools \
+    util-linux-flock \
     "
 
 # Keep U-Boot environment variables, including board MAC addresses, managed

@@ -1,0 +1,145 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ipmi: support x86 button masking and optional chassis resources
+
+Avoid reading an uninitialized Enabled value. Support x86-power-control
+ButtonMasked for both reads and writes. Treat only absent optional PFail/VR
+resources as normal, and retry a failed sensor-tree query.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+diff --git a/chassishandler.cpp b/chassishandler.cpp
+--- a/chassishandler.cpp
++++ b/chassishandler.cpp
+@@ -1092,6 +1092,19 @@
+                                   ChassisControlPower::interface, "PFail");
+         acFail = std::get<bool>(variant);
+     }
++    catch (const sdbusplus::exception_t& e)
++    {
++        // PFail is optional and has no provider on this board. Missing it
++        // does not mean an AC failure occurred; retain the IPMI default.
++        const std::string name = e.name();
++        if (name == "xyz.openbmc_project.Common.Error.ResourceNotFound" ||
++            name == "org.freedesktop.DBus.Error.UnknownProperty")
++        {
++            lg2::debug("Optional PFail property is unavailable");
++            return false;
++        }
++        lg2::error("Failed to fetch PFail property: {ERROR}", "ERROR", e);
++    }
+     catch (const std::exception& e)
+     {
+         lg2::error(
+@@ -1113,12 +1126,30 @@
+     ec = ipmi::getService(ctx, buttonIntf, buttonPath, service);
+     if (!ec)
+     {
+-        bool enabled;
++        bool enabled = true;
+         ec = ipmi::getDbusProperty(ctx, service, buttonPath, buttonIntf,
+                                    "Enabled", enabled);
+-        buttonDisabled = !enabled;
+-    }
+-
++        if (!ec)
++        {
++            buttonDisabled = !enabled;
++        }
++    }
++
++    if (ec)
++    {
++        // x86-power-control publishes ButtonMasked on the generic Buttons
++        // interface, at lower-case paths; phosphor-buttons uses Enabled.
++        const std::string path = buttonPath == powerButtonPath ?
++            "/xyz/openbmc_project/chassis/buttons/power" :
++            "/xyz/openbmc_project/chassis/buttons/reset";
++        constexpr auto intf = "xyz.openbmc_project.Chassis.Buttons";
++        ec = ipmi::getService(ctx, intf, path, service);
++        if (!ec)
++        {
++            ec = ipmi::getDbusProperty(ctx, service, path, intf,
++                                      "ButtonMasked", buttonDisabled);
++        }
++    }
+     if (ec)
+     {
+         lg2::error("Fail to get button Enabled property ({PATH}): {ERROR}",
+@@ -1139,6 +1170,19 @@
+     {
+         ec = ipmi::setDbusProperty(ctx, service, buttonPath, buttonIntf,
+                                    "Enabled", !disable);
++    }
++    if (ec)
++    {
++        const std::string path = buttonPath == powerButtonPath ?
++            "/xyz/openbmc_project/chassis/buttons/power" :
++            "/xyz/openbmc_project/chassis/buttons/reset";
++        constexpr auto intf = "xyz.openbmc_project.Chassis.Buttons";
++        ec = ipmi::getService(ctx, intf, path, service);
++        if (!ec)
++        {
++            ec = ipmi::setDbusProperty(ctx, service, path, intf,
++                                      "ButtonMasked", disable);
++        }
+     }
+     if (ec)
+     {
+diff --git a/dbus-sdr/sdrutils.cpp b/dbus-sdr/sdrutils.cpp
+--- a/dbus-sdr/sdrutils.cpp
++++ b/dbus-sdr/sdrutils.cpp
+@@ -150,7 +150,7 @@
+     static constexpr const int32_t depth = 2;
+ 
+     auto lbdUpdateSensorTree = [&dbus](const char* path,
+-                                       const auto& interfaces) {
++                                       const auto& interfaces, bool optional = false) {
+         auto mapperCall = dbus->new_method_call(
+             ObjectMapper::default_service, ObjectMapper::instance_path,
+             ObjectMapper::interface, ObjectMapper::method_names::get_sub_tree);
+@@ -165,6 +165,12 @@
+         }
+         catch (const sdbusplus::exception_t& e)
+         {
++            if (optional && std::string(e.name()) ==
++                "xyz.openbmc_project.Common.Error.ResourceNotFound")
++            {
++                lg2::debug("Optional sensor subtree is absent: {PATH}", "PATH", path);
++                return true;
++            }
+             lg2::error("Failed to update subtree, path: {PATH}, error: {ERROR}",
+                        "PATH", path, "ERROR", e);
+             return false;
+@@ -216,12 +222,14 @@
+     // Error if searching for sensors failed.
+     if (!sensorRez)
+     {
++        // Do not cache an incomplete tree after a temporary mapper failure.
++        sensorTreePtr.reset();
+         return sensorUpdatedIndex;
+     }
+ 
+     filterSensors(*sensorTreePtr);
+     // Add VR control as optional search path.
+-    (void)lbdUpdateSensorTree("/xyz/openbmc_project/vr", vrInterfaces);
++    (void)lbdUpdateSensorTree("/xyz/openbmc_project/vr", vrInterfaces, true);
+ 
+     subtree = sensorTreePtr;
+     sensorUpdatedIndex++;
+diff --git a/apphandler.cpp b/apphandler.cpp
+--- a/apphandler.cpp
++++ b/apphandler.cpp
+@@ -1014,7 +1014,12 @@
+ 
+     sd_id128_t bmcUuid;
+     // create the UUID from /etc/machine-id via the systemd API
+-    sd_id128_get_machine_app_specific(bmcUuidAppId, &bmcUuid);
++    const int rc = sd_id128_get_machine_app_specific(bmcUuidAppId, &bmcUuid);
++    if (rc < 0)
++    {
++        lg2::error("Unable to derive BMC Device GUID: {RC}", "RC", rc);
++        return ipmi::responseUnspecifiedError();
++    }
+ 
+     char bmcUuidCstr[SD_ID128_STRING_MAX];
+     std::string systemUuid = sd_id128_to_string(bmcUuid, bmcUuidCstr);

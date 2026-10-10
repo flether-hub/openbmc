@@ -1,0 +1,18 @@
+[Unit]
+Description=CEB-GNRD BMC inventory and stable UUID
+Requires=dbus.service
+After=dbus.service
+Before=phosphor-health-monitor.service xyz.openbmc_project.Software.BMC.Updater.service
+
+[Service]
+Type=dbus
+BusName=com.ctopai.CebGnrd.BmcInventory
+ExecStart=/usr/libexec/ceb-gnrd-bmc-inventory.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

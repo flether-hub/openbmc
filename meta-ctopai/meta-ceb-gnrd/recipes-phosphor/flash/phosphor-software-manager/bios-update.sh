@@ -11,11 +11,21 @@ readonly HOST_OFF_STABLE_S=3
 readonly FORCE_OFF_PULSE_S=9
 FLASH_SELECT_PID=""
 FLASH_OWNERSHIP_SELECTED=0
+BIOS_SPI_DEVICE=""
+readonly BIOS_SPI_COMPATIBLE="ctopai,ceb-gnrd-host-bios"
 
 if [[ $# -ne 1 || ! -d "$1" ]]; then
     echo "Usage: $0 <directory-containing-BIOS-image>" >&2
     exit 2
 fi
+
+# Serialize ownership changes and writes, including manually invoked updates.
+mkdir -p /run/lock
+exec 9>/run/lock/ceb-gnrd-bios-update.lock
+flock -n 9 || {
+    echo "ERROR: Another BIOS update is already running." >&2
+    exit 1
+}
 
 # Progress for the web page: the image directory is /tmp/images/<version id>, and the
 # software manager's object of this update is /xyz/openbmc_project/software/<id>.
@@ -194,16 +204,44 @@ find_bios_mtd() {
 reprobe_bios_spi_nor() {
     local driver_dir=/sys/bus/spi/drivers/spi-nor
     local device
-    [[ -w "$driver_dir/bind" ]] || return 0
-
-    # The first probe can run before GPIOM1 switches the shared flash to BMC.
-    # Rebind the matching, unbound SPI-NOR device after ownership is selected.
+    local matches=()
+    [[ -w "$driver_dir/bind" ]] || {
+        echo "ERROR: SPI-NOR driver binding is unavailable." >&2
+        return 1
+    }
+    # This board-only compatible has no automatic driver match. Never touch
+    # another SPI device, particularly the BMC's own FMC boot flash.
     for device in /sys/bus/spi/devices/spi*; do
         [[ -r "$device/of_node/compatible" ]] || continue
-        grep -aq 'jedec,spi-nor' "$device/of_node/compatible" || continue
-        [[ -e "$device/driver" ]] && continue
-        printf '%s' "$(basename "$device")" > "$driver_dir/bind" 2>/dev/null || true
+        grep -Faq "$BIOS_SPI_COMPATIBLE" "$device/of_node/compatible" || continue
+        matches+=("$device")
     done
+    (( ${#matches[@]} == 1 )) || {
+        echo "ERROR: Expected exactly one board BIOS SPI device; found ${#matches[@]}." >&2
+        return 1
+    }
+    BIOS_SPI_DEVICE=${matches[0]}
+    [[ ! -e "$BIOS_SPI_DEVICE/driver" ]] || {
+        echo "ERROR: BIOS SPI device is already bound; refusing concurrent access." >&2
+        return 1
+    }
+    printf '%s\n' spi-nor > "$BIOS_SPI_DEVICE/driver_override"
+    printf '%s' "${BIOS_SPI_DEVICE##*/}" > "$driver_dir/bind"
+    [[ -e "$BIOS_SPI_DEVICE/driver" ]] || return 1
+}
+
+release_bios_spi_nor() {
+    [[ -n "$BIOS_SPI_DEVICE" ]] || return 0
+    if [[ -e "$BIOS_SPI_DEVICE/driver" ]]; then
+        [[ "$(readlink -f "$BIOS_SPI_DEVICE/driver")" == /sys/bus/spi/drivers/spi-nor ]] || {
+            echo "ERROR: BIOS SPI device has an unexpected driver." >&2
+            return 1
+        }
+        # Remove MTD access before handing the shared chip back to the CPU.
+        printf '%s' "${BIOS_SPI_DEVICE##*/}" > /sys/bus/spi/drivers/spi-nor/unbind || return 1
+    fi
+    printf '\n' > "$BIOS_SPI_DEVICE/driver_override" || return 1
+    BIOS_SPI_DEVICE=""
 }
 
 set_flash_select() {
@@ -248,6 +286,12 @@ cleanup() {
     local result=$?
     trap - EXIT
     if (( FLASH_OWNERSHIP_SELECTED )); then
+        if ! release_bios_spi_nor; then
+            echo "ERROR: Could not detach BIOS MTD; retaining BMC flash ownership. Host must remain off." >&2
+            # Keep the GPIO holder alive rather than handing an accessible
+            # MTD device to the CPU. Do not automatically power on the host.
+            exit 1
+        fi
         if ! set_flash_select 0; then
             echo "ERROR: Could not restore BIOS flash ownership to the host." >&2
             result=1
@@ -260,6 +304,8 @@ cleanup() {
     exit "$result"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "BIOS update started at $(date); host is confirmed off."
 echo "Selecting BMC ownership of BIOS flash via $FLASH_SELECT_GPIO"
@@ -319,6 +365,7 @@ set_progress 88
 
 echo "BIOS flash completed; restoring BIOS ownership."
 set_progress 89
+release_bios_spi_nor
 set_flash_select 0
 sleep 1
 HOST_POWER=$(power_status) || {

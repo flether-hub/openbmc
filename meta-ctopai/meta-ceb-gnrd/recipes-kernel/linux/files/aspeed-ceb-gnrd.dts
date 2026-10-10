@@ -318,7 +318,8 @@
     /delete-node/ flash@0;
 
     flash@0 {
-        compatible = "jedec,spi-nor";
+        /* Only bios-update.sh may bind spi-nor after taking ownership. */
+        compatible = "ctopai,ceb-gnrd-host-bios";
         reg = <0>;
         label = "host-bios-chip";
         spi-max-frequency = <50000000>;

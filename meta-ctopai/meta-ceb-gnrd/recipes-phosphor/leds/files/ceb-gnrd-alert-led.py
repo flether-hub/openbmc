@@ -98,7 +98,7 @@ def mapper_sensors(root):
         MAPPER_INTERFACE,
         "GetSubTree",
         "sias",
-        root,
+        "/",
         "0",
         str(len(interfaces)),
         *interfaces,
@@ -113,6 +113,11 @@ def mapper_sensors(root):
         if not isinstance(entry, (list, tuple)) or len(entry) != 2:
             continue
         path, services = entry
+        # Querying the mapper root yields an empty list while a sensor subtree
+        # has not appeared yet, rather than ResourceNotFound. Keep polling and
+        # retain the last known alarm until the requested subtree is ready.
+        if not isinstance(path, str) or not path.startswith(root.rstrip("/") + "/"):
+            continue
         if isinstance(services, dict):
             services = list(services.items())
         for service_entry in services:
@@ -154,13 +159,25 @@ def as_bool(value):
     return value is True or value == 1 or value == "true"
 
 
+missing_sensor_since = {}
+missing_sensor_reported = set()
+
+
 def any_alarm(root, property_filter):
     """True if any sensor under root has an asserted alarm accepted by
     property_filter(path, name); None when the state cannot be determined."""
     try:
         sensors = mapper_sensors(root)
         if not sensors:
+            since = missing_sensor_since.setdefault(root, time.monotonic())
+            if time.monotonic() - since >= 60 and root not in missing_sensor_reported:
+                LOG.warning("No sensors under %s for 60 seconds; alarm state is unknown", root)
+                missing_sensor_reported.add(root)
             return None
+        missing_sensor_since.pop(root, None)
+        if root in missing_sensor_reported:
+            LOG.info("Sensor discovery recovered under %s", root)
+            missing_sensor_reported.discard(root)
         for service, path, interfaces in sensors:
             sd_notify("WATCHDOG=1")
             for interface in THRESHOLD_INTERFACES:

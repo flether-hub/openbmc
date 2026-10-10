@@ -1,0 +1,98 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] sensors: fix SpecialMode interface and optional discovery
+
+Use the Control.Security.SpecialMode interface defined by the pinned D-Bus
+schema. Keep normal mode when the optional service is absent; retain matches
+for late providers. Guard variant access and keep genuine transport/type
+errors visible. Empty initial intrusion/NIC scans are normal discovery states.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+diff --git a/src/Utils.cpp b/src/Utils.cpp
+--- a/src/Utils.cpp
++++ b/src/Utils.cpp
+@@ -787,7 +787,7 @@
+ {
+     namespace rules = sdbusplus::match_rules;
+     static constexpr const char* specialModeInterface =
+-        "xyz.openbmc_project.Security.SpecialMode";
++        "xyz.openbmc_project.Control.Security.SpecialMode";
+ 
+     const std::string filterSpecialModeIntfAdd =
+         rules::interfacesAdded() +
+@@ -816,6 +816,11 @@
+                 }
+                 auto* manufacturingModeStatus =
+                     std::get_if<std::string>(&itr->second);
++                if (manufacturingModeStatus == nullptr)
++                {
++                    lg2::error("SpecialMode has an unexpected property type");
++                    return;
++                }
+                 handleSpecialModeChange(*manufacturingModeStatus);
+             });
+ 
+@@ -839,6 +844,11 @@
+                 }
+                 auto* manufacturingModeStatus =
+                     std::get_if<std::string>(&itr->second);
++                if (manufacturingModeStatus == nullptr)
++                {
++                    lg2::error("SpecialMode has an unexpected property type");
++                    return;
++                }
+                 handleSpecialModeChange(*manufacturingModeStatus);
+             });
+ 
+@@ -847,13 +857,27 @@
+            const std::variant<std::string>& getManufactMode) {
+             if (ec)
+             {
+-                lg2::error(
+-                    "error getting SpecialMode status: '{ERROR_MESSAGE}'",
+-                    "ERROR_MESSAGE", ec.message());
++                // SpecialMode is optional. The signal matches above remain
++                // active so a provider appearing later is still picked up.
++                if (ec == boost::system::errc::host_unreachable ||
++                    ec == boost::system::errc::no_such_file_or_directory)
++                {
++                    lg2::debug("SpecialMode is not available; using normal mode");
++                }
++                else
++                {
++                    lg2::error("error getting SpecialMode status: '{ERROR_MESSAGE}'",
++                               "ERROR_MESSAGE", ec.message());
++                }
+                 return;
+             }
+             const auto* manufacturingModeStatus =
+                 std::get_if<std::string>(&getManufactMode);
++            if (manufacturingModeStatus == nullptr)
++            {
++                lg2::error("SpecialMode has an unexpected property type");
++                return;
++            }
+             handleSpecialModeChange(*manufacturingModeStatus);
+         },
+         "xyz.openbmc_project.SpecialMode",
+diff --git a/src/intrusion/IntrusionSensorMain.cpp b/src/intrusion/IntrusionSensorMain.cpp
+--- a/src/intrusion/IntrusionSensorMain.cpp
++++ b/src/intrusion/IntrusionSensorMain.cpp
+@@ -216,7 +216,7 @@
+         }
+     }
+ 
+-    lg2::error("Can't find matched I2C, GPIO or Hwmon configuration");
++    lg2::debug("No intrusion configuration available in this scan");
+ 
+     // Make sure nothing runs when there's failure in configuration for the
+     // sensor after rescan
+@@ -272,7 +272,7 @@
+ 
+             if (lanInfoMap.empty())
+             {
+-                lg2::error("can't find matched NIC name.");
++                lg2::debug("No optional NIC name configuration available");
+             }
+         });
+     getter->getConfiguration(nicTypes);

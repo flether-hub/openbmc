@@ -5,6 +5,7 @@ SRC_URI:append = " \
     file://0002-ceb-gnrd-show-upper-non-recoverable-threshold.patch \
     file://0003-ceb-gnrd-fru-area-is-the-whole-eeprom.patch \
     file://0004-ceb-gnrd-ipmi-version-and-system-guid.patch \
+    file://0005-ceb-gnrd-compatible-chassis-and-optional-vr.patch \
     "
 
 # The patch adds cebGnrdAux(); route the Get Device ID reply through it with a
