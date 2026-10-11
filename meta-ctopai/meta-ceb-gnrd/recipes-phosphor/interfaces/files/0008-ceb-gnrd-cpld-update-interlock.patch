@@ -1,0 +1,142 @@
+Subject: [PATCH] update: serialize CPLD programming with Web BMC/BIOS uploads
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+
+--- a/redfish-core/lib/update_service.hpp
++++ b/redfish-core/lib/update_service.hpp
+@@ -29,6 +29,8 @@
+ #include "utils/json_utils.hpp"
+ #include "utils/sw_utils.hpp"
+
++#include <fcntl.h>
++#include <sys/file.h>
+ #include <sys/mman.h>
+ #include <unistd.h>
+
+@@ -80,6 +82,35 @@
+ // Only allow one update at a time
+ // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+ static bool fwUpdateInProgress = false;
++
++// Shared by Web BMC/BIOS updates; CPLD takes this lock exclusively.
++struct CpldUpdateInterlock
++{
++    int fd = -1;
++    CpldUpdateInterlock()
++    {
++        fd = open("/run/lock/ceb-gnrd-cpld-update.lock", O_CREAT | O_RDWR | O_CLOEXEC, 0600);
++        if (fd >= 0 && flock(fd, LOCK_SH | LOCK_NB) != 0)
++        {
++            close(fd);
++            fd = -1;
++        }
++    }
++    void release()
++    {
++        if (fd >= 0)
++        {
++            close(fd);
++            fd = -1;
++        }
++    }
++    ~CpldUpdateInterlock() { release(); }
++    CpldUpdateInterlock(const CpldUpdateInterlock&) = delete;
++    CpldUpdateInterlock& operator=(const CpldUpdateInterlock&) = delete;
++};
++// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
++static std::shared_ptr<CpldUpdateInterlock> cpldUpdateInterlock;
++
+ // Timer for software available
+ // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+ static std::unique_ptr<boost::asio::steady_timer> fwAvailableTimer;
+@@ -124,6 +155,7 @@
+
+ inline void cleanUp()
+ {
++    cpldUpdateInterlock.reset();
+     fwUpdateInProgress = false;
+     fwUpdateMatcher = nullptr;
+     fwUpdateErrorMatcher = nullptr;
+@@ -252,7 +284,16 @@
+                        const sdbusplus::object_path& objPath)
+ {
+     std::shared_ptr<task::TaskData> task = task::TaskData::createTask(
+-        std::bind_front(handleCreateTask),
++        [interlock = cpldUpdateInterlock](const boost::system::error_code& ec,
++                                        sdbusplus::message_t& msg,
++                                        const std::shared_ptr<task::TaskData>& data) {
++            bool done = handleCreateTask(ec, msg, data);
++            if (done && interlock)
++            {
++                interlock->release();
++            }
++            return done;
++        },
+         "type='signal',interface='org.freedesktop.DBus.Properties',"
+         "member='PropertiesChanged',path='" +
+             objPath.str + "'");
+@@ -448,7 +489,7 @@
+
+ // Note that asyncResp can be either a valid pointer or nullptr. If nullptr
+ // then no asyncResp updates will occur
+-inline void monitorForSoftwareAvailable(
++inline bool monitorForSoftwareAvailable(
+     const std::shared_ptr<bmcweb::AsyncResp>& asyncResp,
+     const crow::Request& req, const std::string& url,
+     int timeoutTimeSeconds = 50)
+@@ -460,7 +501,18 @@
+         {
+             messages::serviceTemporarilyUnavailable(asyncResp->res, "30");
+         }
+-        return;
++        return false;
++    }
++
++    cpldUpdateInterlock = std::make_shared<CpldUpdateInterlock>();
++    if (cpldUpdateInterlock->fd < 0)
++    {
++        if (asyncResp)
++        {
++            messages::serviceTemporarilyUnavailable(asyncResp->res, "30");
++        }
++        cpldUpdateInterlock.reset();
++        return false;
+     }
+
+     fwAvailableTimer =
+@@ -491,6 +543,7 @@
+         "member='InterfacesAdded',"
+         "path='/xyz/openbmc_project/logging'",
+         std::bind_front(afterUpdateErrorMatcher, asyncResp, url));
++    return true;
+ }
+
+ inline std::optional<boost::urls::url> parseSimpleUpdateUrl(
+@@ -1092,8 +1145,11 @@
+         setApplyTime(asyncResp, *multipart->params.applyTime);
+
+         // Setup callback for when new software detected
+-        monitorForSoftwareAvailable(asyncResp, req,
+-                                    "/redfish/v1/UpdateService");
++        if (!monitorForSoftwareAvailable(asyncResp, req,
++                                         "/redfish/v1/UpdateService"))
++        {
++            return;
++        }
+
+         uploadImageFile(asyncResp->res, multipart->uploadData);
+     }
+@@ -1119,8 +1175,11 @@
+     else
+     {
+         // Setup callback for when new software detected
+-        monitorForSoftwareAvailable(asyncResp, req,
+-                                    "/redfish/v1/UpdateService");
++        if (!monitorForSoftwareAvailable(asyncResp, req,
++                                         "/redfish/v1/UpdateService"))
++        {
++            return;
++        }
+
+         uploadImageFile(asyncResp->res, req.body());
+     }

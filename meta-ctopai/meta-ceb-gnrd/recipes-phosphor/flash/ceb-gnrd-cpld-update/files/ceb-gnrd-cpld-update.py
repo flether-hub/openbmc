@@ -1,0 +1,232 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Apache-2.0
+"""Bounded CPLD update job service. Web calls use the admin-only D-Bus REST API."""
+import asyncio
+import binascii
+import fcntl
+import json
+import os
+from pathlib import Path
+import time
+
+from dbus_fast import DBusError, Message
+from dbus_fast.aio import MessageBus
+from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, RequestNameReply
+from dbus_fast.service import ServiceInterface, dbus_property, method
+from cpld_jtag import (DEVICE, MAX_IMAGE, RECEIPT, bitstream, boot_id,
+                       checkpoint, configuration, host_off, require_background)
+
+SERVICE = 'com.ctopai.CebGnrd.CpldUpdate'
+OBJECT = '/xyz/openbmc_project/software/cpld_update'
+INTERFACE = 'com.ctopai.CebGnrd.CpldUpdate'
+RUN = Path('/run/ceb-gnrd-cpld-update')
+ACTIVE = {'WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying', 'AwaitBmcReboot'}
+
+
+class Update(ServiceInterface):
+    def __init__(self, bus):
+        super().__init__(INTERFACE)
+        self.bus = bus
+        self.task = None
+        self.cancel_requested = False
+        self.locks = []
+        self.deadline = 0.0
+        self.state = dict(phase='Idle', progress=0, detail='Ready', job='', bootId=boot_id())
+        if RECEIPT.exists():
+            try:
+                if RECEIPT.stat().st_size > 8192:
+                    raise ValueError('Oversize upgrade receipt')
+                previous = json.loads(RECEIPT.read_text())
+                if previous.get('phase') in ACTIVE:
+                    if (previous.get('phase') == 'AwaitBmcReboot' and
+                            previous.get('flashVerified') is True and
+                            previous.get('bootId') != boot_id() and
+                            isinstance(previous.get('armedUnix'), (int, float)) and
+                            isinstance(previous.get('deadlineUnix'), (int, float)) and
+                            previous['armedUnix'] - 5 <= time.time() <= previous['deadlineUnix']):
+                        previous.update(phase='Completed', progress=100,
+                                        detail='Flash verified; new BMC boot detected. CPLD running version is not read back.',
+                                        recoveredBootId=boot_id())
+                    else:
+                        previous.update(phase='Failed', detail='Previous update was interrupted or its recovery deadline expired; automatic reload is blocked')
+                    checkpoint(previous)
+                self.state = previous
+            except Exception as exc:
+                self.state.update(phase='Failed', detail=f'Cannot read upgrade receipt: {exc}')
+
+    def ready(self):
+        try:
+            cfg = configuration()
+            features = cfg.get('approved_feature_codes')
+            if not isinstance(features, list) or not features:
+                return False
+            require_background(features[0].upper(), cfg)
+            return Path(DEVICE).exists()
+        except Exception:
+            return False
+
+    @dbus_property(access=PropertyAccess.READ)
+    def Status(self) -> 's':
+        value = dict(self.state, ready=self.ready(), timeoutSeconds=600,
+                     currentBootId=boot_id(),
+                     remainingSeconds=max(0, int(self.deadline - time.monotonic())))
+        return json.dumps(value, separators=(',', ':'))
+
+    def publish(self, **values):
+        self.state.update(values)
+        self.emit_properties_changed({'Status': self.Status})
+
+    @method()
+    def Start(self, encoded: 's') -> 's':
+        if self.task is not None and not self.task.done():
+            raise DBusError(INTERFACE + '.Busy', 'Another CPLD update is active')
+        image = None
+        job = None
+        try:
+            if len(encoded) > 4 * ((MAX_IMAGE + 2) // 3):
+                raise ValueError('Image exceeds 1 MiB')
+            raw = binascii.a2b_base64(encoded, strict_mode=True)
+            _, feature, digest = bitstream(raw)
+            require_background(feature, configuration())
+            if not Path(DEVICE).exists():
+                raise ValueError('JTAG Master-1 device is unavailable')
+            RUN.mkdir(mode=0o700, parents=True, exist_ok=True)
+            # Same BIOS lock as the existing updater, plus a CPLD singleton.
+            for name in ('ceb-gnrd-bios-update', 'ceb-gnrd-cpld-update'):
+                Path('/run/lock').mkdir(exist_ok=True)
+                fd = os.open(f'/run/lock/{name}.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except Exception:
+                    os.close(fd)
+                    raise ValueError('BIOS or CPLD update is already active')
+                self.locks.append(fd)
+            job = os.urandom(16).hex()
+            image = RUN / 'image.bit'
+            fd = os.open(image, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'wb') as output:
+                output.write(raw)
+            self.deadline = time.monotonic() + 600
+            self.state = dict(job=job, phase='WaitingForHostOff', progress=0,
+                              detail='Please shut down the host. Waiting for stable Off state.',
+                              sha256=digest, feature=feature, bootId=boot_id(), flashVerified=False)
+            checkpoint(self.state)
+            self.publish()
+            self.cancel_requested = False
+            self.task = asyncio.create_task(self.run_job(image, job))
+            return job
+        except Exception as exc:
+            self.unlock()
+            if image is not None:
+                try:
+                    image.unlink(missing_ok=True)
+                except OSError:
+                    pass  # One bounded RAM file; cleanup on next attempt/reboot.
+            if job is not None and self.state.get('job') == job:
+                self.publish(phase='Failed', detail=str(exc)[:512])
+            raise DBusError(INTERFACE + '.Blocked', str(exc)) from exc
+
+    @method()
+    def Cancel(self) -> 'b':
+        # Cancellation after an erase could strand Flash; only the waiting
+        # phase is cancellable. Host-on/timeout remain mandatory stop guards.
+        if self.task is not None and not self.task.done() and self.state['phase'] == 'WaitingForHostOff':
+            # A Task cancelled before its first turn does not execute finally.
+            # Signal the coroutine instead, so image and locks are released.
+            self.cancel_requested = True
+            return True
+        return False
+
+    def unlock(self):
+        for fd in self.locks:
+            os.close(fd)
+        self.locks.clear()
+
+    async def updater_busy(self):
+        reply = await asyncio.wait_for(self.bus.call(Message(
+            destination='xyz.openbmc_project.Software.BMC.Updater',
+            path='/xyz/openbmc_project/software',
+            interface='org.freedesktop.DBus.ObjectManager', member='GetManagedObjects')), 3)
+        if reply.message_type == MessageType.ERROR:
+            raise RuntimeError('Cannot check BMC firmware updater; CPLD update blocked')
+        for interfaces in reply.body[0].values():
+            props = interfaces.get('xyz.openbmc_project.Software.Activation', {})
+            activation = props.get('Activation')
+            if activation and activation.value.endswith('.Activating'):
+                return True
+        return False
+
+    async def run_job(self, image, job):
+        process = None
+        deadline = self.deadline
+        try:
+            if self.cancel_requested:
+                raise asyncio.CancelledError
+            if await self.updater_busy():
+                raise RuntimeError('BMC firmware update is active')
+            stable = 0
+            while stable < 3:
+                if self.cancel_requested:
+                    raise asyncio.CancelledError
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('Host did not shut down within the 10-minute update timeout')
+                off = await asyncio.to_thread(host_off)
+                stable = stable + 1 if off else 0
+                await asyncio.sleep(1)
+            if self.cancel_requested:
+                raise asyncio.CancelledError
+            if await self.updater_busy():
+                raise RuntimeError('BMC firmware update became active')
+            if self.cancel_requested:
+                raise asyncio.CancelledError
+            if time.monotonic() >= deadline:
+                raise TimeoutError('The 10-minute update timeout expired before programming')
+            self.publish(phase='Preflight', progress=3, detail='Host is Off; checking JTAG')
+            checkpoint(self.state)
+            process = await asyncio.create_subprocess_exec(
+                '/usr/bin/python3', '/usr/libexec/cpld_jtag.py', str(image), job,
+                str(max(0.1, deadline - time.monotonic())),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+
+            async def messages():
+                while line := await process.stdout.readline():
+                    value = json.loads(line)
+                    phase_changed = value['phase'] != self.state['phase']
+                    self.publish(**value)
+                    # Worker persists its verified receipt BEFORE Refresh.
+                    if phase_changed and value['phase'] != 'AwaitBmcReboot':
+                        checkpoint(self.state)
+                await process.wait()
+                if process.returncode:
+                    error = (await process.stderr.read(2048)).decode(errors='replace')
+                    raise RuntimeError(self.state.get('detail') or error or 'JTAG worker failed')
+
+            await asyncio.wait_for(messages(), max(0.1, deadline - time.monotonic()))
+        except asyncio.CancelledError:
+            self.publish(phase='Cancelled', progress=0, detail='Update cancelled before programming')
+            checkpoint(self.state)
+        except Exception as exc:
+            self.publish(phase='Failed', detail=str(exc)[:512])
+            checkpoint(self.state)
+        finally:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            try:
+                image.unlink(missing_ok=True)
+            finally:
+                self.unlock()
+
+
+async def main():
+    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    updater = Update(bus)
+    bus.export(OBJECT, updater)
+    reply = await bus.request_name(SERVICE, NameFlag.DO_NOT_QUEUE)
+    if reply != RequestNameReply.PRIMARY_OWNER:
+        raise RuntimeError('CPLD update service is already owned')
+    await bus.wait_for_disconnect()
+
+
+if __name__ == '__main__':
+    asyncio.run(main())

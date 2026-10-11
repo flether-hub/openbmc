@@ -1,0 +1,21 @@
+[Unit]
+Description=CEB-GNRD EF3L90 CPLD firmware update
+After=dbus.service
+Requires=dbus.service
+
+[Service]
+Type=dbus
+BusName=com.ctopai.CebGnrd.CpldUpdate
+ExecStart=/usr/bin/python3 /usr/libexec/ceb-gnrd-cpld-update.py
+Restart=on-failure
+RestartSec=5
+StateDirectory=ceb-gnrd-cpld-update
+StateDirectoryMode=0700
+RuntimeDirectory=ceb-gnrd-cpld-update
+RuntimeDirectoryMode=0700
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,7 @@ SRC_URI:append:ceb-gnrd = " file://0004-ceb-gnrd-report-boot-id-for-update-monit
 SRC_URI:append:ceb-gnrd = " file://0005-ceb-gnrd-allow-same-origin-kvm-fullscreen.patch"
 SRC_URI:append:ceb-gnrd = " file://0006-ceb-gnrd-fix-bmcweb-state-directory.patch"
 SRC_URI:append:ceb-gnrd = " file://0007-ceb-gnrd-bound-persistent-session-storage.patch"
+SRC_URI:append:ceb-gnrd = " file://0008-ceb-gnrd-cpld-update-interlock.patch"
 
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 

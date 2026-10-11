@@ -39,6 +39,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0037-ceb-gnrd-refresh-confirmed-time-mode.patch \
     file://0038-ceb-gnrd-colored-openbmc-logos.patch \
     file://0039-ceb-gnrd-responsive-date-time-settings.patch \
+    file://0040-ceb-gnrd-cpld-firmware-update.patch \
     file://zh-CN.json \
 "
 

@@ -27,6 +27,13 @@ flock -n 9 || {
     exit 1
 }
 
+# Web uploads hold a shared lock too; CPLD programming owns it exclusively.
+exec 8>/run/lock/ceb-gnrd-cpld-update.lock
+flock -s -n 8 || {
+    echo "ERROR: A CPLD update is active; BIOS update is blocked." >&2
+    exit 1
+}
+
 # Progress for the web page: the image directory is /tmp/images/<version id>, and the
 # software manager's object of this update is /xyz/openbmc_project/software/<id>.
 # Its ActivationProgress.Progress (0-100) becomes PercentComplete of the Redfish

@@ -31,6 +31,18 @@
         ethernet1 = &mac2;
     };
 
+    /* Schematic JTAG Master-1: B9/A9/D9/C9, not GPIOI Master-2.
+     * Deliberately do not use pinctrl_jtagm_default (the Master-2 group).
+     * Dedicated Master-1 registers and reset match ASPEED's controller DTS.
+     */
+    cpld-jtag@1e6e4000 {
+        compatible = "ctopai,ceb-gnrd-jtag-master1";
+        reg = <0x1e6e4000 0x40>;
+        clocks = <&syscon ASPEED_CLK_AHB>;
+        resets = <&syscon ASPEED_RESET_JTAG_MASTER>;
+        status = "okay";
+    };
+
     /* PWM outputs of SYS_FAN0-5 as hwmon pwm1 of pwm-fan0..5: the
      * aspeed-g6-pwm-tach driver registers its PWMs only as a pwmchip, and
      * dbus-sensors' fansensor finds a fan's PWM in a "pwm-fanN" device

@@ -1,0 +1,266 @@
+Subject: [PATCH] CEB-GNRD: add guarded CPLD firmware update page
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+
+--- a/src/views/Operations/Firmware/Firmware.vue
++++ b/src/views/Operations/Firmware/Firmware.vue
+@@ -47,6 +47,7 @@
+         </b-col>
+       </b-row>
+     </page-section>
++    <cpld-update :disabled="!hasAdminPrivilege" @busy-change="cpldBusy = $event" />
+   </b-container>
+ </template>
+
+@@ -57,6 +58,7 @@
+ import BmcCards from './FirmwareCardsBmc';
+ import FormUpdate from './FirmwareFormUpdate';
+ import BiosCards from './FirmwareCardsBios';
++import CpldUpdate from './FirmwareCpldUpdate';
+ import PageSection from '@/components/Global/PageSection';
+ import PageTitle from '@/components/Global/PageTitle';
+
+@@ -71,6 +73,7 @@
+     BmcCards,
+     FormUpdate,
+     BiosCards,
++    CpldUpdate,
+     PageSection,
+     PageTitle,
+   },
+@@ -88,14 +91,16 @@
+     next();
+   },
+   setup() {
+-    const { isReadOnly } = usePrivilegeCheck();
++    const { isReadOnly, hasAdminPrivilege } = usePrivilegeCheck();
+     return {
+       isReadOnly,
++      hasAdminPrivilege,
+     };
+   },
+   data() {
+     return {
+       loading,
++      cpldBusy: false,
+       isServerPowerOffRequired:
+         import.meta.env.VITE_SERVER_OFF_REQUIRED === 'true',
+     };
+@@ -114,7 +119,7 @@
+       return this.$store.getters['controls/isOperationInProgress'];
+     },
+     isPageDisabled() {
+-      if (this.isReadOnly) {
++      if (this.isReadOnly || this.cpldBusy) {
+         return true;
+       }
+       if (this.isServerPowerOffRequired) {
+--- /dev/null
++++ b/src/views/Operations/Firmware/FirmwareCpldUpdate.vue
+@@ -0,0 +1,169 @@
++<template>
++  <page-section :section-title="$t('pageCpld.title')">
++    <b-row>
++      <b-col xl="10">
++        <p>{{ $t('pageCpld.description') }}</p>
++        <alert variant="warning">
++          {{ $t('pageCpld.shutdownWarning') }}
++        </alert>
++        <alert v-if="loaded && !status.ready" variant="info">
++          {{ $t('pageCpld.notReady') }}
++        </alert>
++        <b-form @submit.prevent="start">
++          <label for="cpld-image">{{ $t('pageCpld.image') }}</label>
++          <input id="cpld-image" class="form-control mb-3" type="file" accept=".bit"
++            :disabled="disabled || busy || submitting" @change="selectFile" />
++          <b-button variant="primary" type="submit"
++            :disabled="disabled || busy || submitting || !file || !status.ready">
++            {{ $t('pageCpld.start') }}
++          </b-button>
++          <b-button v-if="status.phase === 'WaitingForHostOff'" class="ms-2"
++            :disabled="disabled" @click="cancel">
++            {{ $t('pageCpld.cancel') }}
++          </b-button>
++        </b-form>
++        <p v-if="error" class="text-danger mt-3" role="alert">{{ error }}</p>
++        <div v-if="status.job || pending" class="mt-4" aria-live="polite">
++          <p class="fw-bold">{{ $t(`pageCpld.phases.${status.phase || 'Preflight'}`) }}</p>
++          <b-progress :value="status.progress || 0" :max="100" show-progress
++            :variant="status.phase === 'Failed' ? 'danger' : 'primary'" />
++          <p class="mt-2">{{ status.detail }}</p>
++          <p v-if="disconnected">{{ $t('pageCpld.reconnecting') }}</p>
++          <p v-if="status.sha256" class="small text-break">SHA256: {{ status.sha256 }}</p>
++          <p v-if="status.phase === 'Completed'">{{ $t('pageCpld.completed') }}</p>
++        </div>
++      </b-col>
++    </b-row>
++  </page-section>
++</template>
++
++<script>
++import api from '@/store/api';
++import Alert from '@/components/Global/Alert';
++import PageSection from '@/components/Global/PageSection';
++
++const path = '/xyz/openbmc_project/software/cpld_update';
++const storageKey = 'ceb-gnrd-cpld-update';
++const active = ['WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying', 'AwaitBmcReboot'];
++
++export default {
++  components: { Alert, PageSection },
++  props: { disabled: { type: Boolean, default: false } },
++  emits: ['busy-change'],
++  data() {
++    return { file: null, status: {}, loaded: false, submitting: false,
++      error: '', disconnected: false, pending: null, timer: null, disposed: false };
++  },
++  computed: {
++    busy() { return this.submitting || !!this.pending || active.includes(this.status.phase); },
++  },
++  watch: {
++    busy: { immediate: true, handler(value) { this.$emit('busy-change', value); } },
++  },
++  mounted() {
++    try {
++      const saved = JSON.parse(localStorage.getItem(storageKey));
++      if (saved && typeof saved.deadline === 'number' && Number.isFinite(saved.deadline) &&
++          typeof saved.job === 'string' && typeof saved.bootId === 'string') this.pending = saved;
++    } catch { /* Ignore invalid browser storage. */ }
++    this.poll();
++  },
++  beforeUnmount() {
++    this.disposed = true;
++    clearTimeout(this.timer);
++  },
++  methods: {
++    selectFile(event) {
++      const file = event.target.files?.[0];
++      this.file = null;
++      this.error = '';
++      if (!file) return;
++      if (!file.name.toLowerCase().endsWith('.bit') || file.size > 1048576) {
++        this.error = this.$t('pageCpld.invalidFile');
++        return;
++      }
++      this.file = file;
++    },
++    remember(value) {
++      this.pending = value;
++      try {
++        if (value) localStorage.setItem(storageKey, JSON.stringify(value));
++        else localStorage.removeItem(storageKey);
++      } catch { /* Server retains the job even when browser storage is unavailable. */ }
++    },
++    async start() {
++      if (!this.file || this.busy || this.disabled || !this.status.ready) return;
++      this.submitting = true;
++      this.error = '';
++      try {
++        const encoded = await new Promise((resolve, reject) => {
++          const reader = new FileReader();
++          reader.onload = () => resolve(String(reader.result).split(',')[1]);
++          reader.onerror = reject;
++          reader.readAsDataURL(this.file);
++        });
++        // Record before POST: a dropped HTTP response must not trigger a retry.
++        this.remember({ deadline: Date.now() + 600000, previousJob: this.status.job || '',
++          bootId: this.status.currentBootId, job: '' });
++        const response = await api.post(`${path}/action/Start`, { data: [encoded] }, { timeout: 10000 });
++        const returned = response.data?.data;
++        const job = Array.isArray(returned) ? returned[0] : returned;
++        if (typeof job === 'string' && this.pending) this.remember({ ...this.pending, job });
++      } catch (error) {
++        if (error.response) {
++          this.remember(null);
++          this.error = error.response.data?.description || this.$t('pageCpld.startFailed');
++        } else {
++          this.disconnected = true;
++          this.error = this.$t('pageCpld.unknownResponse');
++        }
++      } finally {
++        this.submitting = false;
++      }
++    },
++    async cancel() {
++      try {
++        await api.post(`${path}/action/Cancel`, { data: [] }, { timeout: 5000 });
++      } catch { this.error = this.$t('pageCpld.cancelFailed'); }
++    },
++    async poll() {
++      try {
++        const response = await api.get(path, { timeout: 4000, cache: false });
++        const next = JSON.parse(response.data.data.Status);
++        this.status = next;
++        this.loaded = true;
++        if (this.error === this.$t('pageCpld.unavailable') ||
++            this.error === this.$t('pageCpld.unknownResponse')) this.error = '';
++        this.disconnected = false;
++        if (this.pending) {
++          const same = this.pending.job ? next.job === this.pending.job :
++            !!next.job && next.job !== this.pending.previousJob;
++          if (same && !this.pending.job) this.remember({ ...this.pending, job: next.job });
++          if (same && ['Failed', 'Cancelled'].includes(next.phase)) this.remember(null);
++          if (same && next.phase === 'Completed' && next.flashVerified &&
++              next.recoveredBootId && next.recoveredBootId !== this.pending.bootId) {
++            const expired = this.pending.expired;
++            this.remember(null);
++            this.error = expired ? this.$t('pageCpld.timeout') : '';
++          }
++        } else if (active.includes(next.phase)) {
++          // Reopened page without local state: resume the server's existing job.
++          this.remember({ job: next.job, bootId: next.bootId,
++            previousJob: '', deadline: Date.now() + Math.min(600, Math.max(0, next.remainingSeconds || 0)) * 1000 });
++        }
++      } catch {
++        this.disconnected = true;
++        if (!this.pending) this.error = this.$t('pageCpld.unavailable');
++      }
++      if (this.pending && !this.pending.expired && Date.now() >= this.pending.deadline) {
++        this.error = this.$t('pageCpld.timeout');
++        // Keep the original deadline across reconnects; never rearm 10 minutes.
++        this.remember({ ...this.pending, expired: true });
++      }
++      if (this.pending?.expired && this.loaded && !this.disconnected &&
++          !active.includes(this.status.phase)) this.remember(null);
++      if (!this.disposed) this.timer = setTimeout(() => this.poll(), 3000);
++    },
++  },
++};
++</script>
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -1446,5 +1446,34 @@
+         "RPM": "RPM",
+         "V": "V",
+         "W": "W"
++    },
++  "pageCpld": {
++    "title": "CPLD firmware update",
++    "description": "EF3L90CG400B — AST2600 JTAG Master-1. Upload an Anlogic .bit file (maximum 1 MiB).",
++    "shutdownWarning": "Shut down the host before programming. This update waits for the host to turn off. CPLD reload will restart the BMC. The complete operation has a 10-minute timeout.",
++    "notReady": "Programming is blocked until the running design supports background programming, the target feature code is approved, and the JTAG device is available.",
++    "image": "CPLD firmware (.bit)",
++    "start": "Start CPLD update",
++    "cancel": "Cancel waiting",
++    "invalidFile": "Select an Anlogic .bit file no larger than 1 MiB.",
++    "startFailed": "Unable to start the CPLD update.",
++    "unknownResponse": "The upload response was lost. Checking the existing job; do not submit another update.",
++    "cancelFailed": "Unable to cancel. Programming may already have started.",
++    "unavailable": "CPLD update service is unavailable.",
++    "reconnecting": "Waiting for the BMC to reconnect. Do not remove power.",
++    "timeout": "The 10-minute monitoring timeout expired. Check the server update status before retrying.",
++    "completed": "Flash readback verification passed and a new BMC boot was detected. The running CPLD version has not been read back.",
++    "phases": {
++      "Idle": "Ready",
++      "WaitingForHostOff": "Waiting for host shutdown",
++      "Preflight": "Checking programming conditions",
++      "Erasing": "Erasing internal Flash",
++      "Writing": "Writing firmware",
++      "Verifying": "Verifying Flash readback",
++      "AwaitBmcReboot": "Reloading CPLD / waiting for BMC restart",
++      "Completed": "Flash verified / BMC restarted",
++      "Failed": "Update failed",
++      "Cancelled": "Update cancelled"
+     }
++  }
+ }

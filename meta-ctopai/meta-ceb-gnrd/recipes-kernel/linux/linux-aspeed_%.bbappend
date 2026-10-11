@@ -6,6 +6,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI:append = " \
         file://espi-peci.cfg \
         file://aspeed-ceb-gnrd.dts \
+        file://ceb-gnrd-jtag.c \
         file://0001-soc-aspeed-add-AST2600-eSPI-peripheral-ready-driver.patch \
         file://0002-hwmon-add-AST2600-chassis-intrusion-driver.patch \
         file://0003-peci-add-Granite-Rapids-CPU-and-DIMM-temperature.patch \
@@ -19,6 +20,16 @@ SRC_URI:append = " \
         file://0011-ncsi-handle-idle-work-and-report-invalid-responses.patch \
         file://0012-spi-nor-detect-board-bios-on-explicit-bind.patch \
         "
+
+do_patch:append() {
+    install -m0644 ${UNPACKDIR}/ceb-gnrd-jtag.c ${S}/drivers/misc/ceb-gnrd-jtag.c
+    # Only this board enables the private, fixed-width JTAG ABI. Its driver
+    # does not change pin levels during boot; output starts on exclusive open.
+    if ! grep -q CONFIG_CEB_GNRD_JTAG ${S}/drivers/misc/Makefile; then
+        printf '\nobj-$(CONFIG_CEB_GNRD_JTAG) += ceb-gnrd-jtag.o\n' >> ${S}/drivers/misc/Makefile
+        printf '\nconfig CEB_GNRD_JTAG\n\tbool "CEB-GNRD dedicated JTAG Master-1"\n\tdepends on ARCH_ASPEED\n' >> ${S}/drivers/misc/Kconfig
+    fi
+}
 
 # The board device tree is a new file; the dtb is built through KERNEL_DEVICETREE.
 do_configure:append() {
