@@ -1,0 +1,35 @@
+Subject: [PATCH] webui: export all POST logs as one JSON array
+
+Returning an array of individual JSON strings produced comma-separated objects
+without enclosing array brackets when interpolated into the download URI.
+Serialize the complete collection and percent-encode the JSON data URI.
+
+Upstream-Status: Pending
+
+--- a/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
++++ b/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
+@@ -264,7 +264,7 @@
+       return postCodeReadingGuidance(this.$i18n.locale);
+     },
+     href() {
+-      return `data:text/json;charset=utf-8,${this.exportAllLogsString()}`;
++      return `data:application/json;charset=utf-8,${encodeURIComponent(this.exportAllLogsString())}`;
+     },
+     filteredRows() {
+       return this.searchFilter
+@@ -321,14 +321,7 @@
+       }
+     },
+     exportAllLogsString() {
+-      {
+-        return this.$store.getters['postCodeLogs/allPostCodes'].map(
+-          (postCodes) => {
+-            const allLogsString = JSON.stringify(postCodes);
+-            return allLogsString;
+-          },
+-        );
+-      }
++      return JSON.stringify(this.$store.getters['postCodeLogs/allPostCodes']);
+     },
+     onFilterChange({ activeFilters }) {
+       this.activeFilters = activeFilters;

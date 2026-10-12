@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """AST2600 bounded JTAG transport, guards and serial diagnostics.
 
-Firmware updates are executed by cpld_svf.py from reviewed SVF commands.
-The pure .bit parser/SPI vector helpers remain for development-host reference
-audits; this module has no native bitstream programming entry point.
+Program an approved Anlogic .bit image and verify every Flash page.
+Activation is a separate, operator-controlled full AC power cycle. No
+Refresh, configuration reset or post-verification mode-exit command is sent.
 """
 import ctypes
 import fcntl
@@ -57,24 +57,6 @@ def trace(message):
     console_log(line)
 
 
-def diagnostic_pause(label, deadline):
-    """Give external serial capture time before a potentially disruptive step.
-
-    flush=True only hands data to the kernel; it does not wait for UART TX.
-    This bounded pause is a diagnostic observation window, not a guarantee
-    that the console drained or a substitute for hardware signal capture.
-    """
-    if not console_debug_enabled():
-        return
-    if deadline - time.monotonic() <= 1:
-        raise TimeoutError('Insufficient upgrade time for the pre-operation diagnostic pause')
-    trace(f'DEBUG PAUSE 1s before {label}; operation has not started')
-    time.sleep(1)
-    if time.monotonic() >= deadline:
-        raise TimeoutError('CPLD upgrade deadline expired during diagnostic pause')
-    trace(f'DEBUG PAUSE END before {label}; beginning operation next')
-
-
 def bitstream(raw):
     if not 400 <= len(raw) <= MAX_IMAGE:
         raise ValueError('Invalid bitstream size (maximum 1 MiB)')
@@ -124,7 +106,7 @@ def configuration():
 
 
 def require_background(feature, cfg):
-    # An SVF export option is not proof of the RUNNING design's persist_bit.
+    # An export option is not proof of the RUNNING design's persist_bit.
     reference = cfg.get('confirmation_reference')
     if (cfg.get('running_persist_bit_confirmed') is not True or
             not isinstance(reference, str) or not reference.strip()):
@@ -137,6 +119,14 @@ def require_background(feature, cfg):
     if feature not in [item.upper() for item in approved]:
         raise ValueError('Target feature code has not been approved for background programming')
 
+
+
+def bit_plan(raw, cfg):
+    data, feature, digest = bitstream(raw)
+    require_background(feature, cfg)
+    return dict(data=data, feature=feature, sha256=digest,
+                flashSha256=hashlib.sha256(data).hexdigest(), pages=len(data) // 256,
+                sectors=(len(data) + 4095) // 4096)
 
 
 def host_off():
@@ -183,7 +173,7 @@ class Batch(ctypes.Structure):
 
 
 class Jtag:
-    """Player holds the TAP in IDLE between scans (SVF ENDIR/ENDDR IDLE)."""
+    """Hold the TAP in IDLE between programming scans."""
     def __init__(self, deadline, guard):
         self.fd = os.open(DEVICE, os.O_RDWR | os.O_CLOEXEC)
         self.deadline, self.guard = deadline, guard
@@ -259,7 +249,139 @@ class Jtag:
     def wren(self):
         self.scan(16, 0x60a5)
 
+    def flash_status(self):
+        # Restore the earlier .bit path's A5 SPI 05 status polling.
+        # EF3/EF2 status compatibility was used on this board previously.
+        value = self.spi(bytes([0x05, 0]), True)
+        status = REVERSE[(value >> 17) & 0xff]
+        if status == 0xff:
+            raise RuntimeError('Flash status is 0xFF; device/status polling unavailable')
+        return status
+
+    def wait_flash_status(self, mask, expected, timeout, operation):
+        until = min(self.deadline, time.monotonic() + timeout)
+        status = None
+        while time.monotonic() < until:
+            status = self.flash_status()
+            if time.monotonic() >= until:
+                break
+            if status & mask == expected:
+                return status
+            time.sleep(min(0.002, max(0, until - time.monotonic())))
+        value = 'unknown' if status is None else f'0x{status:02x}'
+        raise TimeoutError(f'{operation} timed out: Flash status={value}')
+
+    def write_enable_checked(self):
+        self.wren()
+        return self.wait_flash_status(0x03, 0x02, 1, 'Flash write-enable')
+
+    def wait_flash_ready(self, timeout, operation):
+        return self.wait_flash_status(0x01, 0, timeout, operation)
+
+
+def update(path, job, remaining, expected_digest=None):
+    if not 0 < remaining <= 600:
+        raise ValueError('Invalid remaining upgrade timeout')
+    deadline = time.monotonic() + remaining
+    with Path(path).open('rb') as source:
+        raw = source.read(MAX_IMAGE + 1)
+    plan = bit_plan(raw, configuration())
+    if expected_digest is not None and plan['sha256'] != expected_digest:
+        raise ValueError('Uploaded .bit changed after Start; programming blocked')
+    data, pages = plan['data'], plan['pages']
+    trace(f'BEGIN BIT job={job} sha256={plan["sha256"]} pages={pages}; manual AC activation required')
+    old_boot, last_host_check = boot_id(), 0.0
+
+    def guard(force=False):
+        nonlocal last_host_check
+        now = time.monotonic()
+        if now >= deadline:
+            raise TimeoutError('CPLD programming exceeded the 10-minute deadline')
+        if force or now - last_host_check >= 0.5:
+            if not host_off():
+                raise RuntimeError('Host is no longer Off; CPLD programming stopped')
+            last_host_check = now
+        if time.monotonic() >= deadline:
+            raise TimeoutError('CPLD deadline expired during Host-state check')
+
+    guard(force=True)
+    jtag = Jtag(deadline, guard)
+    try:
+        event('Preflight', 5, 'Checking .bit image and JTAG IDCODE', programmingFormat='bit')
+        jtag.identify()
+        trace('BEGIN background programming entry')
+        jtag.ir(0x80)
+        jtag.scan(64, 0x00800000000000a5)
+        jtag.run(200)
+        jtag.ir(0xff)
+        jtag.ir(0x39)
+        jtag.run(50000)
+        response = jtag.spi(bytes([0x03, 0, 0, 0]) + bytes(256), True)
+        existing = ((response >> 41) & ((1 << 2048) - 1)).to_bytes(256, 'little').translate(REVERSE)
+        if existing[16:52] != b'\xff' * 32 + bytes.fromhex('cc55aa33'):
+            raise RuntimeError('Existing Flash header not recognized; no erase attempted')
+        jtag.wait_flash_ready(2, 'Initial Flash readiness')
+        jtag.write_enable_checked()
+        jtag.scan(32, 0x400080a5)
+        jtag.wait_flash_ready(2, 'QE register write')
+        trace('END background entry and QE setup')
+        for sector in range(plan['sectors']):
+            address = sector * 4096
+            trace(f'BEGIN erase sector {sector + 1}/{plan["sectors"]} address=0x{address:06x}')
+            jtag.write_enable_checked()
+            jtag.spi(bytes([0x20]) + address.to_bytes(3, 'big'))
+            jtag.wait_flash_ready(10, f'Erase sector {sector + 1}')
+            trace(f'END erase sector {sector + 1}/{plan["sectors"]}')
+            event('Erasing', 10 + (sector + 1) * 20 // plan['sectors'],
+                  f'Erase sector {sector + 1}/{plan["sectors"]}')
+        for page in range(pages):
+            address = page * 256
+            verbose = page % 16 == 0 or page >= pages - 16
+            if verbose:
+                trace(f'BEGIN write page {page + 1}/{pages} address=0x{address:06x}')
+            jtag.write_enable_checked()
+            jtag.spi(bytes([0x02]) + address.to_bytes(3, 'big') + data[address:address + 256])
+            jtag.wait_flash_ready(2, f'Program page {page + 1}')
+            if verbose:
+                trace(f'END write page {page + 1}/{pages}')
+            if page == 0 or (page + 1) % 16 == 0 or page + 1 == pages:
+                event('Writing', 30 + (page + 1) * 40 // pages, f'Write page {page + 1}/{pages}')
+        for page in range(pages):
+            address = page * 256
+            verbose = page % 16 == 0 or page >= pages - 16
+            if verbose:
+                trace(f'BEGIN verify page {page + 1}/{pages} address=0x{address:06x}')
+            response = jtag.spi(bytes([0x03]) + address.to_bytes(3, 'big') + bytes(256), True)
+            found = ((response >> 41) & ((1 << 2048) - 1)).to_bytes(256, 'little').translate(REVERSE)
+            if found != data[address:address + 256]:
+                raise RuntimeError(f'Flash readback mismatch at page {page + 1}; programming failed')
+            if verbose:
+                trace(f'END verify page {page + 1}/{pages} MATCH')
+            if page == 0 or (page + 1) % 16 == 0 or page + 1 == pages:
+                event('Verifying', 70 + (page + 1) * 29 // pages, f'Verify page {page + 1}/{pages}')
+        guard(force=True)
+        trace(f'ALL FLASH PAGES VERIFIED pages={pages}; no Refresh/reset/mode-exit will be sent')
+        event('Verifying', 99, f'All {pages} Flash pages verified; finalizing programming result', flashVerified=True)
+    finally:
+        trace('BEGIN close JTAG after programming; no activation command')
+        jtag.close()
+        trace('END close JTAG')
+    receipt = dict(job=job, phase='Completed', progress=100,
+                   detail='CPLD programming succeeded; all Flash pages verified. Disconnect all AC inputs, wait for standby power to turn off, then restore AC to load the new CPLD firmware.',
+                   sha256=plan['sha256'], flashSha256=plan['flashSha256'], feature=plan['feature'],
+                   bootId=old_boot, flashVerified=True, verifiedPages=pages,
+                   programmingFormat='bit', programmedBytes=len(data),
+                   activationRequired=True, activationMethod='ACPowerCycle', autoRefresh=False)
+    checkpoint(receipt)
+    event('Completed', 100, receipt['detail'], flashVerified=True, verifiedPages=pages,
+          activationRequired=True, activationMethod='ACPowerCycle', autoRefresh=False,
+          programmingFormat='bit', programmedBytes=len(data))
+
 
 if __name__ == '__main__':
-    print('Use cpld_svf.py through the guarded CPLD update service.', file=sys.stderr)
-    sys.exit(2)
+    try:
+        update(sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4] if len(sys.argv) > 4 else None)
+    except Exception as error:
+        trace(f'FAILED BIT {type(error).__name__}: {str(error)[:512]}')
+        event('Failed', 0, str(error)[:512])
+        sys.exit(1)

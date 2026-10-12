@@ -9,7 +9,7 @@ SRC_URI:append:ceb-gnrd = " file://0006-ceb-gnrd-fix-bmcweb-state-directory.patc
 SRC_URI:append:ceb-gnrd = " file://0007-ceb-gnrd-bound-persistent-session-storage.patch"
 SRC_URI:append:ceb-gnrd = " file://0008-ceb-gnrd-cpld-update-interlock.patch"
 SRC_URI:append:ceb-gnrd = " file://0009-ceb-gnrd-fix-dbus-rest-method-arguments.patch"
-SRC_URI:append:ceb-gnrd = " file://0010-ceb-gnrd-cpld-svf-json-upload-limit.patch"
+SRC_URI:append:ceb-gnrd = " file://0010-ceb-gnrd-cpld-bit-json-upload-limit.patch"
 
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 

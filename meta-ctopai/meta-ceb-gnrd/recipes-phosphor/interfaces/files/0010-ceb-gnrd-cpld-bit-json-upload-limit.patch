@@ -1,8 +1,8 @@
-Subject: [PATCH] dbus-rest: allow bounded CPLD SVF JSON uploads
+Subject: [PATCH] dbus-rest: allow bounded CPLD bitstream JSON uploads
 
 The JSON parser separately limits requests to 1 MiB despite the larger HTTP
-firmware body limit. A 4 MiB SVF encoded as one Base64 Start argument needs
-up to 5592408 bytes plus its JSON envelope. Opt in only for the exact guarded
+firmware body limit. A 1 MiB bitstream encoded as one Base64 Start argument needs
+up to 1398104 bytes plus its JSON envelope. Opt in only for the exact guarded
 CPLD Start method; retain the default, depth and value limits elsewhere.
 
 Upstream-Status: Inappropriate [CEB-GNRD CPLD upload]
@@ -22,11 +22,11 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upload]
      nlohmann::json requestDbusData;
  
 -    JsonParseResult ret = parseRequestAsJson(req, requestDbusData);
-+    // Match the guarded updater's 4 MiB raw SVF limit, including Base64 and
++    // Match the guarded updater's 1 MiB raw bitstream limit, including Base64 and
 +    // the small JSON envelope. Other D-Bus actions keep the 1 MiB default.
-+    constexpr std::size_t maxCpldSvfBytes = 4U * 1024U * 1024U;
++    constexpr std::size_t maxCpldBitBytes = 1U * 1024U * 1024U;
 +    constexpr std::size_t maxCpldJsonBytes =
-+        4U * ((maxCpldSvfBytes + 2U) / 3U) + 64U;
++        4U * ((maxCpldBitBytes + 2U) / 3U) + 64U;
 +    const bool isCpldStart =
 +        objectPath == "/xyz/openbmc_project/software/cpld_update" &&
 +        methodName == "Start";
@@ -35,7 +35,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upload]
 +    {
 +        setErrorResponse(asyncResp->res,
 +                         boost::beast::http::status::payload_too_large,
-+                         "CPLD SVF upload exceeds the 4 MiB firmware limit",
++                         "CPLD bitstream upload exceeds the 1 MiB firmware limit",
 +                         "413 Payload Too Large");
 +        return;
 +    }

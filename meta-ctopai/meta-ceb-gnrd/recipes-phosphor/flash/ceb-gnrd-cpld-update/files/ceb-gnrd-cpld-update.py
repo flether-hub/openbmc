@@ -14,10 +14,9 @@ from dbus_fast import DBusError, Message
 from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, RequestNameReply
 from dbus_fast.service import ServiceInterface, dbus_property, method
-from cpld_jtag import (DEVICE, RECEIPT, boot_id,
+from cpld_jtag import (DEVICE, RECEIPT, MAX_IMAGE, bit_plan, boot_id,
                        checkpoint, configuration, console_debug_enabled,
                        console_log, host_off, require_background)
-from cpld_svf import MAX_SVF, validate
 
 LOG = logging.getLogger('ceb-gnrd-cpld-update')
 
@@ -25,7 +24,7 @@ SERVICE = 'com.ctopai.CebGnrd.CpldUpdate'
 OBJECT = '/xyz/openbmc_project/software/cpld_update'
 INTERFACE = 'com.ctopai.CebGnrd.CpldUpdate'
 RUN = Path('/run/ceb-gnrd-cpld-update')
-ACTIVE = {'WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying', 'AwaitBmcReboot'}
+ACTIVE = {'WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying'}
 
 
 class Update(ServiceInterface):
@@ -42,20 +41,11 @@ class Update(ServiceInterface):
                 if RECEIPT.stat().st_size > 8192:
                     raise ValueError('Oversize upgrade receipt')
                 previous = json.loads(RECEIPT.read_text())
-                if previous.get('phase') in ACTIVE:
-                    if (previous.get('phase') == 'AwaitBmcReboot' and
-                            previous.get('flashVerified') is True and
-                            previous.get('bootId') != boot_id() and
-                            isinstance(previous.get('armedUnix'), (int, float)) and
-                            isinstance(previous.get('deadlineUnix'), (int, float)) and
-                            previous['armedUnix'] - 5 <= time.time() <= previous['deadlineUnix']):
-                        previous.update(phase='Completed', progress=100,
-                                        detail='Flash verified; new BMC boot detected. CPLD running version is not read back.',
-                                        recoveredBootId=boot_id())
-                        if previous.get('refreshSequenceCompleted') is not True:
-                            previous['detail'] += ' JTAG Refresh sequence completion was not recorded.'
-                    else:
-                        previous.update(phase='Failed', detail='Previous update was interrupted or its recovery deadline expired; automatic reload is blocked')
+                if previous.get('phase') in ACTIVE or previous.get('phase') == 'AwaitBmcReboot':
+                    detail = 'Previous programming was interrupted; completion was not confirmed.'
+                    if previous.get('flashVerified') is True:
+                        detail += ' The recorded Flash readback passed; use a full AC power cycle to load it and confirm CPLD operation.'
+                    previous.update(phase='Failed', detail=detail)
                     checkpoint(previous)
                 self.state = previous
                 LOG.info('CPLD recovered job=%s phase=%s flashVerified=%s refreshSequenceCompleted=%s',
@@ -81,7 +71,7 @@ class Update(ServiceInterface):
     @dbus_property(access=PropertyAccess.READ)
     def Status(self) -> 's':
         value = dict(self.state, ready=self.ready(), timeoutSeconds=600,
-                     supportedFormat='svf', maxUploadBytes=MAX_SVF,
+                     supportedFormat='bit', maxUploadBytes=MAX_IMAGE,
                      currentBootId=boot_id(),
                      remainingSeconds=max(0, int(self.deadline - time.monotonic())))
         return json.dumps(value, separators=(',', ':'))
@@ -107,11 +97,11 @@ class Update(ServiceInterface):
         job = None
         try:
             accepted_deadline = time.monotonic() + 600
-            if len(encoded) > 4 * ((MAX_SVF + 2) // 3):
-                raise ValueError('SVF exceeds 4 MiB')
+            if len(encoded) > 4 * ((MAX_IMAGE + 2) // 3):
+                raise ValueError('CPLD .bit file exceeds 1 MiB')
             raw = binascii.a2b_base64(encoded, strict_mode=True)
             cfg = configuration()
-            plan = validate(raw, cfg)
+            plan = bit_plan(raw, cfg)
             if not Path(DEVICE).exists():
                 raise ValueError('JTAG Master-1 device is unavailable')
             RUN.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -126,20 +116,19 @@ class Update(ServiceInterface):
                     raise ValueError('BIOS or CPLD update is already active')
                 self.locks.append(fd)
             job = os.urandom(16).hex()
-            image = RUN / 'image.svf'
+            image = RUN / 'image.bit'
             fd = os.open(image, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, 'wb') as output:
                 output.write(raw)
             self.deadline = accepted_deadline
             if time.monotonic() >= self.deadline:
-                raise TimeoutError('The upgrade deadline expired while validating the SVF')
+                raise TimeoutError('The upgrade deadline expired while validating the .bit image')
             self.state = dict(job=job, phase='WaitingForHostOff', progress=0,
-                              detail='Please shut down the host. Waiting for stable Off state before SVF playback.',
+                              detail='Please shut down the host. Waiting for stable Off state before CPLD programming.',
                               sha256=plan['sha256'], flashSha256=plan['flashSha256'],
                               feature=plan['feature'], bootId=boot_id(),
-                              flashVerified=False, programmingFormat='svf',
-                              lengthMode=plan['lengthMode'], programmingChunkBytes=plan['chunkBytes'],
-                              programmedBytes=plan['dataBytes'])
+                              flashVerified=False, programmingFormat='bit',
+                              activationRequired=True, activationMethod='ACPowerCycle', autoRefresh=False)
             checkpoint(self.state)
             self.publish()
             self.cancel_requested = False
@@ -217,7 +206,7 @@ class Update(ServiceInterface):
             self.publish(phase='Preflight', progress=3, detail='Host is Off; checking JTAG')
             checkpoint(self.state)
             process = await asyncio.create_subprocess_exec(
-                '/usr/bin/python3', '/usr/libexec/cpld_svf.py', str(image), job,
+                '/usr/bin/python3', '/usr/libexec/cpld_jtag.py', str(image), job,
                 str(max(0.1, deadline - time.monotonic())),
                 self.state['sha256'],
                 # Diagnostics go directly to the service journal; do not put
@@ -225,15 +214,23 @@ class Update(ServiceInterface):
                 stdout=asyncio.subprocess.PIPE)
 
             async def messages():
+                completion = None
                 while line := await process.stdout.readline():
                     value = json.loads(line)
-                    self.publish(**value)
-                    # Once launched, the worker owns the verified receipt.
-                    # Delayed progress must not overwrite its pre-Refresh proof.
+                    if value.get('phase') == 'Completed':
+                        completion = value
+                    else:
+                        self.publish(**value)
                 await process.wait()
                 if process.returncode:
-                    raise RuntimeError(self.state.get('detail') or
-                                       f'JTAG worker failed (exit {process.returncode}); see service journal')
+                    raise RuntimeError(f'JTAG worker failed (exit {process.returncode}): '
+                                       f'{self.state.get("detail", "see service journal")}')
+                if (completion is None or completion.get('flashVerified') is not True or
+                        completion.get('activationRequired') is not True):
+                    raise RuntimeError('JTAG worker exited without a verified programming result')
+                # Success requires both every page matching and a zero exit code.
+                self.publish(**completion)
+                checkpoint(self.state)
 
             await asyncio.wait_for(messages(), max(0.1, deadline - time.monotonic()))
         except asyncio.CancelledError:

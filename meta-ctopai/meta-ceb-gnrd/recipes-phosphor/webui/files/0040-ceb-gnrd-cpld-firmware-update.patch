@@ -61,7 +61,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
        if (this.isServerPowerOffRequired) {
 --- /dev/null
 +++ b/src/views/Operations/Firmware/FirmwareCpldUpdate.vue
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,190 @@
 +<template>
 +  <page-section :section-title="$t('pageCpld.title')">
 +    <b-row>
@@ -72,7 +72,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +        <div class="form-background p-3">
 +          <b-form @submit.prevent="start">
 +            <b-form-group :label="$t('pageCpld.image')" label-for="cpld-image" class="mb-3">
-+              <form-file id="cpld-image" accept=".svf" :model-value="file"
++              <form-file id="cpld-image" accept=".bit" :model-value="file"
 +                :disabled="disabled || busy || submitting"
 +                @update:model-value="selectFile" />
 +            </b-form-group>
@@ -90,19 +90,19 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +        <div v-if="status.job || pending" class="mt-4" aria-live="polite">
 +          <p class="fw-bold">{{ $t(`pageCpld.phases.${status.phase || 'Preflight'}`) }}</p>
 +          <b-progress :value="status.progress || 0" :max="100" show-progress
-+            :variant="status.phase === 'Failed' ? 'danger' : 'primary'" />
++            :variant="status.phase === 'Failed' ? 'danger' : status.phase === 'Completed' ? 'success' : 'primary'" />
 +          <p class="mt-2">{{ status.detail }}</p>
-+          <p v-if="status.phase === 'Verifying'">{{ $t('pageCpld.automaticRefresh') }}</p>
++          <p v-if="status.phase === 'Verifying'">{{ $t('pageCpld.verifyHint') }}</p>
 +          <p v-if="pending && !pending.expired">
 +            {{ $t('pageCpld.remaining', { seconds: remainingSeconds }) }}
 +          </p>
 +          <p v-if="disconnected">
-+            {{ $t(status.phase === 'AwaitBmcReboot' ? 'pageCpld.reconnecting' : 'pageCpld.connectionLost') }}
++            {{ $t('pageCpld.connectionLost') }}
 +          </p>
 +          <p v-if="status.sha256" class="small text-break">SHA256: {{ status.sha256 }}</p>
 +          <p v-if="status.phase === 'Completed'">{{ $t('pageCpld.completed') }}</p>
-+          <alert v-if="status.phase === 'Completed' && status.refreshSequenceCompleted !== true" variant="warning">
-+            {{ $t('pageCpld.refreshUnconfirmed') }}
++          <alert v-if="status.phase === 'Completed'" variant="warning">
++            {{ $t('pageCpld.activationWarning') }}
 +          </alert>
 +        </div>
 +      </b-col>
@@ -118,7 +118,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +
 +const path = '/xyz/openbmc_project/software/cpld_update';
 +const storageKey = 'ceb-gnrd-cpld-update';
-+const active = ['WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying', 'AwaitBmcReboot'];
++const active = ['WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying'];
 +
 +export default {
 +  components: { Alert, FormFile, PageSection },
@@ -164,7 +164,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +      this.file = null;
 +      this.error = '';
 +      if (!file) return;
-+      if (!file.name.toLowerCase().endsWith('.svf') || file.size > 4194304) {
++      if (!file.name.toLowerCase().endsWith('.bit') || file.size > 1048576) {
 +        this.error = this.$t('pageCpld.invalidFile');
 +        return;
 +      }
@@ -226,11 +226,9 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +            !!next.job && next.job !== this.pending.previousJob;
 +          if (same && !this.pending.job) this.remember({ ...this.pending, job: next.job });
 +          if (same && ['Failed', 'Cancelled'].includes(next.phase)) this.remember(null);
-+          if (same && next.phase === 'Completed' && next.flashVerified &&
-+              next.recoveredBootId && next.recoveredBootId !== this.pending.bootId) {
-+            const expired = this.pending.expired;
++          if (same && next.phase === 'Completed' && next.flashVerified) {
 +            this.remember(null);
-+            this.error = expired ? this.$t('pageCpld.timeout') : '';
++            this.error = '';
 +          }
 +        } else if (active.includes(next.phase)) {
 +          // Reopened page without local state: resume the server's existing job.
@@ -256,31 +254,30 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +</script>
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -1446,5 +1446,38 @@
+@@ -1446,5 +1446,36 @@
          "RPM": "RPM",
          "V": "V",
          "W": "W"
 +    },
 +  "pageCpld": {
-+    "title": "CPLD firmware update",
-+    "description": "EF3L90CG400B — AST2600 JTAG Master-1. Upload a combined Anlogic background/verify/Refresh .svf file (maximum 4 MiB).",
-+    "shutdownWarning": "Shut down the host before programming. This update waits for the host to turn off. CPLD reload may interrupt BMC power or reset. The complete operation has a 10-minute timeout.",
++    "title": "CPLD",
++    "description": "Upload an Anlogic .bit file (maximum 1 MiB).",
++    "shutdownWarning": "Shut down the host before programming. After programming and verification succeed, disconnect all AC inputs, wait for standby power to turn off, then restore AC to load the new CPLD firmware. Programming has a 10-minute timeout.",
 +    "notReady": "Programming is blocked until the running design supports background programming, the target feature code is approved, and the JTAG device is available.",
-+    "image": "CPLD firmware (.svf)",
-+    "start": "Start CPLD update",
++    "image": "CPLD firmware (.bit)",
++    "start": "Start update",
 +    "cancel": "Cancel waiting",
-+    "invalidFile": "Select a combined Anlogic background/verify/Refresh .svf file no larger than 4 MiB.",
++    "invalidFile": "Select an Anlogic .bit file no larger than 1 MiB.",
 +    "startFailed": "Unable to start the CPLD update.",
 +    "unknownResponse": "The upload response was lost. Checking the existing job; do not submit another update.",
 +    "cancelFailed": "Unable to cancel. Programming may already have started.",
 +    "unavailable": "CPLD update service is unavailable.",
-+    "reconnecting": "Flash was verified; waiting for the BMC to reconnect. If the board does not recover automatically, an operator may disconnect all AC inputs and restore power.",
-+    "automaticRefresh": "After all Flash pages pass TDO/MASK verification, the remaining Refresh commands in the uploaded SVF are played and the page waits for BMC recovery.",
-+    "connectionLost": "Connection to the BMC was lost. The displayed progress is the last received state; Refresh has not been confirmed by this page. Rechecking the existing job.",
++    "connectionLost": "Connection to the BMC was lost. The displayed progress is the last received state; programming success has not been confirmed. Rechecking the existing job.",
 +    "remaining": "Time remaining in the complete update: {seconds} seconds.",
-+    "refreshUnconfirmed": "Completion of the full JTAG Refresh sequence was not recorded. Flash was verified and a new BMC boot was observed; confirm CPLD operation and automatic power recovery separately.",
 +    "timeout": "The 10-minute monitoring timeout expired. Check the server update status before retrying.",
-+    "completed": "Flash readback verification passed and a new BMC boot was detected. The running CPLD version has not been read back.",
++    "verifyHint": "After every Flash page passes readback verification, programming is successful. Activate the new firmware with a full board AC power cycle.",
++    "activationWarning": "AC power cycle required: disconnect all PSU AC inputs, wait until the standby LEDs turn off, then restore AC to load the new CPLD firmware.",
++    "completed": "Programming and Flash readback verification succeeded. The new CPLD firmware takes effect after a full board AC power cycle.",
 +    "phases": {
 +      "Idle": "Ready",
 +      "WaitingForHostOff": "Waiting for host shutdown",
@@ -288,8 +285,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +      "Erasing": "Erasing internal Flash",
 +      "Writing": "Writing firmware",
 +      "Verifying": "Verifying Flash readback",
-+      "AwaitBmcReboot": "JTAG Refresh / waiting for BMC restart",
-+      "Completed": "Flash verified / BMC restarted",
++      "Completed": "Update successful",
 +      "Failed": "Update failed",
 +      "Cancelled": "Update cancelled"
      }

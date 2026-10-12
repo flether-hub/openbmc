@@ -1449,25 +1449,22 @@
     "W": "W"
   },
   "pageCpld": {
-    "title": "CPLD 固件升级",
-    "description": "EF3L90CG400B — AST2600 JTAG Master-1。上传安路后台写入、校验及 Refresh 合并 .svf 文件（最大 4 MiB）。",
-    "shutdownWarning": "请先关闭 Host。升级会等待 Host 关机；CPLD 重新加载可能使 BMC 掉电或复位，整个过程超时为10分钟。",
+    "title": "CPLD",
+    "description": "上传安路 .bit 文件（最大 1 MiB）。",
+    "shutdownWarning": "请先关闭 Host。烧录和校验成功后，请断开所有 PSU 的交流输入，待待机灯熄灭后重新上电，以加载新的 CPLD 固件。烧录过程超时为10分钟。",
     "notReady": "尚未确认当前固件支持后台编程、批准目标配置码，或 JTAG 设备不可用，已阻止烧写。",
-    "image": "CPLD 固件（.svf）",
-    "start": "开始 CPLD 升级",
+    "image": "CPLD 固件（.bit）",
+    "start": "开始更新",
     "cancel": "取消等待",
-    "invalidFile": "请选择不超过 4 MiB 的安路后台写入、校验及 Refresh 合并 .svf 文件。",
+    "invalidFile": "请选择不超过 1 MiB 的安路 .bit 文件。",
     "startFailed": "无法启动 CPLD 升级。",
     "unknownResponse": "上传响应丢失，正在查询已有升级任务，请勿重复提交。",
     "cancelFailed": "无法取消，烧写可能已经开始。",
     "unavailable": "CPLD 升级服务不可用。",
-    "reconnecting": "Flash 已校验通过，正在等待 BMC 恢复连接；若板卡未自动恢复，可由用户断开所有交流输入再上电。",
-    "automaticRefresh": "全部 Flash 页 TDO/MASK 校验通过后，将播放上传 SVF 中剩余的 Refresh 指令，并等待 BMC 恢复连接。",
-    "connectionLost": "与 BMC 的连接已中断，当前显示的是最后收到的进度；页面尚未确认 Refresh，正在重新查询已有升级任务。",
+    "connectionLost": "与 BMC 的连接已中断，当前显示的是最后收到的进度；尚未确认烧录成功，正在重新查询已有任务。",
     "remaining": "整个升级流程剩余时间：{seconds} 秒。",
-    "refreshUnconfirmed": "没有记录到完整 JTAG Refresh 指令序列执行完毕。已确认 Flash 校验通过及新的 BMC 启动，但仍需确认 CPLD 工作状态及自动恢复供电是否正常。",
     "timeout": "10分钟监控超时，请检查服务端升级状态后再决定是否重试。",
-    "completed": "Flash 回读校验通过，已检测到新的 BMC 启动实例；尚未回读 CPLD 当前运行版本。",
+    "completed": "烧录和 Flash 回读校验成功。新的 CPLD 固件将在整板 AC 断电重上电后生效。",
     "phases": {
       "Idle": "就绪",
       "WaitingForHostOff": "等待 Host 关机",
@@ -1475,10 +1472,11 @@
       "Erasing": "擦除内部 Flash",
       "Writing": "写入固件",
       "Verifying": "回读校验 Flash",
-      "AwaitBmcReboot": "JTAG Refresh 激活 / 等待 BMC 重启",
-      "Completed": "Flash 校验通过 / BMC 已重启",
+      "Completed": "更新成功",
       "Failed": "升级失败",
       "Cancelled": "已取消升级"
-    }
+    },
+    "verifyHint": "全部 Flash 页回读校验通过后即判定烧录成功；请对整板执行 AC 断电重上电，以加载新固件。",
+    "activationWarning": "需要 AC Power cycle：请断开所有 PSU 的交流输入，待待机灯熄灭后重新上电，使新的 CPLD 固件生效。"
   }
 }

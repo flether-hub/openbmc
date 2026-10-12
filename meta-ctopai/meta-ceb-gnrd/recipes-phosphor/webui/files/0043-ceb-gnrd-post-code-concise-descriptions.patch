@@ -1,0 +1,51 @@
+Subject: [PATCH] webui: keep POST descriptions to documented meanings
+
+Remove possible/may Intel platform interpretations from the description,
+including contextual unconfirmed alternatives. Keep documented AMI/ACPI
+meanings and unmatched notices. Boot-stage inference guards remain intact.
+
+Upstream-Status: Inappropriate [CEB-GNRD POST presentation]
+
+--- a/src/utils/amiPostCodes.js
++++ b/src/utils/amiPostCodes.js
+@@ -75,20 +75,11 @@
+   return context;
+ }
+ 
+-export function describePostCode(value, locale = 'en-US', context = '') {
++export function describePostCode(value, locale = 'en-US') {
+   const language = String(locale).startsWith('zh') ? 'zh' : 'en';
+   const key = codeKey(value);
+   const entry = definition(key);
+   const unmatched = catalog.unmatched[language];
+-  const texts = catalog.contextText;
+-  const intel = key && catalog.intelMemory[key];
+-  if (context === 'intelMemory') {
+-    return `${texts.intelMemory[language]}: ${intel?.[language] || unmatched}`;
+-  }
+-  if (context === 'intelMemoryError') {
+-    const example = key === 'E8' ? `; ${texts.intelE8Example[language]}` : '';
+-    return `${texts.intelMemoryError[language]}${example}`;
+-  }
+   let text = unmatched;
+   if (entry) {
+     const error =
+@@ -96,17 +87,11 @@
+     text = `${entry.phase}${error}: ${entry.description[language]}`;
+     if (['reserved', 'oem'].includes(entry.kind)) text += `; ${unmatched}`;
+   }
+-  // Retain both meanings for reused values. Even an ACPI sequence hint is
+-  // not proof of OS activity when warm reset records are missing.
++  // Show documented meanings only; omit unconfirmed Intel RC alternatives.
+   const acpi = key && catalog.acpi[key];
+   if (acpi && entry?.phase !== 'ACPI/ASL') {
+     const or = language === 'zh' ? '或' : 'or';
+     text += `; ${or} ACPI/ASL: ${acpi.description[language]}`;
+-  }
+-  if (intel) text += `; ${texts.intelMemory[language]}: ${intel[language]}`;
+-  if (inRange(key, 'intelMemoryErrors') && context !== 's3') {
+-    text += `; ${texts.intelMemoryErrorAlternative[language]}`;
+-    if (key === 'E8') text += `; ${texts.intelE8Example[language]}`;
+   }
+   return text;
+ }

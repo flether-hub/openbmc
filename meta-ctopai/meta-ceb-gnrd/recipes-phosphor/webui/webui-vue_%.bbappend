@@ -42,6 +42,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0040-ceb-gnrd-cpld-firmware-update.patch \
     file://0041-ceb-gnrd-ami-post-code-descriptions.patch \
     file://0042-ceb-gnrd-post-code-sequence-context.patch \
+    file://0043-ceb-gnrd-post-code-concise-descriptions.patch \
+    file://0044-ceb-gnrd-post-code-export-json-array.patch \
     file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "
