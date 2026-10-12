@@ -226,9 +226,13 @@ class Jtag:
         # IDLE -> SELECT_DR -> [SELECT_IR] -> CAPTURE -> SHIFT.
         bits = self.scan_bits(count, value, instruction)
         prefix = 4 if instruction else 3
-        self.clocks(bits[:prefix])
-        result = self.clocks(bits[prefix:-2])
-        self.clocks(bits[-2:])
+        # Keep state entry, data and UPDATE/IDLE in one bounded ioctl when
+        # possible. Do not run busctl/guard between SHIFT and UPDATE. The TD
+        # 2089-bit readback needs 2094 clocks, well below the 4096-clock ABI.
+        returned = bytearray()
+        for offset in range(0, len(bits), 4096):
+            returned.extend(self.clocks(bits[offset:offset + 4096]))
+        result = returned[prefix:prefix + count]
         return sum(((b >> 2) & 1) << i for i, b in enumerate(result))
 
     @staticmethod

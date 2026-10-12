@@ -6,7 +6,8 @@
   This is not the GPIOI / JTAG Master-2 group.
 - Anlogic EF3L90CG400B, IDCODE `0x00008C3B`, internal 8 Mbit SPI Flash.
 - Upload the TD `.bit` format used by the supplied `INS_ZQ6_CPLD_V3.bit`.
-  Maximum upload and decoded Flash data: 1 MiB. No arbitrary SVF execution.
+  Maximum upload: 1 MiB; decoded Primary Flash data: 384 KiB to preserve the
+  reserved Golden region. No arbitrary SVF execution.
 - The ASCII header must identify `ef3_9` / `EF3L90CG400B`. The complete
   Feature code is 18 bytes (36 hex characters). The reviewed TD SPI SVF writes
   its first 16 bytes followed by the decoded length-prefixed configuration
@@ -261,6 +262,49 @@ This mode does not lock IO, verify DONE/running version, enable Golden fallback
 or prove EF3/EF2 compatibility. Its receipt records the compatibility assumption.
 Board validation must establish SPI status validity, JTAG waveform and CPLD/BMC
 power/reset recovery; a successful offline test is not proof of those properties.
+
+## SVF reference audit and scan batching (2026-10-12)
+
+The offline tool `tools/audit-cpld-svf.py` compares TD exports against the
+reviewed single-device EF3L90 profile. It uses the worker's bit parser and SPI
+vector constructors, checks command order, erase/write/read addresses, all
+TDO data/MASK values, IDCODE, ENDIR/ENDDR IDLE, zero chain headers/trailers,
+1 MHz and RUNTEST counts. It also checks the independent vendor Refresh
+export, including its preparation and cleanup. Consecutive IDLE RUNTEST
+counts are summed (TD emits two 50000-clock waits for QE).
+
+Run this on the development/compile host with Python 3, using matching exports:
+
+```sh
+python3 meta-ctopai/meta-ceb-gnrd/tools/audit-cpld-svf.py \
+  --bit INS_ZQ6_CPLD_V3.bit \
+  --program-svf INS_ZQ6_CPLD_V3_bg_verify_norefresh.svf \
+  --refresh-svf INS_ZQ6_CPLD_V3_refresh.svf
+python3 meta-ctopai/meta-ceb-gnrd/tools/tests/test_cpld_svf_audit.py
+```
+
+The audit never opens JTAG, invokes busctl or runs SVF. Unknown syntax,
+nonzero chain headers, partial/sticky scan fields and changed profiles are
+rejected. A FAIL calls for review of the new export; it does not authorize
+guessing vendor instructions. The supported profile is not a full SVF parser.
+It does not change the Web upload format or approve a new feature code.
+Runtime status polling and selected Refresh modes deliberately differ from
+the complete vendor export as documented above.
+
+The worker now sends scan entry, data and UPDATE/IDLE in one ioctl when the
+complete scan fits 4096 clocks. An 8-bit IR needs 14 clocks; the 2089-bit
+readback needs 2094. This avoids user-space Host checks between SHIFT and
+UPDATE for the current profile, retains the same TMS/TDI waveform and samples
+TDO only for data clocks. The generic 4096-data-bit boundary still uses two
+bounded batches. RUNTEST emits actual IDLE clocks; it is not replaced by a
+wall-clock sleep. Host checks and the original deadline precede each batch.
+This adopts the explicit scan/state handling principle from
+[openFPGALoader JTAG](https://github.com/trabucayre/openFPGALoader/blob/bf2b52916e7b6216ba1cc0b30933827d7735b05d/src/jtag.cpp)
+with the board's existing AST2600 ABI.
+
+An SVF interpreter or an additional model/IDCODE entry alone cannot guarantee
+that CPLD reload restores BMC power. No new IO-hold or GPIO operation is
+introduced here; that still requires the EF3 vendor procedure and board validation.
 
 ## Dual Boot and reserved Golden region
 
