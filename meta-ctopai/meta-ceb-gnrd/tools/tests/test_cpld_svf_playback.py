@@ -60,13 +60,23 @@ def encode(commands):
     return ('\n'.join(lines) + '\n').encode()
 
 
-def fixture(data=None):
+def fixture(data=None, chunk_bytes=256):
     if data is None:
         data = bytes.fromhex(FEATURE[:32]) + b'\xff' * 32 + bytes.fromhex('cc55aa33') + b'\xaa' * 460
     commands = audit.expected_background(transport, data)[:-6]
     # TD emits the QE wait as two separate commands; preserve file commands.
     index = commands.index(('RUNTEST', 100000))
     commands[index:index + 1] = [('RUNTEST', 50000), ('RUNTEST', 50000)]
+    if chunk_bytes == 32:
+        commands = commands[:25 + ((len(data) + 4095) // 4096) * 3]
+        for address in range(0, len(data), 32):
+            commands += [svf.scan('SDR', 16, 0x60a5),
+                         svf.spi_vector(b'\x02' + address.to_bytes(3, 'big') + data[address:address + 32]),
+                         ('RUNTEST', 10000)]
+        for address in range(0, len(data), 32):
+            read = svf.spi_vector(b'\x03' + address.to_bytes(3, 'big') + bytes(32), True)
+            tdo = int.from_bytes(data[address:address + 32].translate(svf.REVERSE), 'little') << 41
+            commands.append(svf.scan('SDR', 297, read[2], tdo, ((1 << 256) - 1) << 41))
     commands += [svf.scan('SIR', 8, 255), svf.scan('SIR', 8, 1), ('RUNTEST', 20)]
     for _ in range(4):
         commands += [svf.scan('SIR', 8, 255), ('RUNTEST', 20)]
@@ -99,7 +109,7 @@ class FakeJtag(transport.Jtag):
         result = self.responses.get((count, value), 0)
         if self.bad_id and count == 32:
             return 0
-        if self.mismatch and count == 2089:
+        if self.mismatch and count in (2089, 297):
             result ^= 1 << 41
         return result
 
@@ -130,6 +140,88 @@ class PlaybackTests(unittest.TestCase):
         self.assertEqual(self.plan['sectors'], 1)
         self.assertEqual(self.plan['flashSha256'], hashlib.sha256(self.data).hexdigest())
         self.assertEqual(self.plan['commands'][self.plan['refreshStart'] + 1].key, svf.scan('SIR', 8, 1))
+
+    def test_short_profile_and_full_payload(self):
+        _, commands, raw = fixture(chunk_bytes=32)
+        plan = svf.validate(raw, CFG)
+        self.assertEqual((plan['pages'], plan['chunkBytes'], plan['lengthMode']), (16, 32, 'short'))
+        self.assertEqual(plan['dataBytes'], len(self.data))
+        self.assertEqual(plan['flashSha256'], self.plan['flashSha256'])
+        self.assertEqual([c.key for c in plan['commands'][plan['refreshStart']:]],
+                         [c.key for c in self.plan['commands'][self.plan['refreshStart']:]])
+        command = plan['commands'][plan['verifyStart'] + 1]
+        detail = svf.label(plan['verifyStart'] + 1, command, plan)
+        self.assertIn('verify block=2/16 bytes=32 address=0x000020', detail)
+        self.assertEqual(sum(c[0] == 'RUNTEST' and c[1] == 10000 for c in commands), 17)
+
+    def test_short_profile_rejects_mixed_lengths_masks_and_changed_waits(self):
+        _, commands, raw = fixture(chunk_bytes=32)
+        plan = svf.validate(raw, CFG)
+        mutations = []
+        for index in (plan['writeStart'] + 1, plan['writeStart'] + 2, plan['verifyStart']):
+            changed = list(commands)
+            if index == plan['writeStart'] + 1:
+                changed[index] = self.commands[self.plan['writeStart'] + 1]
+            elif index == plan['writeStart'] + 2:
+                changed[index] = ('RUNTEST', 5000)
+            else:
+                item = list(changed[index]); item[4] ^= 1 << 41; changed[index] = tuple(item)
+            mutations.append(encode(changed))
+        mutations.append(encode(commands[:plan['verifyStart']] + commands[plan['refreshStart']:]))
+        for raw in mutations:
+            with self.assertRaises(ValueError):
+                svf.validate(raw, CFG)
+
+    def test_short_golden_guard_and_parser_command_bound(self):
+        with mock.patch.object(svf, 'parse', return_value=[
+                svf.Command('SDR', (296, 0, None, None), 1)] * (transport.PRIMARY_FLASH_LIMIT // 32 + 1)):
+            with self.assertRaisesRegex(ValueError, 'Golden'):
+                svf.validate(self.raw, CFG)
+        with self.assertRaisesRegex(ValueError, 'commands'):
+            svf.parse(b'STATE IDLE;\n' * (svf.MAX_COMMANDS + 1))
+
+    def test_short_playback_keeps_readback_refresh_and_receipt(self):
+        self.data, self.commands, self.raw = fixture(chunk_bytes=32)
+        self.plan = svf.validate(self.raw, CFG)
+        receipts, events = self.run_worker()
+        jtag = FakeJtag.instances[-1]
+        self.assertEqual(sum(r[:2] == ('SDR', 296) for r in jtag.records), 16)
+        self.assertEqual(sum(r[:2] == ('SDR', 297) for r in jtag.records), 16)
+        self.assertEqual(sum(r == ('RUNTEST', 10000) for r in jtag.records), 16)
+        self.assertEqual(receipts[0]['programmingChunkBytes'], 32)
+        self.assertEqual(receipts[0]['programmedBytes'], 512)
+        self.assertEqual(receipts[0]['lengthMode'], 'short')
+        self.assertFalse(receipts[0]['refreshSequenceCompleted'])
+        self.assertTrue(receipts[1]['refreshSequenceCompleted'])
+        self.assertEqual(list(map(len, jtag.blocks[3:])), [4096, 4096, 2340])
+        self.assertEqual(events[0][1]['programmingChunkBytes'], 32)
+        self.assertIn('SVF verify block 16/16 (32 bytes)', [e[0][2] for e in events])
+
+    def test_short_mismatch_blocks_refresh(self):
+        self.data, self.commands, self.raw = fixture(chunk_bytes=32)
+        self.plan = svf.validate(self.raw, CFG)
+        FakeJtag.mismatch = True
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'TDO mismatch'):
+                self.run_worker()
+            self.assertFalse(any(len(b) == 4096 for b in FakeJtag.instances[-1].blocks))
+        finally:
+            FakeJtag.mismatch = False
+
+    def test_short_timeout_preserves_original_deadline_and_blocks_refresh(self):
+        self.data, self.commands, self.raw = fixture(chunk_bytes=32)
+        self.plan = svf.validate(self.raw, CFG)
+        original_run = FakeJtag.run
+        def expire_after_write(jtag, count):
+            original_run(jtag, count)
+            if count == 10000:
+                jtag.clock[0] += 600
+        with mock.patch.object(FakeJtag, 'run', expire_after_write):
+            with self.assertRaisesRegex(TimeoutError, 'deadline'):
+                self.run_worker()
+        jtag = FakeJtag.instances[-1]
+        self.assertTrue(jtag.closed)
+        self.assertFalse(any(len(b) == 4096 for b in jtag.blocks))
 
     def test_reject_changed_or_unverified_profiles_before_hardware(self):
         mutations = []
@@ -261,10 +353,15 @@ class PlaybackTests(unittest.TestCase):
         if not path:
             self.skipTest('Set CEB_SVF_REVIEW_FILE for a supplied vendor export')
         plan = svf.validate(Path(path).read_bytes(), CFG)
-        self.assertEqual(plan['sha256'], '137b2fd90b24821e304c9c2c6cd9a56680763a5906e9e6f59c702525edfe22ad')
-        self.assertEqual((plan['pages'], plan['sectors']), (1199, 75))
-        self.assertEqual(plan['commands'][plan['refreshStart']].line, 5061)
-        self.assertEqual(plan['commands'][plan['refreshStart'] + 1].line, 5063)
+        profiles = {
+            'normal': ('137b2fd90b24821e304c9c2c6cd9a56680763a5906e9e6f59c702525edfe22ad', 1199, 5061, 5063),
+            'short': ('8420dfc564d61e7b84038875c6bd19447433facc32df373094736730b96b906a', 9588, 38617, 38619),
+        }
+        digest, blocks, first_line, refresh_line = profiles[plan['lengthMode']]
+        self.assertEqual(plan['sha256'], digest)
+        self.assertEqual((plan['pages'], plan['sectors']), (blocks, 75))
+        self.assertEqual(plan['commands'][plan['refreshStart']].line, first_line)
+        self.assertEqual(plan['commands'][plan['refreshStart'] + 1].line, refresh_line)
 
     def test_full_vendor_playback_if_supplied(self):
         path = os.environ.get('CEB_SVF_REVIEW_FILE')
@@ -273,9 +370,10 @@ class PlaybackTests(unittest.TestCase):
         self.raw = Path(path).read_bytes()
         self.plan = svf.validate(self.raw, CFG)
         receipts, events = self.run_worker()
-        self.assertEqual(receipts[0]['verifiedPages'], 1199)
-        self.assertEqual(sum(record[:2] == ('SDR', 2088) for record in FakeJtag.instances[-1].records), 1199)
-        self.assertEqual(sum(record[:2] == ('SDR', 2089) for record in FakeJtag.instances[-1].records), 1199)
+        blocks, bits = self.plan['pages'], self.plan['chunkBytes'] * 8 + 40
+        self.assertEqual(receipts[0]['verifiedPages'], blocks)
+        self.assertEqual(sum(record[:2] == ('SDR', bits) for record in FakeJtag.instances[-1].records), blocks)
+        self.assertEqual(sum(record[:2] == ('SDR', bits + 1) for record in FakeJtag.instances[-1].records), blocks)
         self.assertTrue(receipts[1]['refreshSequenceCompleted'])
 
 
@@ -342,6 +440,10 @@ class ServiceTests(unittest.TestCase):
             coroutine.close()
             return types.SimpleNamespace(done=lambda: False)
         _, _, raw = fixture()
+        review_file = os.environ.get('CEB_SVF_REVIEW_FILE')
+        if review_file:
+            raw = Path(review_file).read_bytes()
+        plan = svf.validate(raw, CFG)
         u = self.service.Update(None)
         with mock.patch.object(self.service.os, 'open', open_memory), \
              mock.patch.object(self.service.os, 'fdopen', lambda fd, mode: Writer(fds[fd])), \
@@ -352,6 +454,9 @@ class ServiceTests(unittest.TestCase):
             job = u.Start(base64.b64encode(raw).decode())
             self.assertEqual(fs['ram/image.svf'], raw)
             self.assertEqual(u.state['programmingFormat'], 'svf')
+            self.assertEqual(u.state['lengthMode'], plan['lengthMode'])
+            self.assertEqual(u.state['programmingChunkBytes'], plan['chunkBytes'])
+            self.assertEqual(u.state['programmedBytes'], plan['dataBytes'])
             self.assertEqual(u.state['sha256'], hashlib.sha256(raw).hexdigest())
             self.assertEqual(json.loads(u.Status)['maxUploadBytes'], 4194304)
             self.assertEqual(u.state['job'], job)
@@ -415,6 +520,49 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(calls[0][-1], 'digest')
         self.assertEqual([item['phase'] for item in self.checkpoints], ['Preflight'])
         self.assertEqual(u.state['phase'], 'AwaitBmcReboot')
+
+
+class UploadJsonTests(unittest.TestCase):
+    """Offline payload boundaries and patch contract, not a bmcweb C++ build."""
+
+    def test_scoped_json_limit_patch_keeps_default_sax_parser(self):
+        patch = (ROOT / 'recipes-phosphor/interfaces/files/0010-ceb-gnrd-cpld-svf-json-upload-limit.patch').read_text()
+        added = '\n'.join(line[1:] for line in patch.splitlines() if line.startswith('+') and not line.startswith('+++'))
+        self.assertIn('objectPath == "/xyz/openbmc_project/software/cpld_update" &&', added)
+        self.assertIn('methodName == "Start"', added)
+        self.assertIn('isCpldStart ? maxCpldJsonBytes : 1048576U', added)
+        self.assertEqual(added.count('std::size_t maxBodySize = 1048576U'), 2)
+        self.assertIn('parseStringAsJson(req.body(), maxBodySize)', added)
+        self.assertIn('parseRequestAsJson(req, requestDbusData, jsonLimit)', added)
+        self.assertIn('isCpldStart && req.body().size() > jsonLimit', added)
+        self.assertIn('status::payload_too_large', added)
+        self.assertNotIn('nlohmann::json::parse', added)
+        self.assertNotIn('maxDepth', added)
+        self.assertNotIn('maxValues', added)
+        self.assertIn('maxCpldSvfBytes = 4U * 1024U * 1024U', added)
+        self.assertIn('4U * ((maxCpldSvfBytes + 2U) / 3U) + 64U', added)
+
+    def test_maximum_upload_json_envelope_has_bounded_headroom(self):
+        limit = 4 * ((svf.MAX_SVF + 2) // 3) + 64
+        self.assertEqual(limit, 5592472)
+        raw = b'x' * svf.MAX_SVF
+        body = json.dumps({'data': [base64.b64encode(raw).decode()]}, separators=(',', ':')).encode()
+        self.assertEqual(len(body), 5592421)
+        self.assertLessEqual(len(body), limit)
+        self.assertEqual(base64.b64decode(json.loads(body)['data'][0]), raw)
+        self.assertGreater(len(body), 1048576)
+        self.assertGreater(len(body) + 65, limit)
+
+    def test_real_svf_json_envelope_if_supplied(self):
+        name = os.environ.get('CEB_SVF_REVIEW_FILE')
+        if not name:
+            self.skipTest('Set CEB_SVF_REVIEW_FILE for a supplied vendor export')
+        raw = Path(name).read_bytes()
+        body = json.dumps({'data': [base64.b64encode(raw).decode()]}, separators=(',', ':')).encode()
+        self.assertGreater(len(body), 1048576)
+        self.assertLessEqual(len(body), 4 * ((svf.MAX_SVF + 2) // 3) + 64)
+        plan = svf.validate(base64.b64decode(json.loads(body)['data'][0]), CFG)
+        self.assertEqual(plan['sha256'], hashlib.sha256(raw).hexdigest())
 
 
 if __name__ == '__main__':

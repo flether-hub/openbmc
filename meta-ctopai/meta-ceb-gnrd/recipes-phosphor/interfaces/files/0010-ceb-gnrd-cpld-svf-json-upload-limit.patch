@@ -1,0 +1,82 @@
+Subject: [PATCH] dbus-rest: allow bounded CPLD SVF JSON uploads
+
+The JSON parser separately limits requests to 1 MiB despite the larger HTTP
+firmware body limit. A 4 MiB SVF encoded as one Base64 Start argument needs
+up to 5592408 bytes plus its JSON envelope. Opt in only for the exact guarded
+CPLD Start method; retain the default, depth and value limits elsewhere.
+
+Upstream-Status: Inappropriate [CEB-GNRD CPLD upload]
+
+--- a/features/openbmc_rest/openbmc_dbus_rest.hpp
++++ b/features/openbmc_rest/openbmc_dbus_rest.hpp
+@@ -32,6 +32,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <cerrno>
++#include <cstddef>
+ #include <cstdint>
+ #include <cstring>
+ #include <filesystem>
+@@ -1560,7 +1561,24 @@
+                      methodName);
+     nlohmann::json requestDbusData;
+ 
+-    JsonParseResult ret = parseRequestAsJson(req, requestDbusData);
++    // Match the guarded updater's 4 MiB raw SVF limit, including Base64 and
++    // the small JSON envelope. Other D-Bus actions keep the 1 MiB default.
++    constexpr std::size_t maxCpldSvfBytes = 4U * 1024U * 1024U;
++    constexpr std::size_t maxCpldJsonBytes =
++        4U * ((maxCpldSvfBytes + 2U) / 3U) + 64U;
++    const bool isCpldStart =
++        objectPath == "/xyz/openbmc_project/software/cpld_update" &&
++        methodName == "Start";
++    const std::size_t jsonLimit = isCpldStart ? maxCpldJsonBytes : 1048576U;
++    if (isCpldStart && req.body().size() > jsonLimit)
++    {
++        setErrorResponse(asyncResp->res,
++                         boost::beast::http::status::payload_too_large,
++                         "CPLD SVF upload exceeds the 4 MiB firmware limit",
++                         "413 Payload Too Large");
++        return;
++    }
++    JsonParseResult ret = parseRequestAsJson(req, requestDbusData, jsonLimit);
+     if (ret == JsonParseResult::BadContentType)
+     {
+         setErrorResponse(asyncResp->res,
+--- a/http/parsing.hpp
++++ b/http/parsing.hpp
+@@ -190,11 +190,12 @@
+ };
+ } // namespace details
+ 
+-inline std::optional<nlohmann::json> parseStringAsJson(std::string_view body)
++inline std::optional<nlohmann::json> parseStringAsJson(
++    std::string_view body, std::size_t maxBodySize = 1048576U)
+ {
+     nlohmann::json jsonOut;
+-    // Arbitrarily limit to 1MB payloads
+-    if (body.size() > 1048576U)
++    // Keep the 1 MiB default; a bounded upload route may opt in to more.
++    if (body.size() > maxBodySize)
+     {
+         BMCWEB_LOG_WARNING("Request body is too large");
+         return std::nullopt;
+@@ -211,7 +212,8 @@
+ }
+ 
+ inline JsonParseResult parseRequestAsJson(const crow::Request& req,
+-                                          nlohmann::json& jsonOut)
++                                          nlohmann::json& jsonOut,
++                                          std::size_t maxBodySize = 1048576U)
+ {
+     std::string_view contentType =
+         req.getHeaderValue(boost::beast::http::field::content_type);
+@@ -226,7 +228,7 @@
+             return JsonParseResult::BadContentType;
+         }
+     }
+-    std::optional<nlohmann::json> obj = parseStringAsJson(req.body());
++    std::optional<nlohmann::json> obj = parseStringAsJson(req.body(), maxBodySize);
+     if (!obj)
+     {
+         return JsonParseResult::BadJsonData;

@@ -17,7 +17,10 @@ from cpld_jtag import (IDCODE, PRIMARY_FLASH_LIMIT, REVERSE, Jtag, boot_id,
                        host_off, require_background, trace)
 
 MAX_SVF = 4 * 1024 * 1024
-MAX_COMMANDS = 10000
+# Short mode transfers 32 bytes per block; a bounded Primary image can require
+# almost 50000 commands. Keep both this count and the 4 MiB byte limit.
+MAX_COMMANDS = 50000
+WRITE_LENGTHS = {2088: 256, 296: 32}
 
 
 class Command:
@@ -86,7 +89,7 @@ def parse(raw):
             raise ValueError(f'SVF line {command_line}: unsupported command {command[:80]}')
         commands.append(Command(kind, args, command_line))
         if len(commands) > MAX_COMMANDS:
-            raise ValueError('SVF exceeds 10000 commands')
+            raise ValueError(f'SVF exceeds {MAX_COMMANDS} commands')
     return commands
 
 
@@ -116,14 +119,19 @@ def approved_feature(data, cfg):
 
 def validate(raw, cfg):
     commands = parse(raw)
-    writes = [c for c in commands if c.kind == 'SDR' and c.args[0] == 2088]
-    if not 1 <= len(writes) <= PRIMARY_FLASH_LIMIT // 256:
+    writes = [c for c in commands if c.kind == 'SDR' and c.args[0] in WRITE_LENGTHS]
+    lengths = {c.args[0] for c in writes}
+    if len(lengths) != 1:
+        raise ValueError('SVF must use one reviewed normal or short write length; mixed lengths are unsupported')
+    chunk_bytes = WRITE_LENGTHS[lengths.pop()]
+    length_mode = 'normal' if chunk_bytes == 256 else 'short'
+    if not 1 <= len(writes) <= PRIMARY_FLASH_LIMIT // chunk_bytes:
         raise ValueError('SVF must program a bounded Primary image below the Golden region')
     data = bytearray()
     for page, command in enumerate(writes):
         count, value, tdo, mask = command.args
         wire = value.to_bytes(count // 8, 'little').translate(REVERSE)
-        if (wire[:2] != b'\xa5\x02' or int.from_bytes(wire[2:5], 'big') != page * 256 or
+        if (wire[:2] != b'\xa5\x02' or int.from_bytes(wire[2:5], 'big') != page * chunk_bytes or
                 mask is not None or tdo is not None):
             raise ValueError(f'SVF line {command.line}: invalid or non-contiguous page write')
         data.extend(wire[5:])
@@ -143,18 +151,19 @@ def validate(raw, cfg):
         expected += [scan('SDR', 16, 0x60a5), spi_vector(b'\x20' + address.to_bytes(3, 'big')),
                      ('RUNTEST', 150000)]
     write_start = len(expected)
-    for address in range(0, len(data), 256):
+    write_wait = 5000 if length_mode == 'normal' else 10000
+    for address in range(0, len(data), chunk_bytes):
         expected += [scan('SDR', 16, 0x60a5),
-                     spi_vector(b'\x02' + address.to_bytes(3, 'big') + data[address:address + 256]),
-                     ('RUNTEST', 5000)]
+                     spi_vector(b'\x02' + address.to_bytes(3, 'big') + data[address:address + chunk_bytes]),
+                     ('RUNTEST', write_wait)]
     verify_start = len(expected)
-    mask = ((1 << 2048) - 1) << 41
-    for address in range(0, len(data), 256):
-        read = spi_vector(b'\x03' + address.to_bytes(3, 'big') + bytes(256), True)
-        tdo = int.from_bytes(data[address:address + 256].translate(REVERSE), 'little') << 41
+    mask = ((1 << (chunk_bytes * 8)) - 1) << 41
+    for address in range(0, len(data), chunk_bytes):
+        read = spi_vector(b'\x03' + address.to_bytes(3, 'big') + bytes(chunk_bytes), True)
+        tdo = int.from_bytes(data[address:address + chunk_bytes].translate(REVERSE), 'little') << 41
         expected.append(scan('SDR', read[1], read[2], tdo, mask))
     refresh_start = len(expected)
-    # Exact combined bg_mode+rf_mode+Verify export dated 2026-10-12 14:37.
+    # Exact combined normal (14:37) / short (15:18) exports, 2026-10-12.
     # This is a validation allowlist, not an alternate programming generator:
     # playback below always takes TDI/TDO/MASK/counts from the uploaded file.
     expected += [scan('SIR', 8, 0xff), scan('SIR', 8, 1), ('RUNTEST', 20)]
@@ -170,7 +179,8 @@ def validate(raw, cfg):
             raise ValueError(f'SVF line {command.line}: {command.kind} differs from the approved profile')
     return dict(commands=commands, feature=feature, sha256=hashlib.sha256(raw).hexdigest(),
                 flashSha256=hashlib.sha256(data).hexdigest(), pages=len(writes),
-                sectors=(len(data) + 4095) // 4096, eraseStart=erase_start,
+                sectors=(len(data) + 4095) // 4096, chunkBytes=chunk_bytes,
+                lengthMode=length_mode, dataBytes=len(data), eraseStart=erase_start,
                 writeStart=write_start, verifyStart=verify_start, refreshStart=refresh_start)
 
 
@@ -181,12 +191,14 @@ def label(index, command, plan):
         detail += f' bits={count}'
         if count <= 64:
             detail += f' TDI=0x{value:X}'
-        if count == 2088:
+        chunk_bytes = plan['chunkBytes']
+        unit = 'page' if chunk_bytes == 256 else 'block'
+        if count == 40 + chunk_bytes * 8:
             page = (index - plan['writeStart']) // 3
-            detail += f' write page={page + 1}/{plan["pages"]} address=0x{page * 256:06x}'
-        elif count == 2089:
+            detail += f' write {unit}={page + 1}/{plan["pages"]} bytes={chunk_bytes} address=0x{page * chunk_bytes:06x}'
+        elif count == 41 + chunk_bytes * 8:
             page = index - plan['verifyStart']
-            detail += f' verify page={page + 1}/{plan["pages"]} address=0x{page * 256:06x}'
+            detail += f' verify {unit}={page + 1}/{plan["pages"]} bytes={chunk_bytes} address=0x{page * chunk_bytes:06x}'
         if mask is not None:
             detail += ' compare=TDO&MASK' if mask else ' MASK=0 (no comparison; not a DONE check)'
     elif command.kind == 'RUNTEST':
@@ -266,7 +278,7 @@ def update(path, job, remaining, expected_digest=None):
     plan = validate(raw, configuration())
     if expected_digest is not None and plan['sha256'] != expected_digest:
         raise ValueError('Uploaded SVF changed after Start; programming blocked')
-    trace(f'BEGIN SVF job={job} sha256={plan["sha256"]} pages={plan["pages"]} commands={len(plan["commands"])}')
+    trace(f'BEGIN SVF job={job} sha256={plan["sha256"]} lengthMode={plan["lengthMode"]} blockBytes={plan["chunkBytes"]} blocks={plan["pages"]} commands={len(plan["commands"])}')
     old_boot, last_host_check = boot_id(), 0.0
 
     def guard(force=False):
@@ -287,7 +299,10 @@ def update(path, job, remaining, expected_digest=None):
         trace('BEGIN independent preflight IDCODE check before any SVF register writes')
         jtag.identify()
         trace('END independent preflight IDCODE check MATCH')
-        event('Preflight', 5, 'Playing SVF device check and background entry', programmingFormat='svf')
+        event('Preflight', 5, 'Playing SVF device check and background entry', programmingFormat='svf',
+              lengthMode=plan['lengthMode'], programmingChunkBytes=plan['chunkBytes'])
+        unit = 'page' if plan['chunkBytes'] == 256 else 'block'
+        progress_stride = 4096 // plan['chunkBytes']
         for index, command in enumerate(plan['commands'][:plan['refreshStart']]):
             execute(jtag, index, command, plan)
             if plan['eraseStart'] <= index < plan['writeStart'] and command.kind == 'RUNTEST':
@@ -295,14 +310,14 @@ def update(path, job, remaining, expected_digest=None):
                 event('Erasing', 10 + sector * 20 // plan['sectors'], f'SVF erase sector {sector}/{plan["sectors"]}')
             elif plan['writeStart'] <= index < plan['verifyStart'] and command.kind == 'RUNTEST':
                 page = (index - plan['writeStart']) // 3 + 1
-                if page == 1 or page % 16 == 0 or page == plan['pages']:
-                    event('Writing', 30 + page * 40 // plan['pages'], f'SVF write page {page}/{plan["pages"]}')
+                if page == 1 or page % progress_stride == 0 or page == plan['pages']:
+                    event('Writing', 30 + page * 40 // plan['pages'], f'SVF write {unit} {page}/{plan["pages"]} ({plan["chunkBytes"]} bytes)')
             elif plan['verifyStart'] <= index:
                 page = index - plan['verifyStart'] + 1
-                if page == 1 or page % 16 == 0 or page == plan['pages']:
-                    event('Verifying', 70 + page * 23 // plan['pages'], f'SVF verify page {page}/{plan["pages"]}')
-        trace(f'ALL FLASH PAGES VERIFIED pages={plan["pages"]}; SVF Refresh not yet sent')
-        event('Verifying', 93, f'SVF TDO/MASK readback passed for all {plan["pages"]} pages', flashVerified=True)
+                if page == 1 or page % progress_stride == 0 or page == plan['pages']:
+                    event('Verifying', 70 + page * 23 // plan['pages'], f'SVF verify {unit} {page}/{plan["pages"]} ({plan["chunkBytes"]} bytes)')
+        trace(f'ALL FLASH BLOCKS VERIFIED blocks={plan["pages"]} blockBytes={plan["chunkBytes"]}; SVF Refresh not yet sent')
+        event('Verifying', 93, f'SVF TDO/MASK readback passed for all {plan["pages"]} {unit}s', flashVerified=True)
         trace('BEGIN Final Host Off check and verified receipt before SVF Refresh')
         diagnostic_pause('SVF Refresh (operation has not started)', deadline)
         guard(force=True)
@@ -312,6 +327,8 @@ def update(path, job, remaining, expected_digest=None):
                        bootId=old_boot, armedUnix=time.time(),
                        deadlineUnix=time.time() + max(0, deadline - time.monotonic()),
                        flashVerified=True, verifiedPages=plan['pages'],
+                       lengthMode=plan['lengthMode'], programmingChunkBytes=plan['chunkBytes'],
+                       programmedBytes=plan['dataBytes'],
                        refreshSequenceCompleted=False, programmingFormat='svf')
         checkpoint(receipt)
         trace('END Persist SVF flashVerified receipt; Refresh not yet sent')

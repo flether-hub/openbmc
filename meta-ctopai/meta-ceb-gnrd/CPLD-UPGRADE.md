@@ -18,7 +18,8 @@ it has no direct bitstream programming entry point.
 
 Use TD 1.5 Device Chain export options: SVF for SPI, bg_mode, rf_mode, Verify,
 Add Comments, 1 MHz, address 0, and the reviewed zero chain headers/trailers.
-The reference is `INS_ZQ6_CPLD_V3_bg_verify_refresh.svf`, exported
+Both reviewed Length mode selections, `normal` and `short`, are accepted.
+The normal reference is `INS_ZQ6_CPLD_V3_bg_verify_refresh.svf`, exported
 2026-10-12 14:37, SHA256:
 
 ```text
@@ -38,6 +39,36 @@ FF -> 01 -> 20 TCK -> (FF -> 20 TCK) x4 -> FF -> 10000 TCK
 This is the new combined export's tail, not the earlier independent Refresh
 file's 15/200000-clock tail or openFPGALoader's reset sequence.
 
+The short reference is `INS_ZQ6_CPLD_V3_bg_verify_refresh_short.svf`, exported
+2026-10-12 15:18, SHA256:
+
+```text
+8420dfc564d61e7b84038875c6bd19447433facc32df373094736730b96b906a
+```
+
+These are observed differences between the supplied exports, not assumptions
+about other TD versions:
+
+| Property | normal | short |
+| --- | --- | --- |
+| File size | 2626650 bytes | 3765331 bytes (below 4 MiB) |
+| Parsed commands | 5064 | 38620 |
+| Contiguous write/readback block | 256 bytes, 1199 blocks | 32 bytes, 9588 blocks |
+| Write/readback SDR length | 2088 / 2089 bits | 296 / 297 bits |
+| Wait after each write | 5000 TCK | 10000 TCK |
+| Written bytes | 306944 | 306816 |
+| Sector erases | 75 | 75 |
+| Refresh tail | 10532 clocks | Identical 10532 clocks |
+
+The shared 306816-byte prefix is identical. Normal adds 128 trailing FF bytes;
+both exports erase the same sectors, including that trailing area. Each short
+readback checks all 256 data bits under its MASK, at the same 41-bit response
+offset. The initial background entry/QE commands and final Refresh are identical.
+Short means shorter scans in these exports, not a smaller file or faster update:
+it has more commands, write waits and serial log lines. It retains the original
+600-second total deadline; board timing and automatic recovery still need
+validation. Upload the original short SVF without converting it to normal.
+
 ## Whole-file validation before programming
 
 `cpld_svf.py` parses and validates the whole upload before opening JTAG. It
@@ -45,13 +76,17 @@ accepts the reviewed single-device profile, not arbitrary SVF scripts:
 
 - Explicit SIR/SDR TDI values and explicit TDO/MASK when comparing; no partial
   or sticky SMASK. Maximum scan data length is 4096 bits.
+  Uploads remain at most 4 MiB, with at most 50000 parsed commands to cover
+  the bounded Primary image's reviewed short mode.
 - TRST OFF, ENDIR/ENDDR IDLE, STATE RESET/IDLE, FREQUENCY 1 MHz, and zero
   HIR/HDR/TIR/TDR. Unknown commands, scan fields or TAP end states are rejected.
 - Exact reviewed background entry, QE setup, WREN/sector erase/page write,
   verification and final Refresh/cleanup order. Every file RUNTEST count is
   retained, including the two separate 50000-clock QE waits.
-- Contiguous 256-byte writes from address 0, exactly sufficient 4 KiB sector
-  erases, and one full 2048-data-bit TDO/MASK comparison for each written page.
+- Contiguous writes from address 0 using one consistent reviewed block size:
+  normal 256 bytes or short 32 bytes. Mixed block sizes are rejected. Require
+  exactly sufficient 4 KiB sector erases and one full 2048-bit (normal) or
+  256-bit (short) data TDO/MASK comparison for each written block.
   Missing, reordered or weakened comparisons are rejected before any erase.
 - Recognized Anlogic preamble, exact IDCODE vector and bounded Primary data.
 - Running persist_bit confirmation remains required. The SVF encodes only
@@ -68,6 +103,23 @@ Off and checks the original SVF SHA256 so the file cannot silently change.
 It performs an independent exact IDCODE check before the first SVF register
 write, then plays the file's own device check as well. The player takes all
 scan values, masks and clock counts from parsed upload commands.
+
+## Web JSON upload limit
+
+The legacy D-Bus REST `Start(s)` request sends the original SVF as one Base64
+string in `{"data":["..."]}`. bmcweb's normal JSON parser rejects bodies above
+1 MiB, separately from the HTTP firmware body limit. Without the board patch,
+both reviewed exports fail before reaching the updater with
+`No JSON object could be decoded`; that message is not an SVF validation error.
+
+`0010-ceb-gnrd-cpld-svf-json-upload-limit.patch` opts into a 5592472-byte JSON
+limit only for object `/xyz/openbmc_project/software/cpld_update`, method
+`Start`: 4 MiB raw SVF encoded as Base64 plus 64 bytes of JSON envelope. Oversize
+CPLD requests receive HTTP 413. Other methods retain the 1 MiB JSON default;
+content-type checks and the existing SAX depth/value limits remain in use.
+The guarded service still enforces the actual 4 MiB decoded file limit and
+validates the whole SVF before opening JTAG. Rebuild bmcweb as well as the
+updater/image to obtain this fix; updating only Web assets is insufficient.
 
 ## Progress, activation and serial diagnostics
 
@@ -92,6 +144,9 @@ scan values, masks and clock counts from parsed upload commands.
   the first post-verify FF. It records the SVF hash, reconstructed Flash hash,
   page count and original recovery deadline. Progress processing cannot
   overwrite this receipt with an earlier phase.
+  For compatibility `verifiedPages` counts transfer blocks; `lengthMode`,
+  `programmingChunkBytes` and `programmedBytes` record their actual size and
+  byte total. Short progress/serial messages call the 32-byte units blocks.
 - The **actual parsed SVF tail** is compiled into 10532 clocks, in bounded
   batches of 4096, 4096 and 2340. This preserves every scan and RUNTEST count
   while avoiding user-space logging/Host-query gaps across FF/01. `QUEUED`
@@ -156,7 +211,8 @@ firmware into Flash before end-to-end validation.
 
 DS600_1.8 reserves Golden feature/address at `0x060000`, Golden bitstream at
 `0x061000`. Primary data is limited to 384 KiB, with all erases strictly below
-Golden. V3 writes end at `0x04AEFF`; erase coverage ends at `0x04AFFF`.
+Golden. V3 normal writes end at `0x04AEFF`, short writes at `0x04AE7F`;
+both erase coverage ends at `0x04AFFF`.
 No Golden image is created/enabled/validated by the player. The reviewed file
 also contains the vendor comment "Disable Dual boot loop"; its register map
 is unavailable, so this is not proof that automatic fallback is enabled.

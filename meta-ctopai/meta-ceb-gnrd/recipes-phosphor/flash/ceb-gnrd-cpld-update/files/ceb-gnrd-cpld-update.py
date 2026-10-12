@@ -137,7 +137,9 @@ class Update(ServiceInterface):
                               detail='Please shut down the host. Waiting for stable Off state before SVF playback.',
                               sha256=plan['sha256'], flashSha256=plan['flashSha256'],
                               feature=plan['feature'], bootId=boot_id(),
-                              flashVerified=False, programmingFormat='svf')
+                              flashVerified=False, programmingFormat='svf',
+                              lengthMode=plan['lengthMode'], programmingChunkBytes=plan['chunkBytes'],
+                              programmedBytes=plan['dataBytes'])
             checkpoint(self.state)
             self.publish()
             self.cancel_requested = False
