@@ -27,6 +27,35 @@ IDCODE = 0x00008C3B
 REVERSE = bytes(int(f'{n:08b}'[::-1], 2) for n in range(256))
 
 
+def console_debug_enabled():
+    return os.environ.get('CEB_GNRD_CPLD_CONSOLE_DEBUG') == '1'
+
+
+def console_log(message):
+    """Best-effort serial copy; never block programming on a console reader."""
+    if not console_debug_enabled():
+        return
+    fd = None
+    try:
+        fd = os.open('/dev/console', os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK | os.O_CLOEXEC)
+        os.write(fd, (message[:1024].replace('\n', ' ') + '\n').encode('ascii', errors='replace'))
+    except OSError:
+        pass  # Missing/full console must not abort an update or extend its deadline.
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def trace(message):
+    if not console_debug_enabled():
+        return
+    line = f'CPLD-TRACE [{time.monotonic():.6f}] pid={os.getpid()} {message}'
+    # The worker's stderr is inherited from the service, independently of
+    # its stdout JSON pipe. Emit before the operation, without parent polling.
+    print(line, file=sys.stderr, flush=True)
+    console_log(line)
+
+
 def bitstream(raw):
     if not 400 <= len(raw) <= MAX_IMAGE:
         raise ValueError('Invalid bitstream size (maximum 1 MiB)')
@@ -200,8 +229,10 @@ def update(path, job, remaining):
     if not 0 < remaining <= 600:
         raise ValueError("Invalid remaining upgrade timeout")
     deadline = time.monotonic() + remaining
+    trace(f'BEGIN job={job} timeoutRemaining={remaining:.3f}s')
     data, feature, digest = bitstream(Path(path).read_bytes())
     require_background(feature, configuration())
+    trace(f'Image approved sha256={digest} feature={feature} bytes={len(data)}; no output latch is provided')
     old_boot = boot_id()
     last_host_check = 0.0
 
@@ -213,11 +244,18 @@ def update(path, job, remaining):
                 raise RuntimeError('Host is no longer Off; programming stopped; do not reload CPLD')
             last_host_check = now
 
-    guard(force=True)
-    jtag = Jtag(deadline, guard)
+    def step(label, operation, *args, **kwargs):
+        trace(f'BEGIN {label}')
+        result = operation(*args, **kwargs)
+        trace(f'END {label}')
+        return result
+
+    step('Host Off check before programming', guard, force=True)
+    jtag = step('Open JTAG Master-1', Jtag, deadline, guard)
     try:
         event('Preflight', 5, 'Checking JTAG IDCODE')
-        jtag.identify()  # No feature changes, erase, or Refresh before this check.
+        step('Initial IDCODE check', jtag.identify)
+        trace('BEGIN background programming entry (no Refresh)')
         # Exact TD background entry; deliberately no IR 0x01 here.
         jtag.ir(0x80)
         jtag.scan(64, 0x00800000000000a5)
@@ -225,6 +263,7 @@ def update(path, job, remaining):
         jtag.ir(0xff)
         jtag.ir(0x39)
         jtag.run(50000)
+        trace('END background programming entry')
         # Use the same reviewed SPI read command and one-bit delay as the
         # supplier's verify SVF. No inferred EF3 feature-register/JEDEC opcode.
         response = jtag.spi(bytes([0x03, 0, 0, 0]) + bytes(256), True)
@@ -232,50 +271,65 @@ def update(path, job, remaining):
         if existing[16:52] != b'\xff' * 32 + bytes.fromhex('cc55aa33'):
             raise RuntimeError('Internal Flash header not recognized; no erase attempted')
         event('Preflight', 8, 'Existing Flash header read successfully')
+        trace('Existing Flash header accepted; BEGIN QE setup')
         jtag.wren()
         jtag.scan(32, 0x400080a5)
         jtag.run(100000)
+        trace('END QE setup')
         sectors = math.ceil(len(data) / 4096)
         for i in range(sectors):
+            trace(f'BEGIN erase sector {i + 1}/{sectors} address=0x{i * 4096:06x}')
             jtag.wren()
             jtag.spi(bytes([0x20]) + (i * 4096).to_bytes(3, 'big'))
             jtag.run(150000)
+            trace(f'END erase sector {i + 1}/{sectors}')
             event('Erasing', 10 + i * 20 // sectors, f'Erase sector {i + 1}/{sectors}')
         pages = len(data) // 256
         for i in range(pages):
+            if i % 16 == 0 or i >= pages - 16:
+                trace(f'BEGIN write page {i + 1}/{pages} address=0x{i * 256:06x}')
             jtag.wren()
             jtag.spi(bytes([0x02]) + (i * 256).to_bytes(3, 'big') + data[i * 256:(i + 1) * 256])
             jtag.run(5000)
+            if (i + 1) % 16 == 0 or i >= pages - 16:
+                trace(f'END write page {i + 1}/{pages}')
             if i % 16 == 0 or i + 1 == pages:
                 event('Writing', 30 + i * 40 // pages, f'Write page {i + 1}/{pages}')
         for i in range(pages):
+            if i % 16 == 0 or i >= pages - 16:
+                trace(f'BEGIN verify page {i + 1}/{pages} address=0x{i * 256:06x}')
             value = jtag.spi(bytes([0x03]) + (i * 256).to_bytes(3, 'big') + bytes(256), True)
             found = ((value >> 41) & ((1 << 2048) - 1)).to_bytes(256, 'little').translate(REVERSE)
             if found != data[i * 256:(i + 1) * 256]:
                 raise RuntimeError(f'Flash readback mismatch at page {i}; Refresh blocked')
+            if (i + 1) % 16 == 0 or i >= pages - 16:
+                trace(f'END verify page {i + 1}/{pages} MATCH')
             if i % 16 == 0 or i + 1 == pages:
                 event('Verifying', 70 + i * 23 // pages, f'Verify page {i + 1}/{pages}')
         event('Verifying', 93, f'Flash readback passed for all {pages} pages',
               flashVerified=True)
-        jtag.ir(0xff)
-        jtag.ir(0x20)
-        jtag.scan(32, 0)  # Supplier MASK=0: not a DONE verification.
-        jtag.ir(0x80)
-        jtag.scan(64, 0x00000000000000a5)
-        jtag.run(200)
-        guard()
+        trace(f'ALL FLASH PAGES VERIFIED pages={pages}; Refresh not yet sent')
+        step('Exit programming SIR FF', jtag.ir, 0xff)
+        step('Exit programming SIR 20', jtag.ir, 0x20)
+        step('Exit programming SDR 32 (not a DONE check)', jtag.scan, 32, 0)
+        step('Exit programming SIR 80', jtag.ir, 0x80)
+        step('Exit programming SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
+        step('Exit programming RUNTEST 200 TCK', jtag.run, 200)
+        step('Host Off check after verify', guard)
         # Exact independent TD Refresh sequence (IDCODE was checked above).
-        jtag.ir(0x80)
-        jtag.scan(64, 0x00800000000000a5)
-        jtag.run(200)
-        jtag.ir(0xff)
-        jtag.ir(0xff)
-        jtag.ir(0x06)
-        jtag.run(15)
-        if jtag.scan(32, 0) != IDCODE:
+        step('Refresh preparation SIR 80', jtag.ir, 0x80)
+        step('Refresh preparation SDR 64 00800000000000A5', jtag.scan, 64, 0x00800000000000a5)
+        step('Refresh preparation RUNTEST 200 TCK', jtag.run, 200)
+        step('Refresh preparation SIR FF (1)', jtag.ir, 0xff)
+        step('Refresh preparation SIR FF (2)', jtag.ir, 0xff)
+        step('Refresh preparation SIR 06 IDCODE', jtag.ir, 0x06)
+        step('Refresh preparation RUNTEST 15 TCK', jtag.run, 15)
+        found_id = step('Refresh preparation SDR 32 IDCODE', jtag.scan, 32, 0)
+        trace(f'Refresh IDCODE=0x{found_id:08x} expected=0x{IDCODE:08x}')
+        if found_id != IDCODE:
             raise RuntimeError('IDCODE changed before Refresh')
-        jtag.ir(0xff)
-        guard(force=True)
+        step('Refresh preparation SIR FF', jtag.ir, 0xff)
+        step('Final Host Off check before Refresh', guard, force=True)
         # Durable, bounded receipt MUST precede the instruction resetting BMC.
         receipt = dict(job=job, phase='AwaitBmcReboot', progress=95,
                        detail='Flash verified; preparing automatic JTAG Refresh and waiting for BMC restart',
@@ -283,36 +337,41 @@ def update(path, job, remaining):
                        armedUnix=time.time(),
                        deadlineUnix=time.time() + max(0, deadline - time.monotonic()),
                        flashVerified=True, refreshSequenceCompleted=False)
-        checkpoint(receipt)
+        step('Persist flashVerified receipt before Refresh', checkpoint, receipt)
         event('AwaitBmcReboot', 95, receipt['detail'], flashVerified=True,
               refreshSequenceCompleted=False)
         # Host state is checked immediately before Refresh. After it is sent,
         # BMC services may disappear normally; do not turn that into Failed.
         jtag.guard = lambda: None
-        jtag.ir(0x01)
-        jtag.run(15)
-        jtag.ir(0xff)
-        jtag.run(200000)
-        jtag.ir(0x80)
-        jtag.scan(64, 0x00000000000000a5)
-        jtag.run(200)
+        trace('NEXT SIR 01 triggers CPLD reload; BMC power/reset and serial may disappear; outputs are not latched')
+        step('Refresh SIR 01', jtag.ir, 0x01)
+        step('Refresh RUNTEST 15 TCK', jtag.run, 15)
+        step('Refresh SIR FF', jtag.ir, 0xff)
+        step('Refresh RUNTEST 200000 TCK', jtag.run, 200000)
+        step('Refresh cleanup SIR 80', jtag.ir, 0x80)
+        step('Refresh cleanup SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
+        step('Refresh cleanup RUNTEST 200 TCK', jtag.run, 200)
         # This records completion of the supplied sequence, not FPGA DONE.
         # If BMC power/reset interrupts it, the durable flag remains false.
         receipt.update(progress=97, refreshSequenceCompleted=True,
                        detail='JTAG Refresh sequence completed; waiting for BMC restart')
-        checkpoint(receipt)
+        step('Persist Refresh sequence completion (not a DONE check)', checkpoint, receipt)
         event('AwaitBmcReboot', 97, receipt['detail'], refreshSequenceCompleted=True)
+        trace('WAIT for BMC restart within original deadline; no BMC software reboot is issued')
         # Returning from Refresh is not success: wait for a NEW BMC boot ID.
         while time.monotonic() < deadline:
             time.sleep(1)
         raise TimeoutError('Flash verified, but BMC did not restart within 10 minutes')
     finally:
+        trace('BEGIN close JTAG device')
         jtag.close()
+        trace('END close JTAG device')
 
 
 if __name__ == '__main__':
     try:
         update(sys.argv[1], sys.argv[2], float(sys.argv[3]))
     except Exception as exc:
+        trace(f'FAILED {type(exc).__name__}: {str(exc)[:512]}')
         event('Failed', 0, str(exc)[:512])
         sys.exit(1)

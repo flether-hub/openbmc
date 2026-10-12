@@ -15,7 +15,8 @@ from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, RequestNameReply
 from dbus_fast.service import ServiceInterface, dbus_property, method
 from cpld_jtag import (DEVICE, MAX_IMAGE, RECEIPT, bitstream, boot_id,
-                       checkpoint, configuration, host_off, require_background)
+                       checkpoint, configuration, console_debug_enabled,
+                       console_log, host_off, require_background)
 
 LOG = logging.getLogger('ceb-gnrd-cpld-update')
 
@@ -59,6 +60,9 @@ class Update(ServiceInterface):
                 LOG.info('CPLD recovered job=%s phase=%s flashVerified=%s refreshSequenceCompleted=%s',
                          previous.get('job'), previous.get('phase'),
                          previous.get('flashVerified'), previous.get('refreshSequenceCompleted'))
+                console_log(f'CPLD-SERVICE recovered job={previous.get("job")} '
+                            f'phase={previous.get("phase")} flashVerified={previous.get("flashVerified")} '
+                            f'refreshSequenceCompleted={previous.get("refreshSequenceCompleted")}')
             except Exception as exc:
                 self.state.update(phase='Failed', detail=f'Cannot read upgrade receipt: {exc}')
 
@@ -84,10 +88,13 @@ class Update(ServiceInterface):
         previous_phase = self.state.get('phase')
         self.state.update(values)
         if (self.state.get('phase') != previous_phase or values.get('flashVerified') or
-                values.get('refreshSequenceCompleted')):
+                values.get('refreshSequenceCompleted') or console_debug_enabled()):
             LOG.info('CPLD job=%s phase=%s progress=%s detail=%s',
                      self.state.get('job'), self.state.get('phase'),
                      self.state.get('progress'), self.state.get('detail'))
+            console_log(f'CPLD-SERVICE [{time.monotonic():.6f}] job={self.state.get("job")} '
+                        f'phase={self.state.get("phase")} progress={self.state.get("progress")} '
+                        f'detail={self.state.get("detail")}')
         self.emit_properties_changed({'Status': self.Status})
 
     @method()
@@ -131,6 +138,7 @@ class Update(ServiceInterface):
             return job
         except Exception as exc:
             LOG.warning('CPLD Start rejected (%s): %s', type(exc).__name__, str(exc)[:512])
+            console_log(f'CPLD-SERVICE Start rejected {type(exc).__name__}: {str(exc)[:512]}')
             self.unlock()
             self.state.update(lastStartError=str(exc)[:512], lastStartErrorType=type(exc).__name__)
             if image is not None:
@@ -202,7 +210,9 @@ class Update(ServiceInterface):
             process = await asyncio.create_subprocess_exec(
                 '/usr/bin/python3', '/usr/libexec/cpld_jtag.py', str(image), job,
                 str(max(0.1, deadline - time.monotonic())),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                # Diagnostics go directly to the service journal; do not put
+                # them in an undrained pipe that can block the JTAG worker.
+                stdout=asyncio.subprocess.PIPE)
 
             async def messages():
                 while line := await process.stdout.readline():
@@ -214,8 +224,8 @@ class Update(ServiceInterface):
                         checkpoint(self.state)
                 await process.wait()
                 if process.returncode:
-                    error = (await process.stderr.read(2048)).decode(errors='replace')
-                    raise RuntimeError(self.state.get('detail') or error or 'JTAG worker failed')
+                    raise RuntimeError(self.state.get('detail') or
+                                       f'JTAG worker failed (exit {process.returncode}); see service journal')
 
             await asyncio.wait_for(messages(), max(0.1, deadline - time.monotonic()))
         except asyncio.CancelledError:

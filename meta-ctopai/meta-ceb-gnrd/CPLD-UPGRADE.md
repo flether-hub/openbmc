@@ -121,6 +121,34 @@ The Web page reports disconnected progress as the last received state and
 distinguishes it from the expected reconnect after Refresh. Hardware signal
 captures are needed before declaring this board's automatic recovery reliable.
 
+### Temporary serial diagnostics
+
+The service temporarily enables `CEB_GNRD_CPLD_CONSOLE_DEBUG=1`. The worker
+prints timestamped `CPLD-TRACE` BEGIN/END markers directly to its inherited
+stderr (the service journal) and `/dev/console`, independently of Web polling.
+Each erase sector, write/readback batches of 16 pages, the last 16 pages,
+every post-verification / Refresh command and receipt write are reported.
+The console copy is nonblocking and best effort; missing/full consoles do not
+abort programming. No per-step diagnostic files are written to rwfs.
+
+Capture the serial terminal transcript before starting an update. In particular,
+`ALL FLASH PAGES VERIFIED` confirms readback; `BEGIN Refresh SIR 01` marks
+the attempt to issue reload; its END marks return from that scan, not DONE.
+A missing END identifies the last observed operation but cannot distinguish
+an interrupted operation from loss of the serial path or buffered output.
+The board routes its serial connection through CPLD logic; a blank terminal
+alone does not prove BMC power loss. Use `journalctl -fu
+ceb-gnrd-cpld-update.service -o short-monotonic` for a separate live view.
+
+There is no software latch for CPLD outputs controlling BMC power/reset.
+`persist_bit=1` permits background programming; it does not provide IO hold
+during Refresh. EF3L90 does not support StateHold IO. This logging change
+does not alter JTAG instructions, clock counts, power enables or reset outputs.
+
+To disable the temporary console copy and detailed markers after validation,
+set `Environment=CEB_GNRD_CPLD_CONSOLE_DEBUG=0` in a service drop-in and
+restart the service while no upgrade is active. Normal phase logs remain.
+
 ## Concurrency and storage
 
 - Redfish Web BMC/BIOS upload paths acquire a shared CPLD lock; the CPLD service
