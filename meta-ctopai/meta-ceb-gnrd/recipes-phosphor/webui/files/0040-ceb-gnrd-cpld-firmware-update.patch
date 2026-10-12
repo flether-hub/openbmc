@@ -1,8 +1,8 @@
 Subject: [PATCH] webui: add CPLD firmware updates through guarded JTAG service
 
-Use matching firmware upload controls, retain bounded job monitoring across
-navigation/reconnects and distinguish lost status from expected BMC reload.
-Report verified Flash separately from full Refresh-sequence confirmation.
+Use matching firmware upload controls and bounded monitoring of the current
+programming job. Report success after verified .bit programming and require
+manual AC activation; restart the page with no historical recovery checks.
 
 Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 
@@ -61,7 +61,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
        if (this.isServerPowerOffRequired) {
 --- /dev/null
 +++ b/src/views/Operations/Firmware/FirmwareCpldUpdate.vue
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,192 @@
 +<template>
 +  <page-section :section-title="$t('pageCpld.title')">
 +    <b-row>
@@ -93,13 +93,9 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +            :variant="status.phase === 'Failed' ? 'danger' : status.phase === 'Completed' ? 'success' : 'primary'" />
 +          <p class="mt-2">{{ status.detail }}</p>
 +          <p v-if="status.phase === 'Verifying'">{{ $t('pageCpld.verifyHint') }}</p>
-+          <p v-if="pending && !pending.expired">
-+            {{ $t('pageCpld.remaining', { seconds: remainingSeconds }) }}
-+          </p>
 +          <p v-if="disconnected">
 +            {{ $t('pageCpld.connectionLost') }}
 +          </p>
-+          <p v-if="status.sha256" class="small text-break">SHA256: {{ status.sha256 }}</p>
 +          <p v-if="status.phase === 'Completed'">{{ $t('pageCpld.completed') }}</p>
 +          <alert v-if="status.phase === 'Completed'" variant="warning">
 +            {{ $t('pageCpld.activationWarning') }}
@@ -130,7 +126,6 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +  },
 +  computed: {
 +    busy() { return this.submitting || !!this.pending || active.includes(this.status.phase); },
-+    remainingSeconds() { return this.pending ? Math.max(0, Math.ceil((this.pending.deadline - this.now) / 1000)) : 0; },
 +  },
 +  watch: {
 +    busy: { immediate: true, handler(value) { this.$emit('busy-change', value); } },
@@ -221,6 +216,13 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +        if (this.error === this.$t('pageCpld.unavailable') ||
 +            this.error === this.$t('pageCpld.unknownResponse')) this.error = '';
 +        this.disconnected = false;
++        // A restarted service has no previous job. Drop browser bookkeeping
++        // for that session instead of reporting a legacy recovery timeout.
++        if (this.pending && (!next.job ||
++            (this.pending.bootId && next.currentBootId !== this.pending.bootId))) {
++          this.remember(null);
++          this.error = '';
++        }
 +        if (this.pending) {
 +          const same = this.pending.job ? next.job === this.pending.job :
 +            !!next.job && next.job !== this.pending.previousJob;

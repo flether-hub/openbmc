@@ -7,8 +7,6 @@ Requires=dbus.service
 Type=dbus
 BusName=com.ctopai.CebGnrd.CpldUpdate
 ExecStart=/usr/bin/python3 /usr/libexec/ceb-gnrd-cpld-update.py
-# Temporary board diagnostics. Override with 0 after Refresh validation.
-Environment=CEB_GNRD_CPLD_CONSOLE_DEBUG=1
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure

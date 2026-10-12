@@ -1,0 +1,74 @@
+Subject: [PATCH] firmware: disable update until a package is selected and show formats
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware packages]
+
+--- a/src/views/Operations/Firmware/FirmwareFormUpdate.vue
++++ b/src/views/Operations/Firmware/FirmwareFormUpdate.vue
+@@ -21,6 +21,10 @@
+               </b-form-invalid-feedback>
+             </template>
+           </form-file>
++          <b-form-text id="image-file-help-block">
++            {{ $t('pageFirmware.bmcPartitions.bmcFileFormat') }}<br />
++            {{ $t('pageFirmware.bmcPartitions.biosFileFormat') }}
++          </b-form-text>
+         </b-form-group>
+ 
+         <div v-if="bmcRegions.length" class="mb-3">
+@@ -91,6 +95,7 @@
+           variant="primary"
+           :disabled="
+             isPageDisabled ||
++            !file || !filePurpose ||
+             inspectingPackage || !!packageError || bmcConfirm.show ||
+             isUpdateRunning ||
+             (biosRegions.length > 0 && !selectedRegionNames.length)
+@@ -457,7 +462,12 @@
+   },
+   methods: {
+     async updateFirmware() {
+-      if (this.inspectingPackage || this.packageError || !this.file) return;
++      if (
++        this.inspectingPackage ||
++        this.packageError ||
++        !this.file ||
++        !this.filePurpose
++      ) return;
+       let image = this.file;
+       try {
+         if (this.filePurpose === 'BMC') {
+@@ -855,7 +865,14 @@
+     },
+     onSubmitUpload() {
+       this.v$.$touch();
+-      if (this.v$.$invalid || this.inspectingPackage || this.packageError || this.bmcConfirm.show) return;
++      if (
++        !this.file ||
++        !this.filePurpose ||
++        this.v$.$invalid ||
++        this.inspectingPackage ||
++        this.packageError ||
++        this.bmcConfirm.show
++      ) return;
+       this.showUpdateModal = true;
+     },
+     onFileUpload(file) {
+--- a/src/views/Operations/Firmware/BmcPartitionMessages.js
++++ b/src/views/Operations/Firmware/BmcPartitionMessages.js
+@@ -1,5 +1,7 @@
+ export default {
+   "en-US": {
++    "bmcFileFormat": "BMC: upload a .static.mtd.tar partition update package.",
++    "biosFileFormat": "BIOS: upload a BIOS .tar update package. Raw .bin/.rom files are not supported here.",
+     "title": "BMC partitions to update",
+     "hint": "U-Boot and its environment are preserved by default. Kernel and read-only filesystem are updated together. Updating rwfs retains only the configured preserved settings.",
+     "required": "(required together)",
+@@ -10,6 +12,8 @@
+     "invalidPackage": "Select a BMC .static.mtd.tar partition package or a BIOS update package. Raw/full-flash images and invalid archives are not supported here."
+   },
+   "zh-CN": {
++    "bmcFileFormat": "BMC：上传 .static.mtd.tar 分区更新包。",
++    "biosFileFormat": "BIOS：上传 BIOS .tar 更新包。此处不支持直接上传 .bin/.rom 原始文件。",
+     "title": "选择 BMC 更新分区",
+     "hint": "默认保留 U-Boot 和 environment。kernel 与 rofs 必须一起更新；更新 rwfs 时仅保留配置清单中指定的设置。",
+     "required": "（必须一起更新）",

@@ -15,8 +15,7 @@ from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, RequestNameReply
 from dbus_fast.service import ServiceInterface, dbus_property, method
 from cpld_jtag import (DEVICE, RECEIPT, MAX_IMAGE, bit_plan, boot_id,
-                       checkpoint, configuration, console_debug_enabled,
-                       console_log, host_off, require_background)
+                       checkpoint, configuration, host_off, require_background)
 
 LOG = logging.getLogger('ceb-gnrd-cpld-update')
 
@@ -36,26 +35,12 @@ class Update(ServiceInterface):
         self.locks = []
         self.deadline = 0.0
         self.state = dict(phase='Idle', progress=0, detail='Ready', job='', bootId=boot_id())
-        if RECEIPT.exists():
-            try:
-                if RECEIPT.stat().st_size > 8192:
-                    raise ValueError('Oversize upgrade receipt')
-                previous = json.loads(RECEIPT.read_text())
-                if previous.get('phase') in ACTIVE or previous.get('phase') == 'AwaitBmcReboot':
-                    detail = 'Previous programming was interrupted; completion was not confirmed.'
-                    if previous.get('flashVerified') is True:
-                        detail += ' The recorded Flash readback passed; use a full AC power cycle to load it and confirm CPLD operation.'
-                    previous.update(phase='Failed', detail=detail)
-                    checkpoint(previous)
-                self.state = previous
-                LOG.info('CPLD recovered job=%s phase=%s flashVerified=%s refreshSequenceCompleted=%s',
-                         previous.get('job'), previous.get('phase'),
-                         previous.get('flashVerified'), previous.get('refreshSequenceCompleted'))
-                console_log(f'CPLD-SERVICE recovered job={previous.get("job")} '
-                            f'phase={previous.get("phase")} flashVerified={previous.get("flashVerified")} '
-                            f'refreshSequenceCompleted={previous.get("refreshSequenceCompleted")}')
-            except Exception as exc:
-                self.state.update(phase='Failed', detail=f'Cannot read upgrade receipt: {exc}')
+        # Jobs belong to this service session. A restart opens a fresh upload
+        # form; old activation/recovery receipts are not current job failures.
+        try:
+            RECEIPT.unlink(missing_ok=True)
+        except OSError as exc:
+            LOG.warning('Cannot remove previous CPLD receipt: %s', exc)
 
     def ready(self):
         try:
@@ -79,14 +64,10 @@ class Update(ServiceInterface):
     def publish(self, **values):
         previous_phase = self.state.get('phase')
         self.state.update(values)
-        if (self.state.get('phase') != previous_phase or values.get('flashVerified') or
-                values.get('refreshSequenceCompleted') or console_debug_enabled()):
+        if self.state.get('phase') != previous_phase or values.get('flashVerified'):
             LOG.info('CPLD job=%s phase=%s progress=%s detail=%s',
                      self.state.get('job'), self.state.get('phase'),
                      self.state.get('progress'), self.state.get('detail'))
-            console_log(f'CPLD-SERVICE [{time.monotonic():.6f}] job={self.state.get("job")} '
-                        f'phase={self.state.get("phase")} progress={self.state.get("progress")} '
-                        f'detail={self.state.get("detail")}')
         self.emit_properties_changed({'Status': self.Status})
 
     @method()
@@ -136,7 +117,6 @@ class Update(ServiceInterface):
             return job
         except Exception as exc:
             LOG.warning('CPLD Start rejected (%s): %s', type(exc).__name__, str(exc)[:512])
-            console_log(f'CPLD-SERVICE Start rejected {type(exc).__name__}: {str(exc)[:512]}')
             self.unlock()
             self.state.update(lastStartError=str(exc)[:512], lastStartErrorType=type(exc).__name__)
             if image is not None:

@@ -239,7 +239,7 @@ class ServiceTests(unittest.TestCase):
             def unlink(self, **kwargs): fs.pop(self.path, None)
         self.Path = MemoryPath
         self.patches = mock.patch.multiple(self.service, Path=MemoryPath, RUN=MemoryPath('ram'), RECEIPT=MemoryPath('receipt'),
-            DEVICE='device', configuration=lambda: CFG, boot_id=lambda: 'new-boot', console_log=lambda *args: None,
+            DEVICE='device', configuration=lambda: CFG, boot_id=lambda: 'new-boot',
             checkpoint=lambda value: self.receipts.append(dict(value)))
         self.patches.start()
         fs['device'] = b'fake'
@@ -269,13 +269,14 @@ class ServiceTests(unittest.TestCase):
             u.state['phase'] = 'Writing'; self.assertFalse(u.Cancel())
             u.unlock()
 
-    def test_boot_change_does_not_turn_interruption_into_success(self):
-        for phase in ('Writing', 'AwaitBmcReboot', 'Verifying'):
+    def test_restart_discards_previous_job_receipts(self):
+        for phase in ('Writing', 'AwaitBmcReboot', 'Verifying', 'Failed', 'Completed'):
             self.fs['receipt'] = json.dumps(dict(phase=phase, bootId='old', flashVerified=True)).encode()
             u = self.service.Update(None)
-            self.assertEqual(u.state['phase'], 'Failed')
-        self.fs['receipt'] = json.dumps(dict(phase='Completed', flashVerified=True, activationRequired=True, bootId='old')).encode()
-        self.assertEqual(self.service.Update(None).state['phase'], 'Completed')
+            self.assertEqual(u.state['phase'], 'Idle')
+            self.assertEqual(u.state['progress'], 0)
+            self.assertEqual(u.state['job'], '')
+            self.assertNotIn('receipt', self.fs)
 
     def test_worker_exit_and_verified_completion_required(self):
         for rc, proof in ((0, True), (1, True), (0, False)):

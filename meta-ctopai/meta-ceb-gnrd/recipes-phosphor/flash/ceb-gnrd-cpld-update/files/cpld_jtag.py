@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: Apache-2.0
-"""AST2600 bounded JTAG transport, guards and serial diagnostics.
+"""AST2600 bounded JTAG transport, guards and journal diagnostics.
 
 Program an approved Anlogic .bit image and verify every Flash page.
 Activation is a separate, operator-controlled full AC power cycle. No
@@ -28,33 +28,11 @@ IDCODE = 0x00008C3B
 REVERSE = bytes(int(f'{n:08b}'[::-1], 2) for n in range(256))
 
 
-def console_debug_enabled():
-    return os.environ.get('CEB_GNRD_CPLD_CONSOLE_DEBUG') == '1'
-
-
-def console_log(message):
-    """Best-effort serial copy; never block programming on a console reader."""
-    if not console_debug_enabled():
-        return
-    fd = None
-    try:
-        fd = os.open('/dev/console', os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK | os.O_CLOEXEC)
-        os.write(fd, (message[:1024].replace('\n', ' ') + '\n').encode('ascii', errors='replace'))
-    except OSError:
-        pass  # Missing/full console must not abort an update or extend its deadline.
-    finally:
-        if fd is not None:
-            os.close(fd)
-
-
 def trace(message):
-    if not console_debug_enabled():
-        return
     line = f'CPLD-TRACE [{time.monotonic():.6f}] pid={os.getpid()} {message}'
     # The worker's stderr is inherited from the service, independently of
     # its stdout JSON pipe. Emit before the operation, without parent polling.
     print(line, file=sys.stderr, flush=True)
-    console_log(line)
 
 
 def bitstream(raw):
