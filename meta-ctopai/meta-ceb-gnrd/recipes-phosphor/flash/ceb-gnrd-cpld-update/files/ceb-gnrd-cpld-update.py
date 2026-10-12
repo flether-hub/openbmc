@@ -16,7 +16,7 @@ from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, 
 from dbus_fast.service import ServiceInterface, dbus_property, method
 from cpld_jtag import (DEVICE, MAX_IMAGE, RECEIPT, bitstream, boot_id,
                        checkpoint, configuration, console_debug_enabled,
-                       console_log, host_off, require_background)
+                       console_log, host_off, refresh_mode, require_background)
 
 LOG = logging.getLogger('ceb-gnrd-cpld-update')
 
@@ -69,6 +69,7 @@ class Update(ServiceInterface):
     def ready(self):
         try:
             cfg = configuration()
+            refresh_mode(cfg)
             features = cfg.get('approved_feature_codes')
             if not isinstance(features, list) or not features:
                 return False
@@ -108,7 +109,9 @@ class Update(ServiceInterface):
                 raise ValueError('Image exceeds 1 MiB')
             raw = binascii.a2b_base64(encoded, strict_mode=True)
             _, feature, digest = bitstream(raw)
-            require_background(feature, configuration())
+            cfg = configuration()
+            require_background(feature, cfg)
+            mode = refresh_mode(cfg)
             if not Path(DEVICE).exists():
                 raise ValueError('JTAG Master-1 device is unavailable')
             RUN.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -130,7 +133,8 @@ class Update(ServiceInterface):
             self.deadline = time.monotonic() + 600
             self.state = dict(job=job, phase='WaitingForHostOff', progress=0,
                               detail='Please shut down the host. Waiting for stable Off state.',
-                              sha256=digest, feature=feature, bootId=boot_id(), flashVerified=False)
+                              sha256=digest, feature=feature, bootId=boot_id(),
+                              flashVerified=False, refreshMode=mode)
             checkpoint(self.state)
             self.publish()
             self.cancel_requested = False

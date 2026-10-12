@@ -23,6 +23,9 @@ CONFIG = Path('/etc/ceb-gnrd/cpld-update.json')
 DEVICE = '/dev/ceb-cpld-jtag'
 RECEIPT = Path('/var/lib/ceb-gnrd-cpld-update/result.json')
 MAX_IMAGE = 1024 * 1024
+# DS600_1.8 section 2.9.11, EF3L90CG400: Golden feature/address at
+# 0x060000, Golden bitstream at 0x061000. Never erase/program that region.
+PRIMARY_FLASH_LIMIT = 0x060000
 IDCODE = 0x00008C3B
 REVERSE = bytes(int(f'{n:08b}'[::-1], 2) for n in range(256))
 
@@ -89,6 +92,8 @@ def bitstream(raw):
     data = bytes.fromhex(feature[:32]) + payload
     if len(data) > MAX_IMAGE:
         raise ValueError('Bitstream exceeds internal Flash capacity')
+    if len(data) > PRIMARY_FLASH_LIMIT:
+        raise ValueError('Bitstream exceeds the 384 KiB primary region; Golden area must not be overwritten')
     data += b'\xff' * (-len(data) % 256)
     return data, feature.upper(), hashlib.sha256(raw).hexdigest()
 
@@ -115,6 +120,13 @@ def require_background(feature, cfg):
         raise ValueError('Invalid approved feature code list')
     if feature not in [item.upper() for item in approved]:
         raise ValueError('Target feature code has not been approved for background programming')
+
+
+def refresh_mode(cfg):
+    mode = cfg.get('refresh_mode', 'vendor')
+    if mode not in ('vendor', 'direct'):
+        raise ValueError('refresh_mode must be vendor or direct')
+    return mode
 
 
 
@@ -231,7 +243,10 @@ def update(path, job, remaining):
     deadline = time.monotonic() + remaining
     trace(f'BEGIN job={job} timeoutRemaining={remaining:.3f}s')
     data, feature, digest = bitstream(Path(path).read_bytes())
-    require_background(feature, configuration())
+    cfg = configuration()
+    require_background(feature, cfg)
+    mode = refresh_mode(cfg)
+    trace(f'Refresh mode={mode}; direct is an experimental sequence, not the full vendor SVF')
     trace(f'Image approved sha256={digest} feature={feature} bytes={len(data)}; no output latch is provided')
     old_boot = boot_id()
     last_host_check = 0.0
@@ -309,52 +324,61 @@ def update(path, job, remaining):
         event('Verifying', 93, f'Flash readback passed for all {pages} pages',
               flashVerified=True)
         trace(f'ALL FLASH PAGES VERIFIED pages={pages}; Refresh not yet sent')
-        step('Exit programming SIR FF', jtag.ir, 0xff)
-        step('Exit programming SIR 20', jtag.ir, 0x20)
-        step('Exit programming SDR 32 (not a DONE check)', jtag.scan, 32, 0)
-        step('Exit programming SIR 80', jtag.ir, 0x80)
-        step('Exit programming SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
-        step('Exit programming RUNTEST 200 TCK', jtag.run, 200)
-        step('Host Off check after verify', guard)
-        # Exact independent TD Refresh sequence (IDCODE was checked above).
-        step('Refresh preparation SIR 80', jtag.ir, 0x80)
-        step('Refresh preparation SDR 64 00800000000000A5', jtag.scan, 64, 0x00800000000000a5)
-        step('Refresh preparation RUNTEST 200 TCK', jtag.run, 200)
-        step('Refresh preparation SIR FF (1)', jtag.ir, 0xff)
-        step('Refresh preparation SIR FF (2)', jtag.ir, 0xff)
-        step('Refresh preparation SIR 06 IDCODE', jtag.ir, 0x06)
-        step('Refresh preparation RUNTEST 15 TCK', jtag.run, 15)
-        found_id = step('Refresh preparation SDR 32 IDCODE', jtag.scan, 32, 0)
-        trace(f'Refresh IDCODE=0x{found_id:08x} expected=0x{IDCODE:08x}')
-        if found_id != IDCODE:
-            raise RuntimeError('IDCODE changed before Refresh')
-        step('Refresh preparation SIR FF', jtag.ir, 0xff)
+        if mode == 'vendor':
+            step('Post-verify status SIR FF', jtag.ir, 0xff)
+            step('Post-verify read_status SIR 20', jtag.ir, 0x20)
+            step('Post-verify read_status SDR 32 (not a DONE check)', jtag.scan, 32, 0)
+            step('Exit programming SIR 80', jtag.ir, 0x80)
+            step('Exit programming SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
+            step('Exit programming RUNTEST 200 TCK', jtag.run, 200)
+            step('Host Off check after verify', guard)
+            # Exact independent TD Refresh sequence (IDCODE was checked above).
+            step('Refresh preparation SIR 80', jtag.ir, 0x80)
+            step('Refresh preparation SDR 64 00800000000000A5', jtag.scan, 64, 0x00800000000000a5)
+            step('Refresh preparation RUNTEST 200 TCK', jtag.run, 200)
+            step('Refresh preparation SIR FF (1)', jtag.ir, 0xff)
+            step('Refresh preparation SIR FF (2)', jtag.ir, 0xff)
+            step('Refresh preparation SIR 06 IDCODE', jtag.ir, 0x06)
+            step('Refresh preparation RUNTEST 15 TCK', jtag.run, 15)
+            found_id = step('Refresh preparation SDR 32 IDCODE', jtag.scan, 32, 0)
+            trace(f'Refresh IDCODE=0x{found_id:08x} expected=0x{IDCODE:08x}')
+            if found_id != IDCODE:
+                raise RuntimeError('IDCODE changed before Refresh')
+            step('Refresh preparation SIR FF', jtag.ir, 0xff)
+        else:
+            # Board-owner-authorized experiment: stay in IDLE after the last
+            # verified SPI read and go directly to IR 01. No inferred register
+            # writes or post-verify SDR 32. Initial exact IDCODE is still required.
+            trace('EXPERIMENT direct Refresh: skipping post-verify status, mode-exit and repeated IDCODE sequence')
         step('Final Host Off check before Refresh', guard, force=True)
         # Durable, bounded receipt MUST precede the instruction resetting BMC.
         receipt = dict(job=job, phase='AwaitBmcReboot', progress=95,
-                       detail='Flash verified; preparing automatic JTAG Refresh and waiting for BMC restart',
+                       detail=f'Flash verified; preparing {mode} JTAG Refresh and waiting for BMC restart',
                        sha256=digest, feature=feature, bootId=old_boot,
                        armedUnix=time.time(),
                        deadlineUnix=time.time() + max(0, deadline - time.monotonic()),
-                       flashVerified=True, refreshSequenceCompleted=False)
+                       flashVerified=True, refreshSequenceCompleted=False, refreshMode=mode)
         step('Persist flashVerified receipt before Refresh', checkpoint, receipt)
         event('AwaitBmcReboot', 95, receipt['detail'], flashVerified=True,
-              refreshSequenceCompleted=False)
+              refreshSequenceCompleted=False, refreshMode=mode)
         # Host state is checked immediately before Refresh. After it is sent,
         # BMC services may disappear normally; do not turn that into Failed.
         jtag.guard = lambda: None
         trace('NEXT SIR 01 triggers CPLD reload; BMC power/reset and serial may disappear; outputs are not latched')
         step('Refresh SIR 01', jtag.ir, 0x01)
         step('Refresh RUNTEST 15 TCK', jtag.run, 15)
-        step('Refresh SIR FF', jtag.ir, 0xff)
-        step('Refresh RUNTEST 200000 TCK', jtag.run, 200000)
-        step('Refresh cleanup SIR 80', jtag.ir, 0x80)
-        step('Refresh cleanup SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
-        step('Refresh cleanup RUNTEST 200 TCK', jtag.run, 200)
-        # This records completion of the supplied sequence, not FPGA DONE.
+        if mode == 'vendor':
+            step('Refresh SIR FF', jtag.ir, 0xff)
+            step('Refresh RUNTEST 200000 TCK', jtag.run, 200000)
+            step('Refresh cleanup SIR 80', jtag.ir, 0x80)
+            step('Refresh cleanup SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
+            step('Refresh cleanup RUNTEST 200 TCK', jtag.run, 200)
+        else:
+            trace('EXPERIMENT direct Refresh: IR 01 and 15 TCK returned; no further JTAG commands will be sent')
+        # This records completion of the selected sequence, not FPGA DONE.
         # If BMC power/reset interrupts it, the durable flag remains false.
         receipt.update(progress=97, refreshSequenceCompleted=True,
-                       detail='JTAG Refresh sequence completed; waiting for BMC restart')
+                       detail=f'{mode} JTAG Refresh sequence completed; waiting for BMC restart')
         step('Persist Refresh sequence completion (not a DONE check)', checkpoint, receipt)
         event('AwaitBmcReboot', 97, receipt['detail'], refreshSequenceCompleted=True)
         trace('WAIT for BMC restart within original deadline; no BMC software reboot is issued')

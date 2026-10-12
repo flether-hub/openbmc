@@ -75,8 +75,9 @@ The service validates the image and prerequisites before opening JTAG.
 5. Enable QE using the supplied sequence; erase the needed 4 KiB sectors,
    program 256-byte pages, and verify every page through TDO. Readback uses the
    supplier's one-bit delay and full 2048-bit data comparison.
-6. Recheck IDCODE and Host Off, persist the verified receipt, then issue the
-   independent JTAG Refresh sequence. No GPIO reset is used.
+6. Recheck Host Off, persist the verified receipt, then issue the configured
+   JTAG Refresh sequence. Vendor mode also repeats IDCODE before Refresh.
+   No GPIO reset is used.
 7. Wait for BMC recovery. Only a verified receipt, a different BMC boot ID, and
    recovery within the original deadline are reported as completed.
 
@@ -176,6 +177,50 @@ IDCODE/TDO validation, persist-bit confirmation, and controlled programming /
 Refresh validation are still needed before deploying enabled programming.
 The Golden v1 tag remains the earlier baseline.
 
+## Experimental direct Refresh (2026-10-12)
+
+At the board owner's request, the shipped JSON now selects
+`"refresh_mode": "direct"` for a diagnostic trial. This is not the complete
+vendor Refresh SVF and has not been validated on the board. Configurations
+without this key keep the original `vendor` sequence; other values are rejected
+before programming. Select `vendor` to restore the complete supplied sequence.
+
+Both modes require the initial exact IDCODE, approved persist-bit design,
+Host Off, all-page readback comparison and a saved receipt before IR 01.
+Direct mode goes from the last verified SPI read in TAP IDLE to the final
+Host Off check and receipt, then emits only `SIR 01` and `RUNTEST 15 TCK`.
+It skips the post-verify read_status, mode-exit register writes, repeated
+IDCODE sequence, post-Refresh BYPASS, 200000 clocks and register cleanup.
+It does not assert that those skipped vendor operations are unnecessary.
+The total deadline stays 600 seconds; returning from these commands is not
+success. The service still waits for BMC recovery and does not reboot BMC itself.
+
+The receipt records `refreshMode`; `refreshSequenceCompleted` means the
+selected sequence returned, not that the full vendor SVF ran or CPLD DONE rose.
+Keep the serial terminal transcript outside BMC when trying direct mode.
+Existing `/etc` overlay configuration can override the new shipped JSON;
+check `/etc/ceb-gnrd/cpld-update.json` before starting the trial.
+
+## Dual Boot and reserved Golden region
+
+DS600_1.8 section 2.9.11 (printed pages 65-66) specifies an 8 Mbit internal
+SPI Flash and MSPI Dual Boot support. For EF3L90CG400, Primary feature data
+starts at `0x000000`, Golden feature/address data at `0x060000`, and Golden
+bitstream at `0x061000`. This is a layout within Flash, not proof of two
+independent Flash devices or of a populated, enabled backup on this board.
+The datasheet describes fallback when Primary configuration loading fails;
+it does not establish fallback for a successfully loaded design whose logic
+fails to restore BMC power or reset outputs.
+
+The updater rejects decoded Primary data larger than 384 KiB (`0x060000`),
+before opening JTAG, so all erase/program addresses stay below Golden data.
+For the supplied V3, 1199 pages occupy `0x000000..0x04AEFF`; 75 erase sectors
+cover `0x000000..0x04AFFF`. Neither reaches `0x060000`. No Golden image is
+created, validated or enabled by this updater; automatic recovery is unconfirmed.
+The supplier background/Refresh SVFs also contain a command commented
+"Disable Dual boot loop". Its register bit map is unavailable; this command
+must not be treated as evidence that fallback remains enabled during a trial.
+
 ## Network boot and CPLD recovery
 
 `run bootnet` loads the TFTP kernel and rootfs with a fresh RAM write overlay.
@@ -183,3 +228,9 @@ This is a temporary firmware run: configuration changes and CPLD receipts in
 that overlay are lost at reboot. Default reboot still uses Flash (`bootspi`).
 For end-to-end CPLD Refresh / BMC reboot validation, first install this firmware
 into Flash so the update service and its persistent receipt survive the reset.
+
+`/var/lib/ceb-gnrd-cpld-update/result.json` is one bounded file in the root
+overlay, not in CPLD Flash. Normal Flash boot places it in the rwfs upper layer
+(typically `/run/initramfs/rw/cow/var/lib/ceb-gnrd-cpld-update/result.json`).
+TFTP boot places it in the RAM upper layer; it disappears on reboot/power loss,
+even though programming the CPLD's internal Flash remains nonvolatile.
