@@ -4,6 +4,9 @@ LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/Apache-2.0;md5
 
 inherit allarch systemd
 
+# Local sources are kept below the recipe-specific files directory.
+FILESEXTRAPATHS:prepend := "${THISDIR}/${BPN}/files:"
+
 SRC_URI = "file://ceb-gnrd-cpld-update.py file://cpld_jtag.py file://cpld-update.json file://ceb-gnrd-cpld-update.service file://com.ctopai.CebGnrd.CpldUpdate.conf"
 S = "${UNPACKDIR}"
 SYSTEMD_SERVICE:${PN} = "ceb-gnrd-cpld-update.service"
