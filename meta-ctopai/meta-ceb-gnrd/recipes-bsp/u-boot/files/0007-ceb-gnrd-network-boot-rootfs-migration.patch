@@ -1,0 +1,38 @@
+Subject: [PATCH] CEB-GNRD: migrate factory bootnet to TFTP rootfs
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+
+--- a/board/aspeed/evb_ast2600/evb_ast2600.c
++++ b/board/aspeed/evb_ast2600/evb_ast2600.c
+@@ -188,6 +188,7 @@
+ 		{ "gatewayip", __stringify(CONFIG_GATEWAYIP) },
+ 		{ "serverip", __stringify(CONFIG_SERVERIP) },
+ 		{ "netboot_kernel", CEB_GNRD_NETBOOT_KERNEL },
++		{ "netboot_rofs", CEB_GNRD_NETBOOT_ROFS },
+ 		{ "netboot_addr", CEB_GNRD_NETBOOT_ADDR },
+ 		{ "bootnet", CEB_GNRD_BOOTNET },
+ 	};
+@@ -199,9 +200,13 @@
+ 		"setenv gatewayip ${netboot_gateway} && "
+ 		"tftpboot ${netboot_addr} ${netboot_kernel} && "
+ 		"bootm ${netboot_addr}";
++	static const char kernel_only_bootnet[] =
++		"tftpboot ${netboot_addr} ${netboot_kernel} && "
++		"bootm ${netboot_addr}";
+ 	const char *bootnet = env_get("bootnet");
++	bool migrate_rootfs = bootnet && !strcmp(bootnet, kernel_only_bootnet);
+ 	bool migrate_bootnet = bootnet && !strcmp(bootnet, legacy_bootnet);
+-	bool uses_standard_network = !bootnet || !*bootnet || migrate_bootnet ||
++	bool uses_standard_network = !bootnet || !*bootnet || migrate_bootnet || migrate_rootfs ||
+ 		!strcmp(bootnet, CEB_GNRD_BOOTNET);
+
+ 	/* Preserve custom alias addresses used by the old factory command.
+@@ -251,6 +256,8 @@
+ 				legacy = "192.168.0.81";
+ 			else if (!strcmp(defaults[i].name, "bootnet") && migrate_bootnet)
+ 				legacy = legacy_bootnet;
++			else if (!strcmp(defaults[i].name, "bootnet") && migrate_rootfs)
++				legacy = kernel_only_bootnet;
+ 			if (!legacy || strcmp(value, legacy))
+ 				continue;
+ 		}

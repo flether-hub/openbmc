@@ -1,0 +1,55 @@
+Subject: [PATCH] dbus-rest: convert scalar method arguments and extract data array
+
+The converter rejected every scalar before considering its D-Bus type.
+Start(s) therefore failed with Invalid method arg type before calling the
+CPLD service. Also extract the data value rather than the object key/value
+pair, and advance a multiple-signature iterator only once per element.
+
+Upstream-Status: Pending
+
+--- a/features/openbmc_rest/openbmc_dbus_rest.hpp
++++ b/features/openbmc_rest/openbmc_dbus_rest.hpp
+@@ -575,11 +575,18 @@
+     const nlohmann::json* j = &inputJson;
+     const nlohmann::json::array_t* inputArr =
+         inputJson.get_ptr<const nlohmann::json::array_t*>();
+-    if (inputArr == nullptr)
+-    {
+-        return -3;
+-    }
+-    nlohmann::json::array_t::const_iterator jIt = inputArr->begin();
++    // A single D-Bus string/bool/integer is a JSON scalar. Only a
++    // multi-value signature requires an outer array here; containers
++    // validate their own JSON representation below.
++    nlohmann::json::array_t::const_iterator jIt{};
++    if (argTypes.size() > 1)
++    {
++        if (inputArr == nullptr)
++        {
++            return -3;
++        }
++        jIt = inputArr->begin();
++    }
+     for (const std::string& argCode : argTypes)
+     {
+         // If we are decoding multiple objects, grab the pointer to the
+@@ -930,10 +937,6 @@
+             return r;
+         }
+
+-        if (argTypes.size() > 1)
+-        {
+-            jIt++;
+-        }
+     }
+
+     return r;
+@@ -1601,7 +1604,7 @@
+
+     transaction->path = objectPath;
+     transaction->methodName = methodName;
+-    transaction->arguments = std::move(*data);
++    transaction->arguments = std::move(data->second);
+     dbus::utility::getDbusObject(
+         objectPath, {},
+         // ast-grep-ignore: long-lambda

@@ -25,7 +25,10 @@ not evidence of electrical operation on the board.
 
 ## Required approval before enabling programming
 
-The shipped `/etc/ceb-gnrd/cpld-update.json` deliberately blocks programming.
+As of 2026-10-12, the board owner confirmed `persist_bit=1` for the supplied
+INS_ZQ6_CPLD_V3 design. The shipped configuration records this confirmation and
+approves its complete Feature code. Apply this confirmation only to boards
+running that confirmed design; other designs require their own confirmation.
 The datasheet / SVF export does not establish that the design currently running
 on the board has `persist_bit=1`. No documented EF3L90 feature-register bit
 mapping is available to this implementation. It does not infer that bit from
@@ -41,8 +44,7 @@ Obtain confirmation from the CPLD project owner / Anlogic that:
 4. Refresh instruction `0x01` reloads that board's CPLD and resets the BMC as
    expected. Keep an external programmer available for first-board validation.
 
-Then fill in the board-specific configuration. This example is a **template**;
-its approval flag is false until the evidence is obtained:
+For an unconfirmed board/design, keep programming blocked as in this template:
 
 ```json
 {
@@ -124,3 +126,11 @@ applicability can be performed without a board. A complete Yocto build, board
 IDCODE/TDO validation, persist-bit confirmation, and controlled programming /
 Refresh validation are still needed before deploying enabled programming.
 The Golden v1 tag remains the earlier baseline.
+
+## Network boot and CPLD recovery
+
+`run bootnet` loads the TFTP kernel and rootfs with a fresh RAM write overlay.
+This is a temporary firmware run: configuration changes and CPLD receipts in
+that overlay are lost at reboot. Default reboot still uses Flash (`bootspi`).
+For end-to-end CPLD Refresh / BMC reboot validation, first install this firmware
+into Flash so the update service and its persistent receipt survive the reset.

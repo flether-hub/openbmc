@@ -5,6 +5,7 @@ import asyncio
 import binascii
 import fcntl
 import json
+import logging
 import os
 from pathlib import Path
 import time
@@ -15,6 +16,8 @@ from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, 
 from dbus_fast.service import ServiceInterface, dbus_property, method
 from cpld_jtag import (DEVICE, MAX_IMAGE, RECEIPT, bitstream, boot_id,
                        checkpoint, configuration, host_off, require_background)
+
+LOG = logging.getLogger('ceb-gnrd-cpld-update')
 
 SERVICE = 'com.ctopai.CebGnrd.CpldUpdate'
 OBJECT = '/xyz/openbmc_project/software/cpld_update'
@@ -116,7 +119,9 @@ class Update(ServiceInterface):
             self.task = asyncio.create_task(self.run_job(image, job))
             return job
         except Exception as exc:
+            LOG.warning('CPLD Start rejected (%s): %s', type(exc).__name__, str(exc)[:512])
             self.unlock()
+            self.state.update(lastStartError=str(exc)[:512], lastStartErrorType=type(exc).__name__)
             if image is not None:
                 try:
                     image.unlink(missing_ok=True)

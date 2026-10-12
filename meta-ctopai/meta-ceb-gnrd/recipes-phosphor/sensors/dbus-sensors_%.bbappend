@@ -16,6 +16,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0009-psu-log-unmatched-devices-at-debug-level.patch \
     file://0010-hwmon-temp-skip-peci-auxiliary-devices.patch \
     file://0011-guard-optional-mode-and-intrusion-discovery.patch \
+    file://0012-psu-recover-cleared-grouped-alarms.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \

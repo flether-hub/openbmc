@@ -8,6 +8,7 @@ SRC_URI:append:ceb-gnrd = " file://0005-ceb-gnrd-allow-same-origin-kvm-fullscree
 SRC_URI:append:ceb-gnrd = " file://0006-ceb-gnrd-fix-bmcweb-state-directory.patch"
 SRC_URI:append:ceb-gnrd = " file://0007-ceb-gnrd-bound-persistent-session-storage.patch"
 SRC_URI:append:ceb-gnrd = " file://0008-ceb-gnrd-cpld-update-interlock.patch"
+SRC_URI:append:ceb-gnrd = " file://0009-ceb-gnrd-fix-dbus-rest-method-arguments.patch"
 
 PACKAGECONFIG:append:ceb-gnrd = " dbus-rest"
 

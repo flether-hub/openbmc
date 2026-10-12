@@ -4,9 +4,10 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 # timezone, hostname, SSH host keys, web certificates, the CEB-GNRD fan settings
 # and the bmcweb data (web login sessions, Redfish service UUID), so the web page
 # stays logged in across a BMC update.  A factory reset still erases everything.
-SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-whitelist file://ceb-gnrd-update-skip-u-boot.sh"
+SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-whitelist file://ceb-gnrd-update-skip-u-boot.sh file://ceb-gnrd-netboot.sh file://0001-ceb-gnrd-tftp-rootfs-for-network-boot.patch"
 
 do_install:append:ceb-gnrd() {
+    install -Dm0644 ${UNPACKDIR}/ceb-gnrd-netboot.sh ${D}/ceb-gnrd-netboot.sh
     # Check the package-local selection before constructing the flash list.
     awk -v snippet=${UNPACKDIR}/ceb-gnrd-update-skip-u-boot.sh '
         !done && index($0, "imglist=$(echo $image*)") == 1 {
@@ -38,3 +39,5 @@ do_install:append:ceb-gnrd() {
         grep -qxF "$f" ${D}/whitelist || echo "$f" >> ${D}/whitelist
     done < ${UNPACKDIR}/ceb-gnrd-whitelist
 }
+
+FILES:${PN}:append:ceb-gnrd = " /ceb-gnrd-netboot.sh"

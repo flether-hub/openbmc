@@ -1,5 +1,7 @@
 {
-  "running_persist_bit_confirmed": false,
-  "confirmation_reference": "",
-  "approved_feature_codes": []
+  "running_persist_bit_confirmed": true,
+  "confirmation_reference": "2026-10-12: board owner confirmed persist_bit=1 for INS_ZQ6_CPLD_V3",
+  "approved_feature_codes": [
+    "FFDD66BB22FFFFFFA2FFFFFFFFFFFFFF9368"
+  ]
 }

@@ -1,0 +1,67 @@
+Subject: [PATCH] CEB-GNRD: select TFTP rootfs and RAM overlay for bootnet
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+
+--- a/obmc-init.sh
++++ b/obmc-init.sh
+@@ -19,7 +19,7 @@
+
+ mkdir -p $rodir $rwdir
+
+-cp -rp init shutdown update whitelist bin sbin usr lib etc var run/initramfs
++cp -rp init shutdown update whitelist bin sbin usr lib etc var ceb-gnrd-netboot.sh run/initramfs
+
+ # To start a interactive shell with job control at this point, run
+ # getty 38400 ttyS4
+@@ -231,6 +231,8 @@
+ 	get_fw_env_var openbmconce >> $optfile
+ fi
+
++. /ceb-gnrd-netboot.sh || exit 1
++
+ echo "rofs = $rofs $rofst   rwfs = $rwfs $rwfst"
+
+ if grep -w debug-init-sh $optfile
+@@ -295,7 +297,8 @@
+
+ # If there are images in root move them to /run/initramfs/ or /run/ now.
+ imagebasename=${image##*/}
+-if test -n "${imagebasename}" && ls /"${imagebasename}"* > /dev/null 2>&1
++if test "$ceb_gnrd_netboot" != y &&
++	test -n "${imagebasename}" && ls /"${imagebasename}"* > /dev/null 2>&1
+ then
+ 	if test "$flash_images_before_init" = "y"
+ 	then
+@@ -328,7 +331,7 @@
+ 	touch $trigger
+ fi
+
+-if ls $image* > /dev/null 2>&1
++if test "$ceb_gnrd_netboot" != y && ls $image* > /dev/null 2>&1
+ then
+ 	if ! test -x $update
+ 	then
+@@ -403,15 +406,19 @@
+ 	debug_takeover "Copying $rodev to /run/image-rofs failed."
+ fi
+
+-if test -s /run/image-rofs
++if test "$ceb_gnrd_netboot" != y && test -s /run/image-rofs
+ then
+ 	rodev=/run/image-rofs
+ 	roopts=$roopts,loop
+ fi
+
+-mount "$rodev" $rodir -t $rofst -o $roopts
+-
+-if test -x "$rodir$fsck"
++if ! mount "$rodev" $rodir -t $rofst -o $roopts
++then
++	debug_takeover "Unable to mount selected rootfs $rodev; no fallback"
++	exit 1
++fi
++
++if test "$rwfst" != none -a -x "$rodir$fsck"
+ then
+ 	for fs in $fslist
+ 	do

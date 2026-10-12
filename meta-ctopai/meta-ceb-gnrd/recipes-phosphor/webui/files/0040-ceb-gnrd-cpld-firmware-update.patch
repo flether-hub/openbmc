@@ -57,31 +57,31 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
        if (this.isServerPowerOffRequired) {
 --- /dev/null
 +++ b/src/views/Operations/Firmware/FirmwareCpldUpdate.vue
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,181 @@
 +<template>
 +  <page-section :section-title="$t('pageCpld.title')">
 +    <b-row>
 +      <b-col xl="10">
-+        <p>{{ $t('pageCpld.description') }}</p>
 +        <alert variant="warning">
 +          {{ $t('pageCpld.shutdownWarning') }}
 +        </alert>
-+        <alert v-if="loaded && !status.ready" variant="info">
-+          {{ $t('pageCpld.notReady') }}
-+        </alert>
-+        <b-form @submit.prevent="start">
-+          <label for="cpld-image">{{ $t('pageCpld.image') }}</label>
-+          <input id="cpld-image" class="form-control mb-3" type="file" accept=".bit"
-+            :disabled="disabled || busy || submitting" @change="selectFile" />
-+          <b-button variant="primary" type="submit"
-+            :disabled="disabled || busy || submitting || !file || !status.ready">
-+            {{ $t('pageCpld.start') }}
-+          </b-button>
-+          <b-button v-if="status.phase === 'WaitingForHostOff'" class="ms-2"
-+            :disabled="disabled" @click="cancel">
-+            {{ $t('pageCpld.cancel') }}
-+          </b-button>
-+        </b-form>
++        <div class="form-background p-3">
++          <b-form @submit.prevent="start">
++            <b-form-group :label="$t('pageCpld.image')" label-for="cpld-image" class="mb-3">
++              <form-file id="cpld-image" accept=".bit" :model-value="file"
++                :disabled="disabled || busy || submitting"
++                @update:model-value="selectFile" />
++            </b-form-group>
++            <b-button variant="primary" type="submit"
++              :disabled="disabled || busy || submitting || !file || !status.ready">
++              {{ $t('pageCpld.start') }}
++            </b-button>
++            <b-button v-if="status.phase === 'WaitingForHostOff'" class="ms-2"
++              :disabled="disabled" @click="cancel">
++              {{ $t('pageCpld.cancel') }}
++            </b-button>
++          </b-form>
++        </div>
 +        <p v-if="error" class="text-danger mt-3" role="alert">{{ error }}</p>
 +        <div v-if="status.job || pending" class="mt-4" aria-live="polite">
 +          <p class="fw-bold">{{ $t(`pageCpld.phases.${status.phase || 'Preflight'}`) }}</p>
@@ -100,6 +100,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +<script>
 +import api from '@/store/api';
 +import Alert from '@/components/Global/Alert';
++import FormFile from '@/components/Global/FormFile';
 +import PageSection from '@/components/Global/PageSection';
 +
 +const path = '/xyz/openbmc_project/software/cpld_update';
@@ -107,7 +108,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +const active = ['WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying', 'AwaitBmcReboot'];
 +
 +export default {
-+  components: { Alert, PageSection },
++  components: { Alert, FormFile, PageSection },
 +  props: { disabled: { type: Boolean, default: false } },
 +  emits: ['busy-change'],
 +  data() {
@@ -133,8 +134,19 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +    clearTimeout(this.timer);
 +  },
 +  methods: {
-+    selectFile(event) {
-+      const file = event.target.files?.[0];
++    requestError(error, fallback) {
++      const body = error.response?.data;
++      // D-Bus REST places the error name under data.description and the
++      // human-readable D-Bus exception text in message (not description).
++      const message = body?.message;
++      if (typeof message === 'string' && message && !/^\d{3}(?:\s|$)/.test(message)) {
++        return message;
++      }
++      return body?.data?.description || body?.description ||
++        body?.error?.['@Message.ExtendedInfo']?.[0]?.Message ||
++        body?.error?.message || this.$t(fallback);
++    },
++    selectFile(file) {
 +      this.file = null;
 +      this.error = '';
 +      if (!file) return;
@@ -172,7 +184,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +      } catch (error) {
 +        if (error.response) {
 +          this.remember(null);
-+          this.error = error.response.data?.description || this.$t('pageCpld.startFailed');
++          this.error = this.requestError(error, 'pageCpld.startFailed');
 +        } else {
 +          this.disconnected = true;
 +          this.error = this.$t('pageCpld.unknownResponse');
@@ -184,7 +196,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +    async cancel() {
 +      try {
 +        await api.post(`${path}/action/Cancel`, { data: [] }, { timeout: 5000 });
-+      } catch { this.error = this.$t('pageCpld.cancelFailed'); }
++      } catch (error) { this.error = this.requestError(error, 'pageCpld.cancelFailed'); }
 +    },
 +    async poll() {
 +      try {

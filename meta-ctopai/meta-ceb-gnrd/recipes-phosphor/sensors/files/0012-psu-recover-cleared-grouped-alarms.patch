@@ -1,0 +1,72 @@
+Subject: [PATCH] psu: recover grouped alarms when the last source clears
+
+The clear path erased an asserted source and returned before updating its
+cached value or clearing the group. A subsequent clear could then return
+again, leaving OperationalStatus unhealthy and omitting the recovery event.
+Record each transition and deassert only after the last source clears.
+Also recheck power eligibility after asynchronous reads and identify the
+PSU and event alongside the triggering sysfs path in assertion diagnostics.
+
+Upstream-Status: Pending
+
+--- a/src/psu/PSUEvent.cpp
++++ b/src/psu/PSUEvent.cpp
+@@ -217,6 +217,15 @@
+         return;
+     }
+
++    // The host may have powered down while the asynchronous read was pending.
++    if (!readingStateGood(readState))
++    {
++        updateValue(0);
++        errCount = 0;
++        restartRead();
++        return;
++    }
++
+     if (err)
+     {
+         errCount++;
+@@ -293,18 +302,15 @@
+         return;
+     }
+
++    // Record the transition even when another source keeps the group asserted.
++    // Otherwise the cleared source can retain value=1 and skip reassertion.
++    value = newValue;
+     if (newValue == 0)
+     {
+-        // log deassert only after all asserts are gone
+-        if (!(*asserts).empty())
+-        {
+-            auto found = (*asserts).find(path);
+-            if (found == (*asserts).end())
+-            {
+-                return;
+-            }
+-            (*asserts).erase(path);
+-
++        asserts->erase(path);
++        // Log recovery immediately when the last source has cleared.
++        if (!asserts->empty())
++        {
+             return;
+         }
+         if (*assertState)
+@@ -342,7 +348,8 @@
+     }
+     else
+     {
+-        lg2::error("PSUSubEvent asserted by '{PATH}'", "PATH", path);
++        lg2::error("PSUSubEvent asserted by '{PATH}' for '{PSU}' ({EVENT})",
++                   "PATH", path, "PSU", psuName, "EVENT", eventName);
+
+         if ((!*assertState) && ((*asserts).empty()))
+         {
+@@ -372,5 +379,4 @@
+         }
+         (*asserts).emplace(path);
+     }
+-    value = newValue;
+-}
++}
