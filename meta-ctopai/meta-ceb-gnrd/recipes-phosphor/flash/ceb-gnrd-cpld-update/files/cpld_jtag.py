@@ -59,6 +59,24 @@ def trace(message):
     console_log(line)
 
 
+def diagnostic_pause(label, deadline):
+    """Give external serial capture time before a potentially disruptive step.
+
+    flush=True only hands data to the kernel; it does not wait for UART TX.
+    This bounded pause is a diagnostic observation window, not a guarantee
+    that the console drained or a substitute for hardware signal capture.
+    """
+    if not console_debug_enabled():
+        return
+    if deadline - time.monotonic() <= 1:
+        raise TimeoutError('Insufficient upgrade time for the pre-operation diagnostic pause')
+    trace(f'DEBUG PAUSE 1s before {label}; operation has not started')
+    time.sleep(1)
+    if time.monotonic() >= deadline:
+        raise TimeoutError('CPLD upgrade deadline expired during diagnostic pause')
+    trace(f'DEBUG PAUSE END before {label}; beginning operation next')
+
+
 def bitstream(raw):
     if not 400 <= len(raw) <= MAX_IMAGE:
         raise ValueError('Invalid bitstream size (maximum 1 MiB)')
@@ -261,6 +279,12 @@ def update(path, job, remaining):
 
     def step(label, operation, *args, **kwargs):
         trace(f'BEGIN {label}')
+        if label in (
+                'Post-verify read_status SDR 32 (not a DONE check)',
+                'Final Host Off check before Refresh',
+                'Persist flashVerified receipt before Refresh',
+                'Refresh SIR 01'):
+            diagnostic_pause(label, deadline)
         result = operation(*args, **kwargs)
         trace(f'END {label}')
         return result

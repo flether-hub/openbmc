@@ -137,6 +137,14 @@ Capture the serial terminal transcript before starting an update. In particular,
 the attempt to issue reload; its END marks return from that scan, not DONE.
 A missing END identifies the last observed operation but cannot distinguish
 an interrupted operation from loss of the serial path or buffered output.
+While console diagnostics are enabled, the worker also adds a one-second
+observation window before post-verify status SDR 32 (vendor mode), the final
+Host Off check, the pre-Refresh receipt write and IR 01. `DEBUG PAUSE` means
+the named operation has not started; `DEBUG PAUSE END` precedes its call.
+This gives the UART time to transmit queued markers but does not guarantee
+drain. These pauses consume the original 600-second budget; an insufficient
+budget or expired deadline blocks the next operation. No pause is added when
+diagnostics are disabled. JTAG instruction order and clock counts are unchanged.
 The board routes its serial connection through CPLD logic; a blank terminal
 alone does not prove BMC power loss. Use `journalctl -fu
 ceb-gnrd-cpld-update.service -o short-monotonic` for a separate live view.
