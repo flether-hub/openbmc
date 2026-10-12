@@ -100,6 +100,27 @@ not read a CPLD running-version register or prove all CPLD functions. An unrelat
 BMC reset after the receipt was armed cannot be distinguished from CPLD-triggered
 reset using boot ID alone. Confirm CPLD function / version during board validation.
 
+### Refresh and power recovery observed on 2026-10-12
+
+The board lost power/serial access during an update with AC still connected and
+recovered only after the operator cycled AC. Its receipt confirmed full Flash
+verification and a new BMC boot; this does not confirm automatic power recovery.
+
+The DS600_1.8 datasheet specifies that EF3L90 does not support StateHold IO
+(section 2.9.16, printed page 70). Reconfiguration changes user IO to weak
+pull-ups or high impedance (sections 2.9.13-14, pages 67-68). Review CPLD/BMC
+power enables, reset feedback, PROGRAMN, INITN/DONE, VCCAUX and VCCIO0 during
+reload. MSPI loads from internal Flash using its internal oscillator (section
+2.9.3, page 58); loss of external TCK alone is not proof that loading stopped.
+
+The supplied Refresh script still has clocks and cleanup after instruction
+0x01. The worker records `refreshSequenceCompleted=false` before that instruction
+and true only after all remaining commands return. A missing/false flag means
+sequence completion was not recorded; it is not a FPGA DONE or version check.
+The Web page reports disconnected progress as the last received state and
+distinguishes it from the expected reconnect after Refresh. Hardware signal
+captures are needed before declaring this board's automatic recovery reliable.
+
 ## Concurrency and storage
 
 - Redfish Web BMC/BIOS upload paths acquire a shared CPLD lock; the CPLD service

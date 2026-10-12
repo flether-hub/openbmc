@@ -255,6 +255,8 @@ def update(path, job, remaining):
                 raise RuntimeError(f'Flash readback mismatch at page {i}; Refresh blocked')
             if i % 16 == 0 or i + 1 == pages:
                 event('Verifying', 70 + i * 23 // pages, f'Verify page {i + 1}/{pages}')
+        event('Verifying', 93, f'Flash readback passed for all {pages} pages',
+              flashVerified=True)
         jtag.ir(0xff)
         jtag.ir(0x20)
         jtag.scan(32, 0)  # Supplier MASK=0: not a DONE verification.
@@ -276,13 +278,14 @@ def update(path, job, remaining):
         guard(force=True)
         # Durable, bounded receipt MUST precede the instruction resetting BMC.
         receipt = dict(job=job, phase='AwaitBmcReboot', progress=95,
-                       detail='Flash verified; waiting for CPLD reload and BMC restart',
+                       detail='Flash verified; preparing automatic JTAG Refresh and waiting for BMC restart',
                        sha256=digest, feature=feature, bootId=old_boot,
                        armedUnix=time.time(),
                        deadlineUnix=time.time() + max(0, deadline - time.monotonic()),
-                       flashVerified=True)
+                       flashVerified=True, refreshSequenceCompleted=False)
         checkpoint(receipt)
-        event('AwaitBmcReboot', 95, receipt['detail'], flashVerified=True)
+        event('AwaitBmcReboot', 95, receipt['detail'], flashVerified=True,
+              refreshSequenceCompleted=False)
         # Host state is checked immediately before Refresh. After it is sent,
         # BMC services may disappear normally; do not turn that into Failed.
         jtag.guard = lambda: None
@@ -293,6 +296,12 @@ def update(path, job, remaining):
         jtag.ir(0x80)
         jtag.scan(64, 0x00000000000000a5)
         jtag.run(200)
+        # This records completion of the supplied sequence, not FPGA DONE.
+        # If BMC power/reset interrupts it, the durable flag remains false.
+        receipt.update(progress=97, refreshSequenceCompleted=True,
+                       detail='JTAG Refresh sequence completed; waiting for BMC restart')
+        checkpoint(receipt)
+        event('AwaitBmcReboot', 97, receipt['detail'], refreshSequenceCompleted=True)
         # Returning from Refresh is not success: wait for a NEW BMC boot ID.
         while time.monotonic() < deadline:
             time.sleep(1)

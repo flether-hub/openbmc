@@ -741,6 +741,7 @@
       "created": "已创建",
       "bootCount": "启动次数",
       "postCode": "POST 代码",
+      "description": "POST code 说明",
       "searchLogs": "搜索日志",
       "timeStampOffset": "时间戳偏移量"
     },
@@ -1461,6 +1462,10 @@
     "cancelFailed": "无法取消，烧写可能已经开始。",
     "unavailable": "CPLD 升级服务不可用。",
     "reconnecting": "正在等待 BMC 恢复连接，请勿断电。",
+    "automaticRefresh": "全部 Flash 页回读校验通过后，将自动发送 JTAG Refresh 激活固件，并等待 BMC 恢复连接。",
+    "connectionLost": "与 BMC 的连接已中断，当前显示的是最后收到的进度；页面尚未确认 Refresh，正在重新查询已有升级任务。",
+    "remaining": "整个升级流程剩余时间：{seconds} 秒。",
+    "refreshUnconfirmed": "没有记录到完整 JTAG Refresh 指令序列执行完毕。已确认 Flash 校验通过及新的 BMC 启动，但仍需确认 CPLD 工作状态及自动恢复供电是否正常。",
     "timeout": "10分钟监控超时，请检查服务端升级状态后再决定是否重试。",
     "completed": "Flash 回读校验通过，已检测到新的 BMC 启动实例；尚未回读 CPLD 当前运行版本。",
     "phases": {
@@ -1470,7 +1475,7 @@
       "Erasing": "擦除内部 Flash",
       "Writing": "写入固件",
       "Verifying": "回读校验 Flash",
-      "AwaitBmcReboot": "重新加载 CPLD / 等待 BMC 重启",
+      "AwaitBmcReboot": "JTAG Refresh 激活 / 等待 BMC 重启",
       "Completed": "Flash 校验通过 / BMC 已重启",
       "Failed": "升级失败",
       "Cancelled": "已取消升级"

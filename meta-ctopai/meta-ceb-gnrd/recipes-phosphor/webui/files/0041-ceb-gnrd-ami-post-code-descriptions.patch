@@ -1,0 +1,251 @@
+Subject: [PATCH] webui: interpret AMI Aptio V POST codes and boot progress
+
+Replace per-row export/download actions with a wrapping description column.
+Use the same reference catalog as the boot-progress service, distinguish
+errors and ambiguous ACPI meanings, and explicitly report unmatched codes.
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware reference]
+
+--- a/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
++++ b/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
+@@ -108,29 +108,6 @@
+             <p class="mb-0">{{ $filters.formatTime(value) }}</p>
+           </template>
+
+-          <!-- Actions column -->
+-          <template #cell(actions)="row">
+-            <table-row-action
+-              v-for="(action, index) in row.item.actions"
+-              :key="index"
+-              :value="action.value"
+-              :title="action.title"
+-              :row-data="row.item"
+-              :btn-icon-only="true"
+-              :export-name="exportFileNameByDate(action.value)"
+-              :download-location="
+-                action.value === 'download' ? '' : row.item.uri
+-              "
+-              :download-in-new-tab="false"
+-              :show-button="action.value === 'download' ? true : false"
+-              @click-table-action="onRowAction(action.value, row.item)"
+-            >
+-              <template #icon>
+-                <icon-export v-if="action.value === 'export'" />
+-                <icon-download v-if="action.value === 'download'" />
+-              </template>
+-            </table-row-action>
+-          </template>
+         </b-table>
+       </b-col>
+     </b-row>
+@@ -167,14 +144,11 @@
+ <script>
+ import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import IconDelete from '@carbon/icons-vue/es/trash-can/20';
+-import IconDownload from '@carbon/icons-vue/es/download/20';
+ import IconExport from '@carbon/icons-vue/es/document--export/20';
+-import { omit } from 'lodash';
+ import PageTitle from '@/components/Global/PageTitle';
+ import Search from '@/components/Global/Search';
+ import TableCellCount from '@/components/Global/TableCellCount';
+ import TableDateFilter from '@/components/Global/TableDateFilter';
+-import TableRowAction from '@/components/Global/TableRowAction';
+ import TableToolbar from '@/components/Global/TableToolbar';
+ import TableToolbarExport from '@/components/Global/TableToolbarExport';
+ import LoadingBarMixin from '@/components/Mixins/LoadingBarMixin';
+@@ -198,17 +172,16 @@
+   searchFilter,
+ } from '@/components/Mixins/SearchFilterMixin';
+ import i18n from '@/i18n';
++import { describePostCode } from '@/utils/amiPostCodes';
+ import { useModal } from 'bootstrap-vue-next';
+
+ export default {
+   components: {
+     IconDelete,
+     IconExport,
+-    IconDownload,
+     PageTitle,
+     Search,
+     TableCellCount,
+-    TableRowAction,
+     TableToolbar,
+     TableToolbarExport,
+     TableDateFilter,
+@@ -262,9 +235,10 @@
+           label: i18n.global.t('pagePostCodeLogs.table.postCode'),
+         },
+         {
+-          key: 'actions',
+-          label: '',
+-          tdClass: 'text-end text-nowrap',
++          key: 'description',
++          label: i18n.global.t('pagePostCodeLogs.table.description'),
++          tdClass: 'post-code-description',
++          thStyle: { width: '45%' },
+         },
+       ],
+       expandRowLabel,
+@@ -291,26 +265,13 @@
+         : this.filteredLogs.length;
+     },
+     allLogs() {
+-      return this.$store.getters['postCodeLogs/allPostCodes'].map(
+-        (postCodes) => {
+-          return {
+-            ...postCodes,
+-            actions: [
+-              {
+-                value: 'export',
+-                title: i18n.global.t('pagePostCodeLogs.action.exportLogs'),
+-              },
+-              {
+-                value: 'download',
+-                title: i18n.global.t('pagePostCodeLogs.action.downloadDetails'),
+-              },
+-            ],
+-          };
+-        },
+-      );
++      return this.$store.getters['postCodeLogs/allPostCodes'].map((postCode) => ({
++        ...postCode,
++        description: describePostCode(postCode.postCode, this.$i18n.locale),
++      }));
+     },
+     batchExportData() {
+-      return this.selectedRows.map((row) => omit(row, 'actions'));
++      return this.selectedRows;
+     },
+     filteredLogsByDate() {
+       return this.getFilteredTableDataByDate(
+@@ -334,20 +295,6 @@
+     });
+   },
+   methods: {
+-    onRowAction(action, item) {
+-      if (action === 'download') {
+-        this.$store
+-          .dispatch('postCodeLogs/downloadEntry', item.uri)
+-          .then((blob) => {
+-            const link = document.createElement('a');
+-            link.href = URL.createObjectURL(blob);
+-            link.download = this.exportFileNameByDate('download');
+-            link.click();
+-            URL.revokeObjectURL(link.href);
+-          })
+-          .catch(({ message }) => this.errorToast(message));
+-      }
+-    },
+     async deleteAllLogs() {
+       const deleteConfirmed = await this.confirmDialog(
+         i18n.global.t('pagePostCodeLogs.modal.deleteAllMessage'),
+@@ -410,3 +357,12 @@
+ };
+ </script>
+
++
++<style scoped>
++:deep(.post-code-description) {
++  min-width: 20rem;
++  max-width: 40rem;
++  white-space: normal;
++  overflow-wrap: anywhere;
++}
++</style>
+--- a/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
++++ b/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
+@@ -14,6 +14,7 @@
+
+ <script>
+ import api from '@/store/api';
++import { describePostCode } from '@/utils/amiPostCodes';
+
+ // CEB-GNRD: the IPMI discrete sensors (ceb-gnrd-ipmi-sensors/config.yaml) are not
+ // D-Bus sensors, so Redfish and the analog sensor tab do not list them.  Read
+@@ -79,19 +80,17 @@
+     sensorState(sensor) {
+       const data = this.values[sensor.path] || {};
+       const stage = stateText(data[sensor.property]);
+-      if (sensor.property !== 'BootProgress' || !data.BootCheckpoint) {
+-        return stage;
++      if (sensor.property !== 'BootProgress') return stage;
++      if (data.BootPostCode) {
++        const detail = describePostCode(data.BootPostCode, this.$i18n.locale);
++        return `${stage} — ${detail} (${data.BootPostCode})`;
+       }
++      if (!data.BootCheckpoint) return stage;
+       const key = 'pageSensors.discrete.checkpoints.' + data.BootCheckpoint;
+       const detail = this.$te(key) ? this.$t(key) : data.BootCheckpoint;
+-      const code = data.BootPostCode ? ` (${data.BootPostCode})` : '';
+-      const generic =
+-        data.BootPostCode &&
+-        !['Unknown', 'PlatformSpecific'].includes(data.BootCheckpoint)
+-          ? ` [${this.$t('pageSensors.discrete.checkpoints.generic')}]`
+-          : '';
+-      return `${stage} — ${detail}${code}${generic}`;
++      return `${stage} — ${detail}`;
+     },
++
+     async load() {
+       const paths = [...new Set(SENSORS.map((sensor) => sensor.path))];
+       const values = {};
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -741,6 +741,7 @@
+             "created": "Created",
+             "bootCount": "Boot count",
+             "postCode": "POST code",
++            "description": "POST code description",
+             "searchLogs": "Search logs",
+             "timeStampOffset": "Time stamp offset"
+         },
+--- /dev/null
++++ b/src/utils/amiPostCodes.js
+@@ -0,0 +1,47 @@
++import catalog from '@/data/amiAptioVPostCodes.json';
++
++// Redfish renders the complete POST byte vector as hex. Do not truncate an
++// unknown or multi-byte value into a different, seemingly recognized code.
++function codeKey(value) {
++  if (typeof value === 'number') {
++    if (!Number.isInteger(value) || value < 0 || value > 0xff) return null;
++    return value.toString(16).toUpperCase().padStart(2, '0');
++  }
++  if (typeof value !== 'string') return null;
++  const match = value.trim().match(/^(?:0x)?([0-9a-f]+)$/i);
++  if (!match) return null;
++  const hex = match[1].replace(/^0+/, '') || '0';
++  if (hex.length > 2) return null;
++  return hex.toUpperCase().padStart(2, '0');
++}
++
++function definition(key) {
++  if (!key) return null;
++  if (catalog.codes[key]) return catalog.codes[key];
++  return (
++    catalog.ranges.find((range) => key >= range.first && key <= range.last) ||
++    null
++  );
++}
++
++export function describePostCode(value, locale = 'en-US') {
++  const language = String(locale).startsWith('zh') ? 'zh' : 'en';
++  const key = codeKey(value);
++  const entry = definition(key);
++  const unmatched = catalog.unmatched[language];
++  let text = unmatched;
++  if (entry) {
++    const error =
++      entry.kind === 'error' ? (language === 'zh' ? ' 错误' : ' error') : '';
++    text = `${entry.phase}${error}: ${entry.description[language]}`;
++    if (['reserved', 'oem'].includes(entry.kind)) text += `; ${unmatched}`;
++  }
++  // The reference gives two meanings for some values. History has no reliable
++  // firmware-phase context, so retain both instead of guessing from the value.
++  const acpi = key && catalog.acpi[key];
++  if (acpi && entry?.phase !== 'ACPI/ASL') {
++    const or = language === 'zh' ? '或' : 'or';
++    text += `; ${or} ACPI/ASL: ${acpi.description[language]}`;
++  }
++  return text;
++}

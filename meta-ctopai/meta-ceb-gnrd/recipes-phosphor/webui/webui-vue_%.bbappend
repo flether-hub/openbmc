@@ -1,4 +1,4 @@
-FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
+FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:${THISDIR}/../state/files:"
 
 SRC_URI:append:ceb-gnrd = " \
     file://0001-ceb-gnrd-limit-webui-languages.patch \
@@ -40,6 +40,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0038-ceb-gnrd-colored-openbmc-logos.patch \
     file://0039-ceb-gnrd-responsive-date-time-settings.patch \
     file://0040-ceb-gnrd-cpld-firmware-update.patch \
+    file://0041-ceb-gnrd-ami-post-code-descriptions.patch \
+    file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "
 
@@ -49,5 +51,6 @@ SRC_URI:append:ceb-gnrd = " \
 do_configure:append:ceb-gnrd() {
     # File-backed event logs have no Resolved property/PATCH operation.
     printf '\nVITE_EVENT_LOGS_TOGGLE_BUTTON_DISABLED=true\n' >> ${S}/.env.production.local
+    install -Dm0644 ${UNPACKDIR}/ami-aptio-v-post-codes.json ${S}/src/data/amiAptioVPostCodes.json
     install -Dm0644 ${UNPACKDIR}/zh-CN.json ${S}/src/locales/zh-CN.json
 }

@@ -50,10 +50,15 @@ class Update(ServiceInterface):
                         previous.update(phase='Completed', progress=100,
                                         detail='Flash verified; new BMC boot detected. CPLD running version is not read back.',
                                         recoveredBootId=boot_id())
+                        if previous.get('refreshSequenceCompleted') is not True:
+                            previous['detail'] += ' JTAG Refresh sequence completion was not recorded.'
                     else:
                         previous.update(phase='Failed', detail='Previous update was interrupted or its recovery deadline expired; automatic reload is blocked')
                     checkpoint(previous)
                 self.state = previous
+                LOG.info('CPLD recovered job=%s phase=%s flashVerified=%s refreshSequenceCompleted=%s',
+                         previous.get('job'), previous.get('phase'),
+                         previous.get('flashVerified'), previous.get('refreshSequenceCompleted'))
             except Exception as exc:
                 self.state.update(phase='Failed', detail=f'Cannot read upgrade receipt: {exc}')
 
@@ -76,7 +81,13 @@ class Update(ServiceInterface):
         return json.dumps(value, separators=(',', ':'))
 
     def publish(self, **values):
+        previous_phase = self.state.get('phase')
         self.state.update(values)
+        if (self.state.get('phase') != previous_phase or values.get('flashVerified') or
+                values.get('refreshSequenceCompleted')):
+            LOG.info('CPLD job=%s phase=%s progress=%s detail=%s',
+                     self.state.get('job'), self.state.get('phase'),
+                     self.state.get('progress'), self.state.get('detail'))
         self.emit_properties_changed({'Status': self.Status})
 
     @method()
@@ -224,6 +235,7 @@ class Update(ServiceInterface):
 
 
 async def main():
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     updater = Update(bus)
     bus.export(OBJECT, updater)

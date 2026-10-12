@@ -1,0 +1,1658 @@
+{
+  "schemaVersion": 1,
+  "reference": {
+    "title": "AMI Aptio V BIOS POST Codes for Supermicro Motherboards",
+    "revision": "1.0b",
+    "date": "2024-08-06",
+    "aptioRevision": "2.04",
+    "aptioDate": "2024-04-20",
+    "pages": "7-12"
+  },
+  "unmatched": {
+    "en": "No matching POST code description",
+    "zh": "未匹配到 POST code 说明"
+  },
+  "codes": {
+    "00": {
+      "phase": "SEC",
+      "kind": "unused",
+      "stage": null,
+      "description": {
+        "en": "Unused checkpoint",
+        "zh": "未使用的代码"
+      }
+    },
+    "01": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "Power-on reset type detection",
+        "zh": "上电并检测复位类型（软复位或硬复位）"
+      }
+    },
+    "02": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "AP initialization before microcode",
+        "zh": "微码加载前初始化应用处理器（AP）"
+      }
+    },
+    "03": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "North Bridge initialization before microcode",
+        "zh": "微码加载前初始化北桥"
+      }
+    },
+    "04": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "South Bridge initialization before microcode",
+        "zh": "微码加载前初始化南桥"
+      }
+    },
+    "05": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "OEM initialization before microcode",
+        "zh": "微码加载前执行 OEM 初始化"
+      }
+    },
+    "06": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "Loading CPU microcode",
+        "zh": "加载 CPU 微码"
+      }
+    },
+    "07": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "AP initialization after microcode",
+        "zh": "微码加载后初始化应用处理器（AP）"
+      }
+    },
+    "08": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "North Bridge initialization after microcode",
+        "zh": "微码加载后初始化北桥"
+      }
+    },
+    "09": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "South Bridge initialization after microcode",
+        "zh": "微码加载后初始化南桥"
+      }
+    },
+    "0A": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "OEM initialization after microcode",
+        "zh": "微码加载后执行 OEM 初始化"
+      }
+    },
+    "0B": {
+      "phase": "SEC",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "Initializing CPU cache",
+        "zh": "初始化 CPU 缓存"
+      }
+    },
+    "0E": {
+      "phase": "SEC",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "CPU microcode missing",
+        "zh": "未找到 CPU 微码"
+      }
+    },
+    "0F": {
+      "phase": "SEC",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "CPU microcode was not loaded",
+        "zh": "CPU 微码未加载"
+      }
+    },
+    "10": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "Starting the PEI core",
+        "zh": "启动 PEI 核心"
+      }
+    },
+    "11": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "Starting CPU initialization before memory",
+        "zh": "开始内存初始化前的 CPU 初始化"
+      }
+    },
+    "12": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "CPU initialization before memory (module-specific)",
+        "zh": "内存初始化前的 CPU 初始化（CPU 模块定义）"
+      }
+    },
+    "13": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "CPU initialization before memory (module-specific)",
+        "zh": "内存初始化前的 CPU 初始化（CPU 模块定义）"
+      }
+    },
+    "14": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "PrimaryProcInit",
+      "description": {
+        "en": "CPU initialization before memory (module-specific)",
+        "zh": "内存初始化前的 CPU 初始化（CPU 模块定义）"
+      }
+    },
+    "15": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting North Bridge initialization before memory",
+        "zh": "开始内存初始化前的北桥初始化"
+      }
+    },
+    "16": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge initialization before memory (module-specific)",
+        "zh": "内存初始化前的北桥初始化（北桥模块定义）"
+      }
+    },
+    "17": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge initialization before memory (module-specific)",
+        "zh": "内存初始化前的北桥初始化（北桥模块定义）"
+      }
+    },
+    "18": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge initialization before memory (module-specific)",
+        "zh": "内存初始化前的北桥初始化（北桥模块定义）"
+      }
+    },
+    "19": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting South Bridge initialization before memory",
+        "zh": "开始内存初始化前的南桥初始化"
+      }
+    },
+    "1A": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge initialization before memory (module-specific)",
+        "zh": "内存初始化前的南桥初始化（南桥模块定义）"
+      }
+    },
+    "1B": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge initialization before memory (module-specific)",
+        "zh": "内存初始化前的南桥初始化（南桥模块定义）"
+      }
+    },
+    "1C": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge initialization before memory (module-specific)",
+        "zh": "内存初始化前的南桥初始化（南桥模块定义）"
+      }
+    },
+    "2B": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MemoryInit",
+      "description": {
+        "en": "Reading memory SPD data",
+        "zh": "初始化内存：读取 SPD 信息"
+      }
+    },
+    "2C": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MemoryInit",
+      "description": {
+        "en": "Detecting installed memory",
+        "zh": "初始化内存：检测内存是否存在"
+      }
+    },
+    "2D": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MemoryInit",
+      "description": {
+        "en": "Programming memory timing",
+        "zh": "初始化内存：设置内存时序"
+      }
+    },
+    "2E": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MemoryInit",
+      "description": {
+        "en": "Configuring memory",
+        "zh": "初始化内存：配置内存"
+      }
+    },
+    "2F": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MemoryInit",
+      "description": {
+        "en": "Other memory initialization operations",
+        "zh": "初始化内存：其他操作"
+      }
+    },
+    "30": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Waking from S3 sleep",
+        "zh": "从 S3 睡眠状态唤醒"
+      }
+    },
+    "31": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MemoryInit",
+      "description": {
+        "en": "Memory is installed",
+        "zh": "已检测到内存"
+      }
+    },
+    "32": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "Starting CPU initialization after memory",
+        "zh": "开始内存初始化后的 CPU 初始化"
+      }
+    },
+    "33": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "Initializing CPU cache after memory",
+        "zh": "内存初始化后初始化 CPU 缓存"
+      }
+    },
+    "34": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "Initializing application processors after memory",
+        "zh": "内存初始化后初始化应用处理器（AP）"
+      }
+    },
+    "35": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "Selecting the bootstrap processor",
+        "zh": "选择引导处理器（BSP）"
+      }
+    },
+    "36": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "Initializing CPU System Management Mode",
+        "zh": "初始化 CPU 系统管理模式（SMM）"
+      }
+    },
+    "37": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting North Bridge initialization after memory",
+        "zh": "开始内存初始化后的北桥初始化"
+      }
+    },
+    "38": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge initialization after memory (module-specific)",
+        "zh": "内存初始化后的北桥初始化（北桥模块定义）"
+      }
+    },
+    "39": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge initialization after memory (module-specific)",
+        "zh": "内存初始化后的北桥初始化（北桥模块定义）"
+      }
+    },
+    "3A": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge initialization after memory (module-specific)",
+        "zh": "内存初始化后的北桥初始化（北桥模块定义）"
+      }
+    },
+    "3B": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting South Bridge initialization after memory",
+        "zh": "开始内存初始化后的南桥初始化"
+      }
+    },
+    "3C": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge initialization after memory (module-specific)",
+        "zh": "内存初始化后的南桥初始化（南桥模块定义）"
+      }
+    },
+    "3D": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge initialization after memory (module-specific)",
+        "zh": "内存初始化后的南桥初始化（南桥模块定义）"
+      }
+    },
+    "3E": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge initialization after memory (module-specific)",
+        "zh": "内存初始化后的南桥初始化（南桥模块定义）"
+      }
+    },
+    "4F": {
+      "phase": "PEI",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting the DXE initial program loader",
+        "zh": "启动 DXE 初始程序加载器（IPL）"
+      }
+    },
+    "50": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Unsupported memory type or speed",
+        "zh": "内存初始化失败：内存类型或速度不兼容"
+      }
+    },
+    "51": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Memory SPD read failed",
+        "zh": "内存初始化失败：SPD 读取失败"
+      }
+    },
+    "52": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Invalid memory size or mismatched modules",
+        "zh": "内存初始化失败：容量无效或内存条不匹配"
+      }
+    },
+    "53": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "No usable memory detected",
+        "zh": "内存初始化失败：未检测到可用内存"
+      }
+    },
+    "54": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Unspecified memory initialization failure",
+        "zh": "内存初始化失败：未指定具体原因"
+      }
+    },
+    "55": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Memory is not installed",
+        "zh": "未安装内存"
+      }
+    },
+    "56": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Invalid CPU type or speed",
+        "zh": "CPU 类型或速度无效"
+      }
+    },
+    "57": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "CPU mismatch",
+        "zh": "CPU 不匹配"
+      }
+    },
+    "58": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "CPU self-test or cache failure",
+        "zh": "CPU 自检失败或缓存可能异常"
+      }
+    },
+    "59": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "CPU microcode missing or update failed",
+        "zh": "未找到 CPU 微码或微码更新失败"
+      }
+    },
+    "5A": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Internal CPU failure",
+        "zh": "CPU 内部错误"
+      }
+    },
+    "5B": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Reset PPI unavailable",
+        "zh": "复位 PPI 不可用"
+      }
+    },
+    "5C": {
+      "phase": "PEI",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "BMC self-test failed during PEI",
+        "zh": "PEI 阶段 BMC 自检失败"
+      }
+    },
+    "60": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting the DXE core",
+        "zh": "启动 DXE 核心"
+      }
+    },
+    "61": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Initializing NVRAM",
+        "zh": "初始化 NVRAM"
+      }
+    },
+    "62": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Installing South Bridge runtime services",
+        "zh": "安装南桥运行时服务"
+      }
+    },
+    "63": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "Starting CPU DXE initialization",
+        "zh": "开始 CPU DXE 初始化"
+      }
+    },
+    "64": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "CPU DXE initialization (module-specific)",
+        "zh": "CPU DXE 初始化（CPU 模块定义）"
+      }
+    },
+    "65": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "CPU DXE initialization (module-specific)",
+        "zh": "CPU DXE 初始化（CPU 模块定义）"
+      }
+    },
+    "66": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "CPU DXE initialization (module-specific)",
+        "zh": "CPU DXE 初始化（CPU 模块定义）"
+      }
+    },
+    "67": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "SecondaryProcInit",
+      "description": {
+        "en": "CPU DXE initialization (module-specific)",
+        "zh": "CPU DXE 初始化（CPU 模块定义）"
+      }
+    },
+    "68": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "PCIInit",
+      "description": {
+        "en": "Initializing the PCI host bridge",
+        "zh": "初始化 PCI 主桥"
+      }
+    },
+    "69": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting North Bridge DXE initialization",
+        "zh": "开始北桥 DXE 初始化"
+      }
+    },
+    "6A": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting North Bridge SMM initialization",
+        "zh": "开始北桥 DXE SMM 初始化"
+      }
+    },
+    "6B": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge DXE initialization (module-specific)",
+        "zh": "北桥 DXE 初始化（北桥模块定义）"
+      }
+    },
+    "6C": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge DXE initialization (module-specific)",
+        "zh": "北桥 DXE 初始化（北桥模块定义）"
+      }
+    },
+    "6D": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge DXE initialization (module-specific)",
+        "zh": "北桥 DXE 初始化（北桥模块定义）"
+      }
+    },
+    "6E": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge DXE initialization (module-specific)",
+        "zh": "北桥 DXE 初始化（北桥模块定义）"
+      }
+    },
+    "6F": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "North Bridge DXE initialization (module-specific)",
+        "zh": "北桥 DXE 初始化（北桥模块定义）"
+      }
+    },
+    "70": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting South Bridge DXE initialization",
+        "zh": "开始南桥 DXE 初始化"
+      }
+    },
+    "71": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting South Bridge SMM initialization",
+        "zh": "开始南桥 DXE SMM 初始化"
+      }
+    },
+    "72": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Initializing South Bridge devices",
+        "zh": "初始化南桥设备"
+      }
+    },
+    "73": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge DXE initialization (module-specific)",
+        "zh": "南桥 DXE 初始化（南桥模块定义）"
+      }
+    },
+    "74": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge DXE initialization (module-specific)",
+        "zh": "南桥 DXE 初始化（南桥模块定义）"
+      }
+    },
+    "75": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge DXE initialization (module-specific)",
+        "zh": "南桥 DXE 初始化（南桥模块定义）"
+      }
+    },
+    "76": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge DXE initialization (module-specific)",
+        "zh": "南桥 DXE 初始化（南桥模块定义）"
+      }
+    },
+    "77": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "South Bridge DXE initialization (module-specific)",
+        "zh": "南桥 DXE 初始化（南桥模块定义）"
+      }
+    },
+    "78": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Initializing ACPI",
+        "zh": "初始化 ACPI 模块"
+      }
+    },
+    "79": {
+      "phase": "DXE",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Initializing the Compatibility Support Module",
+        "zh": "初始化兼容性支持模块（CSM）"
+      }
+    },
+    "90": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting boot device selection",
+        "zh": "开始启动设备选择（BDS）"
+      }
+    },
+    "91": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Connecting firmware drivers",
+        "zh": "开始连接固件驱动"
+      }
+    },
+    "92": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "PCIInit",
+      "description": {
+        "en": "Starting PCI bus initialization",
+        "zh": "开始 PCI 总线初始化"
+      }
+    },
+    "93": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "PCIInit",
+      "description": {
+        "en": "Initializing the PCI hot-plug controller",
+        "zh": "初始化 PCI 热插拔控制器"
+      }
+    },
+    "94": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "PCIInit",
+      "description": {
+        "en": "Enumerating PCI devices",
+        "zh": "枚举 PCI 总线设备"
+      }
+    },
+    "95": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "PCIInit",
+      "description": {
+        "en": "Requesting PCI resources",
+        "zh": "请求 PCI 总线资源"
+      }
+    },
+    "96": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "PCIInit",
+      "description": {
+        "en": "Assigning PCI resources",
+        "zh": "分配 PCI 总线资源"
+      }
+    },
+    "97": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Connecting console output devices",
+        "zh": "连接控制台输出设备"
+      }
+    },
+    "98": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Connecting console input devices",
+        "zh": "连接控制台输入设备"
+      }
+    },
+    "99": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Initializing Super I/O",
+        "zh": "初始化 Super I/O"
+      }
+    },
+    "9A": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting USB initialization",
+        "zh": "开始 USB 初始化"
+      }
+    },
+    "9B": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Resetting USB",
+        "zh": "复位 USB"
+      }
+    },
+    "9C": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Detecting USB devices",
+        "zh": "检测 USB 设备"
+      }
+    },
+    "9D": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Enabling USB devices",
+        "zh": "启用 USB 设备"
+      }
+    },
+    "A0": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting IDE initialization",
+        "zh": "开始 IDE 初始化"
+      }
+    },
+    "A1": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Resetting IDE",
+        "zh": "复位 IDE"
+      }
+    },
+    "A2": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Detecting IDE devices",
+        "zh": "检测 IDE 设备"
+      }
+    },
+    "A3": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Enabling IDE devices",
+        "zh": "启用 IDE 设备"
+      }
+    },
+    "A4": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Starting SCSI initialization",
+        "zh": "开始 SCSI 初始化"
+      }
+    },
+    "A5": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Resetting SCSI",
+        "zh": "复位 SCSI"
+      }
+    },
+    "A6": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Detecting SCSI devices",
+        "zh": "检测 SCSI 设备"
+      }
+    },
+    "A7": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Enabling SCSI devices",
+        "zh": "启用 SCSI 设备"
+      }
+    },
+    "A8": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Verifying the BIOS setup password",
+        "zh": "验证 BIOS 设置密码"
+      }
+    },
+    "A9": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Entering BIOS setup",
+        "zh": "进入 BIOS 设置界面"
+      }
+    },
+    "AA": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "ACPI mode entered with APIC interrupt routing",
+        "zh": "已进入 ACPI 模式，中断控制器处于 APIC 模式"
+      }
+    },
+    "AB": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Waiting for BIOS setup input",
+        "zh": "BIOS 设置界面等待输入"
+      }
+    },
+    "AC": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "ACPI mode entered with PIC interrupt routing",
+        "zh": "已进入 ACPI 模式，中断控制器处于 PIC 模式"
+      }
+    },
+    "AD": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "OSStart",
+      "description": {
+        "en": "Ready-to-Boot event",
+        "zh": "触发 Ready To Boot 事件，准备启动操作系统"
+      }
+    },
+    "AE": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "OSStart",
+      "description": {
+        "en": "Legacy Boot event",
+        "zh": "触发 Legacy Boot 事件，进入传统启动流程"
+      }
+    },
+    "AF": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "OSStart",
+      "description": {
+        "en": "ExitBootServices event",
+        "zh": "触发 Exit Boot Services 事件，退出 UEFI 启动服务"
+      }
+    },
+    "B0": {
+      "phase": "BDS",
+      "kind": "runtime",
+      "stage": "OSStart",
+      "description": {
+        "en": "Starting runtime virtual address mapping",
+        "zh": "开始设置运行时虚拟地址映射"
+      }
+    },
+    "B1": {
+      "phase": "BDS",
+      "kind": "runtime",
+      "stage": "OSStart",
+      "description": {
+        "en": "Completing runtime virtual address mapping",
+        "zh": "完成运行时虚拟地址映射"
+      }
+    },
+    "B2": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Initializing legacy Option ROMs",
+        "zh": "初始化传统 Option ROM"
+      }
+    },
+    "B3": {
+      "phase": "BDS",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "System reset",
+        "zh": "系统复位"
+      }
+    },
+    "B4": {
+      "phase": "BDS",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "USB hot-plug",
+        "zh": "USB 热插拔"
+      }
+    },
+    "B5": {
+      "phase": "BDS",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "PCI bus hot-plug",
+        "zh": "PCI 总线热插拔"
+      }
+    },
+    "B6": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Cleaning NVRAM",
+        "zh": "清理 NVRAM"
+      }
+    },
+    "B7": {
+      "phase": "BDS",
+      "kind": "progress",
+      "stage": "MotherboardInit",
+      "description": {
+        "en": "Resetting NVRAM configuration",
+        "zh": "复位 NVRAM 配置"
+      }
+    },
+    "D0": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "CPU initialization failure",
+        "zh": "CPU 初始化失败"
+      }
+    },
+    "D1": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "North Bridge initialization failure",
+        "zh": "北桥初始化失败"
+      }
+    },
+    "D2": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "South Bridge initialization failure",
+        "zh": "南桥初始化失败"
+      }
+    },
+    "D3": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Required architectural protocols unavailable",
+        "zh": "部分必需的架构协议不可用"
+      }
+    },
+    "D4": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Insufficient resources for PCI allocation",
+        "zh": "PCI 资源分配失败：资源不足"
+      }
+    },
+    "D5": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Insufficient space for a legacy Option ROM",
+        "zh": "传统 Option ROM 空间不足"
+      }
+    },
+    "D6": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "No console output devices found",
+        "zh": "未找到控制台输出设备"
+      }
+    },
+    "D7": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "No console input devices found",
+        "zh": "未找到控制台输入设备"
+      }
+    },
+    "D8": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Invalid password",
+        "zh": "密码无效"
+      }
+    },
+    "D9": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Boot option image loading failed",
+        "zh": "启动项镜像加载失败（LoadImage 返回错误）"
+      }
+    },
+    "DA": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Boot option image execution failed",
+        "zh": "启动项镜像执行失败（StartImage 返回错误）"
+      }
+    },
+    "DB": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Firmware flash update failed",
+        "zh": "Flash 更新失败"
+      }
+    },
+    "DC": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Reset protocol unavailable",
+        "zh": "复位协议不可用"
+      }
+    },
+    "DD": {
+      "phase": "DXE",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "BMC self-test failed during DXE",
+        "zh": "DXE 阶段 BMC 自检失败"
+      }
+    },
+    "E0": {
+      "phase": "S3",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Starting resume from S3",
+        "zh": "开始从 S3 恢复（DXE IPL 调用 S3 Resume PPI）"
+      }
+    },
+    "E1": {
+      "phase": "S3",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Executing the S3 boot script",
+        "zh": "执行 S3 启动脚本"
+      }
+    },
+    "E2": {
+      "phase": "S3",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Reinitializing video during S3 resume",
+        "zh": "S3 恢复时重新初始化视频"
+      }
+    },
+    "E3": {
+      "phase": "S3",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Calling the OS S3 wake vector",
+        "zh": "调用操作系统 S3 唤醒向量"
+      }
+    },
+    "E8": {
+      "phase": "S3",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "S3 resume failed",
+        "zh": "S3 恢复失败"
+      }
+    },
+    "E9": {
+      "phase": "S3",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "S3 Resume PPI missing",
+        "zh": "未找到 S3 Resume PPI"
+      }
+    },
+    "EA": {
+      "phase": "S3",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "S3 boot script failure",
+        "zh": "S3 恢复启动脚本错误"
+      }
+    },
+    "EB": {
+      "phase": "S3",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "OS wake from S3 failed",
+        "zh": "操作系统 S3 唤醒失败"
+      }
+    },
+    "F0": {
+      "phase": "Recovery",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Firmware requested automatic recovery",
+        "zh": "固件触发自动恢复"
+      }
+    },
+    "F1": {
+      "phase": "Recovery",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "User requested forced recovery",
+        "zh": "用户触发强制恢复"
+      }
+    },
+    "F2": {
+      "phase": "Recovery",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Starting firmware recovery",
+        "zh": "开始固件恢复"
+      }
+    },
+    "F3": {
+      "phase": "Recovery",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Recovery firmware image located",
+        "zh": "已找到恢复固件镜像"
+      }
+    },
+    "F4": {
+      "phase": "Recovery",
+      "kind": "progress",
+      "stage": null,
+      "description": {
+        "en": "Recovery firmware image loaded",
+        "zh": "已加载恢复固件镜像"
+      }
+    },
+    "F8": {
+      "phase": "Recovery",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Recovery PPI unavailable",
+        "zh": "恢复 PPI 不可用"
+      }
+    },
+    "F9": {
+      "phase": "Recovery",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Recovery capsule missing",
+        "zh": "未找到恢复胶囊文件"
+      }
+    },
+    "FA": {
+      "phase": "Recovery",
+      "kind": "error",
+      "stage": null,
+      "description": {
+        "en": "Invalid recovery capsule",
+        "zh": "恢复胶囊文件无效"
+      }
+    }
+  },
+  "ranges": [
+    {
+      "first": "0C",
+      "last": "0D",
+      "phase": "SEC",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved SEC error code",
+        "zh": "SEC 保留错误码"
+      }
+    },
+    {
+      "first": "1D",
+      "last": "2A",
+      "phase": "PEI",
+      "kind": "oem",
+      "stage": null,
+      "description": {
+        "en": "OEM initialization before memory",
+        "zh": "内存初始化前的 OEM 初始化"
+      }
+    },
+    {
+      "first": "3F",
+      "last": "4E",
+      "phase": "PEI",
+      "kind": "oem",
+      "stage": null,
+      "description": {
+        "en": "OEM initialization after memory",
+        "zh": "内存初始化后的 OEM 初始化"
+      }
+    },
+    {
+      "first": "5C",
+      "last": "5F",
+      "phase": "PEI",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved PEI error code",
+        "zh": "PEI 保留错误码"
+      }
+    },
+    {
+      "first": "7A",
+      "last": "7F",
+      "phase": "DXE",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved DXE code",
+        "zh": "DXE 保留代码"
+      }
+    },
+    {
+      "first": "80",
+      "last": "8F",
+      "phase": "DXE",
+      "kind": "oem",
+      "stage": null,
+      "description": {
+        "en": "OEM DXE initialization",
+        "zh": "OEM DXE 初始化"
+      }
+    },
+    {
+      "first": "9E",
+      "last": "9F",
+      "phase": "BDS",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved BDS code",
+        "zh": "BDS 保留代码"
+      }
+    },
+    {
+      "first": "B8",
+      "last": "BF",
+      "phase": "BDS",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved BDS code",
+        "zh": "BDS 保留代码"
+      }
+    },
+    {
+      "first": "C0",
+      "last": "CF",
+      "phase": "BDS",
+      "kind": "oem",
+      "stage": null,
+      "description": {
+        "en": "OEM BDS initialization",
+        "zh": "OEM BDS 初始化"
+      }
+    },
+    {
+      "first": "E4",
+      "last": "E7",
+      "phase": "S3",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved S3 resume progress code",
+        "zh": "S3 恢复保留进度码"
+      }
+    },
+    {
+      "first": "EC",
+      "last": "EF",
+      "phase": "S3",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved S3 resume error code",
+        "zh": "S3 恢复保留错误码"
+      }
+    },
+    {
+      "first": "F5",
+      "last": "F7",
+      "phase": "Recovery",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved recovery progress code",
+        "zh": "固件恢复保留进度码"
+      }
+    },
+    {
+      "first": "FB",
+      "last": "FF",
+      "phase": "Recovery",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "en": "Reserved recovery error code",
+        "zh": "固件恢复保留错误码"
+      }
+    }
+  ],
+  "acpi": {
+    "01": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Entering S1 sleep",
+        "zh": "进入 S1 睡眠状态"
+      }
+    },
+    "02": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Entering S2 sleep",
+        "zh": "进入 S2 睡眠状态"
+      }
+    },
+    "03": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Entering S3 sleep",
+        "zh": "进入 S3 睡眠状态"
+      }
+    },
+    "04": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Entering S4 sleep",
+        "zh": "进入 S4 睡眠状态"
+      }
+    },
+    "05": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Entering S5 soft-off",
+        "zh": "进入 S5 软关机状态"
+      }
+    },
+    "10": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Waking from S1 sleep",
+        "zh": "从 S1 睡眠状态唤醒"
+      }
+    },
+    "20": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Waking from S2 sleep",
+        "zh": "从 S2 睡眠状态唤醒"
+      }
+    },
+    "30": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Waking from S3 sleep",
+        "zh": "从 S3 睡眠状态唤醒"
+      }
+    },
+    "40": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "Waking from S4 sleep",
+        "zh": "从 S4 睡眠状态唤醒"
+      }
+    },
+    "AA": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "ACPI mode entered with APIC interrupt routing",
+        "zh": "已进入 ACPI 模式，中断控制器处于 APIC 模式"
+      }
+    },
+    "AC": {
+      "phase": "ACPI/ASL",
+      "kind": "runtime",
+      "stage": null,
+      "description": {
+        "en": "ACPI mode entered with PIC interrupt routing",
+        "zh": "已进入 ACPI 模式，中断控制器处于 PIC 模式"
+      }
+    }
+  }
+}

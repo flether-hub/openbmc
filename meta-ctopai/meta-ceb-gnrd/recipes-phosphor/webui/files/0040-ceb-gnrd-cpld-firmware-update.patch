@@ -1,6 +1,10 @@
-Subject: [PATCH] CEB-GNRD: add guarded CPLD firmware update page
+Subject: [PATCH] webui: add CPLD firmware updates through guarded JTAG service
 
-Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+Use matching firmware upload controls, retain bounded job monitoring across
+navigation/reconnects and distinguish lost status from expected BMC reload.
+Report verified Flash separately from full Refresh-sequence confirmation.
+
+Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 
 --- a/src/views/Operations/Firmware/Firmware.vue
 +++ b/src/views/Operations/Firmware/Firmware.vue
@@ -57,7 +61,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
        if (this.isServerPowerOffRequired) {
 --- /dev/null
 +++ b/src/views/Operations/Firmware/FirmwareCpldUpdate.vue
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,192 @@
 +<template>
 +  <page-section :section-title="$t('pageCpld.title')">
 +    <b-row>
@@ -88,9 +92,18 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +          <b-progress :value="status.progress || 0" :max="100" show-progress
 +            :variant="status.phase === 'Failed' ? 'danger' : 'primary'" />
 +          <p class="mt-2">{{ status.detail }}</p>
-+          <p v-if="disconnected">{{ $t('pageCpld.reconnecting') }}</p>
++          <p v-if="status.phase === 'Verifying'">{{ $t('pageCpld.automaticRefresh') }}</p>
++          <p v-if="pending && !pending.expired">
++            {{ $t('pageCpld.remaining', { seconds: remainingSeconds }) }}
++          </p>
++          <p v-if="disconnected">
++            {{ $t(status.phase === 'AwaitBmcReboot' ? 'pageCpld.reconnecting' : 'pageCpld.connectionLost') }}
++          </p>
 +          <p v-if="status.sha256" class="small text-break">SHA256: {{ status.sha256 }}</p>
 +          <p v-if="status.phase === 'Completed'">{{ $t('pageCpld.completed') }}</p>
++          <alert v-if="status.phase === 'Completed' && status.refreshSequenceCompleted !== true" variant="warning">
++            {{ $t('pageCpld.refreshUnconfirmed') }}
++          </alert>
 +        </div>
 +      </b-col>
 +    </b-row>
@@ -113,10 +126,11 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +  emits: ['busy-change'],
 +  data() {
 +    return { file: null, status: {}, loaded: false, submitting: false,
-+      error: '', disconnected: false, pending: null, timer: null, disposed: false };
++      error: '', disconnected: false, pending: null, timer: null, disposed: false, now: Date.now() };
 +  },
 +  computed: {
 +    busy() { return this.submitting || !!this.pending || active.includes(this.status.phase); },
++    remainingSeconds() { return this.pending ? Math.max(0, Math.ceil((this.pending.deadline - this.now) / 1000)) : 0; },
 +  },
 +  watch: {
 +    busy: { immediate: true, handler(value) { this.$emit('busy-change', value); } },
@@ -227,7 +241,8 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +        this.disconnected = true;
 +        if (!this.pending) this.error = this.$t('pageCpld.unavailable');
 +      }
-+      if (this.pending && !this.pending.expired && Date.now() >= this.pending.deadline) {
++      this.now = Date.now();
++      if (this.pending && !this.pending.expired && this.now >= this.pending.deadline) {
 +        this.error = this.$t('pageCpld.timeout');
 +        // Keep the original deadline across reconnects; never rearm 10 minutes.
 +        this.remember({ ...this.pending, expired: true });
@@ -241,7 +256,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +</script>
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -1446,5 +1446,34 @@
+@@ -1446,5 +1446,38 @@
          "RPM": "RPM",
          "V": "V",
          "W": "W"
@@ -260,6 +275,10 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +    "cancelFailed": "Unable to cancel. Programming may already have started.",
 +    "unavailable": "CPLD update service is unavailable.",
 +    "reconnecting": "Waiting for the BMC to reconnect. Do not remove power.",
++    "automaticRefresh": "After every Flash page passes verification, JTAG Refresh activates the image automatically and the page waits for BMC recovery.",
++    "connectionLost": "Connection to the BMC was lost. The displayed progress is the last received state; Refresh has not been confirmed by this page. Rechecking the existing job.",
++    "remaining": "Time remaining in the complete update: {seconds} seconds.",
++    "refreshUnconfirmed": "Completion of the full JTAG Refresh sequence was not recorded. Flash was verified and a new BMC boot was observed; confirm CPLD operation and automatic power recovery separately.",
 +    "timeout": "The 10-minute monitoring timeout expired. Check the server update status before retrying.",
 +    "completed": "Flash readback verification passed and a new BMC boot was detected. The running CPLD version has not been read back.",
 +    "phases": {
@@ -269,7 +288,7 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 +      "Erasing": "Erasing internal Flash",
 +      "Writing": "Writing firmware",
 +      "Verifying": "Verifying Flash readback",
-+      "AwaitBmcReboot": "Reloading CPLD / waiting for BMC restart",
++      "AwaitBmcReboot": "JTAG Refresh / waiting for BMC restart",
 +      "Completed": "Flash verified / BMC restarted",
 +      "Failed": "Update failed",
 +      "Cancelled": "Update cancelled"

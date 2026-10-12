@@ -9,36 +9,24 @@ This service watches the POST codes from phosphor-host-postd
 BootProgressLastUpdate on /xyz/openbmc_project/state/host0, where the IPMI
 Boot_Progress sensor and the web discrete sensor table read it.
 
-The code ranges follow the public AMI Aptio checkpoint list plus Intel's
-memory reference code (MRC) range; the BIOS vendor's POST code document for the
-GNR-D BIOS is authoritative and STAGES below must be adjusted to it:
-
-  0x01-0x0F  SEC                                      PrimaryProcInit
-  0x10-0x2A  PEI, before memory                       PrimaryProcInit
-  0x2B-0x30  PEI memory initialisation (AMI)          MemoryInit
-  0xB0-0xDF  Intel MRC memory training (PEI only)     MemoryInit
-  0x31-0x5F  PEI after memory (CPU, chipset)          SecondaryProcInit
-  0x60-0x67  DXE core, CPU                            SecondaryProcInit
-  0x68-0x6F  DXE PCI host bridge                      PCIInit
-  0x70-0x91  DXE chipset, devices                     MotherboardInit
-  0x92-0x99  PCI bus enumeration                      PCIInit
-  0x9A-0xAC  USB, SATA, consoles, boot devices        MotherboardInit
-  0xAD-0xAF  ready to boot / exit boot services       OSStart
-
-Other codes (S3 resume 0xE0-0xEF, recovery and errors 0xF0-0xFF, DXE codes
-outside the ranges) leave the stage unchanged.  BIOS POST complete
-(BMC_BIOS_BOOT_OK, OperatingSystemState Standby from x86-power-control) also
-means OSStart; host power off resets the stage to Unspecified.
-
-A separate board interface preserves the latest raw POST code and generic AMI
-checkpoint for Web display. POST-complete polling does not overwrite that
-checkpoint. No POST checkpoint is treated as proof that the OS is running.
+Checkpoint meanings and stages use the same AMI Aptio V reference catalog
+as the POST-code log page. Exact error definitions take priority over broad
+ranges. OEM, reserved and unknown codes do not advance boot progress; the
+raw code is retained and the Web page reports that no definition matched.
+The old guessed Intel MRC overlap at 0xB0-0xDF is intentionally removed:
+the supplied reference defines B0/B1 as runtime mapping and D0-DD as errors.
+ACPI/ASL codes reuse some POST values. After a boot handoff, these reused
+values do not regress the coarse stage to CPU/memory initialization. The
+Web explanation shows both documented meanings where context is ambiguous.
+No POST code is proof that the OS is running. BIOS POST complete means
+OSStart; host power off or a detected warm reset clears the coarse stage.
 
 Redfish ComputerSystem BootProgress is read by bmcweb from the host state
 service (x86-power-control) only, so it does not show this value.
 """
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -65,88 +53,35 @@ OS_STATE = ("xyz.openbmc_project.State.OperatingSystem", "/xyz/openbmc_project/s
 POLL_SECONDS = 2
 DETAIL_IFACE = "com.ctopai.CebGnrd.BootProgressDetail"
 
-# Generic AMI checkpoints, not a vendor-specific GNR-D BIOS contract.
-# Do not interpret reserved/OEM/error codes as ordinary boot milestones.
-CHECKPOINTS = {
-    0x01: "ResetDetection",
-    0x02: "APBeforeMicrocode",
-    0x03: "SystemAgentBeforeMicrocode",
-    0x04: "PCHBeforeMicrocode",
-    0x06: "MicrocodeLoad",
-    0x07: "APAfterMicrocode",
-    0x08: "SystemAgentAfterMicrocode",
-    0x09: "PCHAfterMicrocode",
-    0x0B: "CacheInit",
-    0x10: "PEICore",
-    0x31: "MemoryInstalled",
-    0x4F: "DXEIPL",
-    0x60: "DXECore",
-    0x61: "NVRAMInit",
-    0x62: "PCHRuntime",
-    0x68: "PCIHostBridge",
-    0x69: "SystemAgentDXE",
-    0x6A: "SystemAgentSMM",
-    0x70: "PCHDXE",
-    0x71: "PCHSMM",
-    0x72: "PCHDevices",
-    0x78: "ACPIInit",
-    0x79: "CSMInit",
-    0x90: "BootDeviceSelection",
-    0x91: "DriverConnection",
-    0x92: "PCIBusInit",
-    0x93: "PCIHotPlugInit",
-    0x94: "PCIEnumeration",
-    0x95: "PCIResourceRequest",
-    0x96: "PCIResourceAssignment",
-    0x97: "ConsoleOutput",
-    0x98: "ConsoleInput",
-    0x99: "SuperIOInit",
-    0x9A: "USBInit",
-    0x9B: "USBReset",
-    0x9C: "USBDetection",
-    0x9D: "USBEnable",
-    0xA0: "IDEInit",
-    0xA1: "IDEReset",
-    0xA2: "IDEDetection",
-    0xA3: "IDEEnable",
-    0xA4: "SCSIInit",
-    0xA5: "SCSIReset",
-    0xA6: "SCSIDetection",
-    0xA7: "SCSIEnable",
-    0xA8: "SetupPassword",
-    0xA9: "BIOSSetup",
-    0xAB: "SetupInput",
-    0xAD: "ReadyToBoot",
-    0xAE: "LegacyBoot",
-    0xAF: "ExitBootServices",
-    0xB0: "VirtualAddressMapBegin",
-    0xB1: "VirtualAddressMapEnd",
-}
-CHECKPOINT_RANGES = (
-    (0x11, 0x14, "CPUBeforeMemory"),
-    (0x15, 0x18, "SystemAgentBeforeMemory"),
-    (0x19, 0x1C, "PCHBeforeMemory"),
-    (0x2B, 0x2F, "MemoryInit"),
-    (0x32, 0x36, "CPUAfterMemory"),
-    (0x37, 0x3A, "SystemAgentAfterMemory"),
-    (0x3B, 0x3E, "PCHAfterMemory"),
-    (0x63, 0x67, "CPUDXE"),
-    (0x6B, 0x6F, "SystemAgentDXE"),
-    (0x73, 0x77, "PCHDXE"),
-)
+CATALOG_PATH = "/usr/share/ceb-gnrd/ami-aptio-v-post-codes.json"
+with open(CATALOG_PATH, encoding="utf-8") as catalog_file:
+    CATALOG = json.load(catalog_file)
 
 
-def checkpoint_for(code, in_pei):
-    # This platform also uses Intel MRC codes overlapping AMI runtime codes.
-    # Keep their raw value without claiming a specific training operation.
-    if in_pei and 0xB0 <= code <= 0xDF:
-        return "PlatformSpecific"
-    if code in CHECKPOINTS:
-        return CHECKPOINTS[code]
-    for first, last, detail in CHECKPOINT_RANGES:
-        if first <= code <= last:
-            return detail
-    return "Unknown"
+def definition_for(code):
+    if not isinstance(code, int) or not 0 <= code <= 0xFF:
+        return None
+    key = "%02X" % code
+    if key in CATALOG["codes"]:
+        return CATALOG["codes"][key]
+    for entry in CATALOG["ranges"]:
+        if int(entry["first"], 16) <= code <= int(entry["last"], 16):
+            return entry
+    return None
+
+
+def checkpoint_for(code):
+    return "Post%02X" % code if definition_for(code) else "Unknown"
+
+
+def stage_for(code, after_handoff=False):
+    entry = definition_for(code)
+    if entry is None:
+        return None
+    # SEC/PEI values can also describe ACPI sleep transitions after boot.
+    if after_handoff and "%02X" % code in CATALOG["acpi"]:
+        return None
+    return entry.get("stage")
 
 
 class Checkpoint(ServiceInterface):
@@ -154,6 +89,7 @@ class Checkpoint(ServiceInterface):
         super().__init__(DETAIL_IFACE)
         self.detail = ""
         self.code = ""
+        self.kind = ""
 
     @dbus_property(access=PropertyAccess.READ)
     def BootCheckpoint(self) -> "s":
@@ -163,34 +99,16 @@ class Checkpoint(ServiceInterface):
     def BootPostCode(self) -> "s":
         return self.code
 
-    def set(self, detail, code=""):
-        if (detail, code) == (self.detail, self.code):
+    @dbus_property(access=PropertyAccess.READ)
+    def BootPostCodeKind(self) -> "s":
+        return self.kind
+
+    def set(self, detail, code="", kind=""):
+        if (detail, code, kind) == (self.detail, self.code, self.kind):
             return
-        self.detail, self.code = detail, code
-        self.emit_properties_changed({"BootCheckpoint": detail, "BootPostCode": code})
-
-
-# (first code, last code, stage, PEI only)
-STAGES = [
-    (0x01, 0x0F, "PrimaryProcInit", False),
-    (0x10, 0x2A, "PrimaryProcInit", False),
-    (0x2B, 0x30, "MemoryInit", False),
-    (0xB0, 0xDF, "MemoryInit", True),
-    (0x31, 0x5F, "SecondaryProcInit", False),
-    (0x60, 0x67, "SecondaryProcInit", False),
-    (0x68, 0x6F, "PCIInit", False),
-    (0x70, 0x91, "MotherboardInit", False),
-    (0x92, 0x99, "PCIInit", False),
-    (0x9A, 0xAC, "MotherboardInit", False),
-    (0xAD, 0xAF, "OSStart", False),
-]
-
-
-def stage_for(code, in_pei):
-    for first, last, stage, pei_only in STAGES:
-        if first <= code <= last and (in_pei or not pei_only):
-            return stage
-    return None
+        self.detail, self.code, self.kind = detail, code, kind
+        self.emit_properties_changed({"BootCheckpoint": detail, "BootPostCode": code,
+                                      "BootPostCodeKind": kind})
 
 
 def sd_notify(message):
@@ -232,17 +150,17 @@ class Progress(ServiceInterface):
 
 
 def post_code_of(value):
-    """First byte of the POST code from Boot.Raw Value: (ay ay) or (t ay)."""
+    """Raw POST value from Boot.Raw: (ay ay) or (t ay), without truncation."""
     if isinstance(value, Variant):
         value = value.value
     if isinstance(value, (list, tuple)) and value:
         first = value[0]
         if isinstance(first, (bytes, bytearray, list)):
-            return first[0] if len(first) else None
+            return int.from_bytes(first, "big") if len(first) else None
         if isinstance(first, int):
-            return first & 0xFF
+            return first
     if isinstance(value, int):
-        return value & 0xFF
+        return value
     return None
 
 
@@ -263,7 +181,7 @@ async def main():
     checkpoint = Checkpoint()
     bus.export(HOST_PATH, checkpoint)
     await bus.request_name(BUS_NAME)
-    state = {"pei": True}
+    state = {"standby": False, "handoff": False}
 
     def on_message(msg):
         if (msg.message_type != MessageType.SIGNAL or msg.member != "PropertiesChanged"
@@ -275,12 +193,17 @@ async def main():
         code = post_code_of(changed["Value"])
         if code is None:
             return
-        if code >= 0x60 and code < 0xB0:
-            state["pei"] = False          # DXE reached: 0xB0-0xDF is no longer MRC
-        checkpoint.set(checkpoint_for(code, state["pei"]), "0x%02X" % code)
-        stage = stage_for(code, state["pei"])
+        entry = definition_for(code)
+        checkpoint.set(checkpoint_for(code), "0x%02X" % code,
+                       entry["kind"] if entry else "unknown")
+        if code == 0xB3:
+            state["handoff"] = False
+            progress.set("Unspecified", "BIOS system reset checkpoint")
+        stage = stage_for(code, state["handoff"])
         if stage:
             progress.set(stage, "POST code 0x%02X" % code)
+            if stage == "OSStart":
+                state["handoff"] = True
 
     bus.add_message_handler(on_message)
     match = ("type='signal',interface='%s',member='PropertiesChanged',"
@@ -296,7 +219,7 @@ async def main():
         try:
             power = str(await get_property(bus, *CHASSIS))
             if not power.endswith(".On"):
-                state["pei"] = True
+                state["handoff"] = False
                 progress.set("Unspecified", "host off")
                 checkpoint.set("")
                 state["standby"] = False
@@ -305,10 +228,12 @@ async def main():
                 standby = os_state.endswith(".Standby")
                 if standby and not checkpoint.detail:
                     checkpoint.set("POSTComplete")
-                if standby and progress.stage != "OSStart":
-                    progress.set("OSStart", "BIOS POST complete")
+                if standby and not state["standby"]:
+                    state["handoff"] = True
+                    if checkpoint.kind != "error":
+                        progress.set("OSStart", "BIOS POST complete")
                 if state.get("standby") and not standby:
-                    state["pei"] = True   # warm reset: the next POST starts over
+                    state["handoff"] = False   # warm reset: the next POST starts over
                     checkpoint.set("")
                     progress.set("Unspecified", "BIOS POST complete deasserted")
                 state["standby"] = standby

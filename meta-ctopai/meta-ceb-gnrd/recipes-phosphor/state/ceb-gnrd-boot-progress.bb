@@ -8,6 +8,7 @@ inherit allarch systemd
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = " \
     file://ceb-gnrd-boot-progress.py \
+    file://ami-aptio-v-post-codes.json \
     file://ceb-gnrd-boot-progress.service \
     "
 
@@ -22,18 +23,21 @@ RDEPENDS:${PN} = " \
     python3-core \
     python3-asyncio \
     python3-logging \
+    python3-json \
     python3-netclient \
     python3-xml \
     python3-dbus-fast \
     "
 
 do_install() {
-    install -d ${D}${libexecdir} ${D}${systemd_system_unitdir}
+    install -d ${D}${libexecdir} ${D}${systemd_system_unitdir} ${D}${datadir}/ceb-gnrd
+    install -m 0644 ${UNPACKDIR}/ami-aptio-v-post-codes.json ${D}${datadir}/ceb-gnrd/ami-aptio-v-post-codes.json
     install -m 0755 ${UNPACKDIR}/ceb-gnrd-boot-progress.py ${D}${libexecdir}/ceb-gnrd-boot-progress.py
     install -m 0644 ${UNPACKDIR}/ceb-gnrd-boot-progress.service ${D}${systemd_system_unitdir}/ceb-gnrd-boot-progress.service
 }
 
 FILES:${PN} += " \
+    ${datadir}/ceb-gnrd/ami-aptio-v-post-codes.json \
     ${libexecdir}/ceb-gnrd-boot-progress.py \
     ${systemd_system_unitdir}/ceb-gnrd-boot-progress.service \
     "
