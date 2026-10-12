@@ -4,4 +4,7 @@
 PACKAGECONFIG:remove:ceb-gnrd = "persist-mac sync-mac"
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-preserve-ncsi-manual-activation.patch"
+SRC_URI:append:ceb-gnrd = " \
+    file://0001-ceb-gnrd-preserve-ncsi-manual-activation.patch \
+    file://0002-ceb-gnrd-skip-timesyncd-query-when-ntp-disabled.patch \
+    "

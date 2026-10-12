@@ -1,0 +1,19 @@
+Subject: [PATCH] overview: remove source version text from firmware card
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware overview]
+
+--- a/src/views/Overview/OverviewFirmware.vue
++++ b/src/views/Overview/OverviewFirmware.vue
+@@ -18,12 +18,6 @@
+           <dd class="text-break">{{ dataFormatter(buildInfo.BuildId) }}</dd>
+         </dl>
+       </b-col>
+-      <b-col sm="12">
+-        <dl>
+-          <dt>{{ $t('pageOverview.sourceVersion') }}</dt>
+-          <dd class="text-break">{{ dataFormatter(buildInfo.ExtendedVersion) }}</dd>
+-        </dl>
+-      </b-col>
+       <b-col v-if="gitCommit" sm="6">
+         <dl>
+           <dt>{{ $t('pageOverview.gitCommit') }}</dt>

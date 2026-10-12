@@ -1,0 +1,46 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] network: skip timesyncd server query when NTP is disabled
+
+The Web manual-time setting disables systemd-timesyncd, removing its D-Bus
+activation alias. Querying timesync1 then produces avoidable broker and
+network-manager errors. Check unit enablement before the query and skip
+only explicitly disabled or masked services. Preserve static NTP server
+configuration, and continue reporting unexpected errors for enabled NTP.
+
+Upstream-Status: Inappropriate [CEB-GNRD optional NTP policy]
+---
+
+--- a/src/ethernet_interface.cpp
++++ b/src/ethernet_interface.cpp
+@@ -681,6 +681,31 @@
+ ServerList EthernetInterface::getNTPServerFromTimeSyncd()
+ {
+     ServerList servers; // Variable to capture the NTP Server IPs
++    // Manual time disables timesyncd and removes its D-Bus activation
++    // alias. Do not activate it just to query optional learned servers.
++    // Check enablement rather than NTP synchronization or active state:
++    // an enabled service that failed must still report its query error.
++    try
++    {
++        auto stateMethod = bus.get().new_method_call(
++            "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
++            "org.freedesktop.systemd1.Manager", "GetUnitFileState");
++        stateMethod.append("systemd-timesyncd.service");
++        auto stateReply = bus.get().call(stateMethod);
++        const auto state = stateReply.unpack<std::string>();
++        if (state == "disabled" || state == "masked" ||
++            state == "masked-runtime")
++        {
++            return servers;
++        }
++    }
++    catch (const sdbusplus::exception_t& e)
++    {
++        lg2::error("Failed to read systemd-timesyncd enablement: {ERROR}",
++                   "ERROR", e);
++        return servers;
++    }
++
+     auto method =
+         bus.get().new_method_call(TIMESYNCD_SERVICE, TIMESYNCD_SERVICE_PATH,
+                                   PROPERTY_INTERFACE, METHOD_GET);

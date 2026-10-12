@@ -8,7 +8,7 @@ Upstream-Status: Inappropriate [CEB-GNRD firmware page]
          <alert v-if="status.phase !== 'Completed'" variant="warning">
            {{ $t('pageCpld.shutdownWarning') }}
          </alert>
-+        <h2 class="h3 mb-3">
++        <h2 class="h3 fw-light mb-3">
 +          {{ $t('pageFirmware.sectionTitleUpdateFirmware') }}
 +        </h2>
          <div class="form-background p-3">

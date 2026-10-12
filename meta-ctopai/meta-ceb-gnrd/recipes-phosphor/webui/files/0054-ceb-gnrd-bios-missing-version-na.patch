@@ -1,0 +1,18 @@
+Subject: [PATCH] firmware: show N/A for an unavailable BIOS version
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware page]
+
+--- a/src/views/Operations/Firmware/FirmwareCardsBios.vue
++++ b/src/views/Operations/Firmware/FirmwareCardsBios.vue
+@@ -28,7 +28,10 @@
+       return this.$store.getters['firmware/activeBiosFirmware'];
+     },
+     runningVersion() {
+-      return this.running?.version || '--';
++      const version = this.running?.version;
++      if (version === null || version === undefined) return 'N/A';
++      const text = String(version).trim();
++      return !text || /^(null|undefined)$/i.test(text) ? 'N/A' : text;
+     },
+   },
+ };

@@ -1,0 +1,130 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] pid: skip host-powered tach failures while host is off
+
+CEB-GNRD fan tach sensors are unavailable with host DC power off. Initialize
+the host monitor before creating zones and gate tach failure logging and
+timeout checks on a confirmed Host Off state. Keep thermal control and PWM
+writes active. Running, transitional and unknown states retain fan checks.
+
+Upstream-Status: Inappropriate [CEB-GNRD host-powered fan policy]
+---
+
+--- a/hoststatemonitor.hpp
++++ b/hoststatemonitor.hpp
+@@ -40,6 +40,12 @@
+         return powerStatusOn;
+     }
+ 
++    // Unknown and transitional states must retain failure checks.
++    bool isPowerOff() const
++    {
++        return powerStatusOff;
++    }
++
+   private:
+     explicit HostStateMonitor(sdbusplus::bus_t& bus);
+ 
+@@ -48,6 +54,7 @@
+ 
+     sdbusplus::bus_t& bus;
+     bool powerStatusOn;
++    bool powerStatusOff = false;
+     std::unique_ptr<sdbusplus::match> hostStateMatch;
+ };
+ 
+@@ -82,6 +89,9 @@
+             [this](sdbusplus::message_t& message) {
+                 handleStateChange(message);
+             });
++        // Subscribe before refreshing the initial state so a power
++        // change during initialization cannot be missed.
++        getInitialState();
+     }
+ }
+ 
+@@ -106,6 +116,7 @@
+             const std::string& stateValue =
+                 std::get<std::string>(findState->second);
+             bool newPowerStatus = stateValue.ends_with(".Running");
++            powerStatusOff = stateValue.ends_with(".Off");
+ 
+             if (newPowerStatus != powerStatusOn)
+             {
+@@ -135,9 +146,11 @@
+ 
+         const std::string& stateValue = std::get<std::string>(currentState);
+         powerStatusOn = stateValue.ends_with(".Running");
++        powerStatusOff = stateValue.ends_with(".Off");
+     }
+     catch (const std::exception& e)
+     {
+         powerStatusOn = false;
++        powerStatusOff = false;
+     }
+ }
+--- a/main.cpp
++++ b/main.cpp
+@@ -414,12 +414,12 @@
+      * it.
+      */
+ 
+-    pid_control::tryRestartControlLoops();
+-
+-    /* setup host state monitor */
++    /* setup host state monitor before initializing fan telemetry */
+     auto& monitor = HostStateMonitor::getInstance(hostMatchBus);
+     monitor.startMonitoring();
+ 
++    pid_control::tryRestartControlLoops();
++
+     io.run();
+     return 0;
+ }
+--- a/pid/zone.hpp
++++ b/pid/zone.hpp
+@@ -3,6 +3,7 @@
+ #include "conf.hpp"
+ #include "controller.hpp"
+ #include "failsafeloggers/failsafe_logger_utility.hpp"
++#include "hoststatemonitor.hpp"
+ #include "interfaces.hpp"
+ #include "pidcontroller.hpp"
+ #include "sensors/manager.hpp"
+@@ -179,6 +180,18 @@
+                           << "\n";
+             }
+ 
++            if constexpr (fanSensorLogging)
++            {
++                if (HostStateMonitor::getInstance().isPowerOff())
++                {
++                    // Tach inputs are unavailable while host power is
++                    // off. Skip reader failure logs and timeout checks.
++                    // Retain cached readings and normal PWM control.
++                    _failSafeSensors.erase(sensorInput);
++                    continue;
++                }
++            }
++
+             // check if fan fail.
+             if (sensor->getFailed())
+             {
+--- a/pid/zone.cpp
++++ b/pid/zone.cpp
+@@ -97,6 +97,16 @@
+ void DbusPidZone::markSensorMissing(const std::string& name,
+                                     const std::string& failReason)
+ {
++    // Also cover initializeCache(), which marks inputs missing before
++    // the first telemetry update. Only confirmed Off suppresses fans.
++    if (HostStateMonitor::getInstance().isPowerOff() &&
++        std::find(_fanInputs.begin(), _fanInputs.end(), name) !=
++            _fanInputs.end())
++    {
++        _failSafeSensors.erase(name);
++        return;
++    }
++
+     if (_missingAcceptable.find(name) != _missingAcceptable.end())
+     {
+         // Disallow sensors in MissingIsAcceptable list from causing failsafe

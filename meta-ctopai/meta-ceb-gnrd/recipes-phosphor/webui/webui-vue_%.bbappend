@@ -53,6 +53,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0051-ceb-gnrd-firmware-upload-labels.patch \
     file://0052-ceb-gnrd-cpld-update-firmware-heading.patch \
     file://0053-ceb-gnrd-overview-existing-build-info.patch \
+    file://0054-ceb-gnrd-bios-missing-version-na.patch \
+    file://0055-ceb-gnrd-hide-overview-source-version.patch \
     file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "
