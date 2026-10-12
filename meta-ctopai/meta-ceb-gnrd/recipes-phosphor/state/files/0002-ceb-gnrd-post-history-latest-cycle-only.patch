@@ -1,0 +1,32 @@
+Subject: [PATCH] post codes: discard previous archives when the next cycle starts
+
+Upstream-Status: Inappropriate [CEB-GNRD latest boot history]
+
+--- a/src/post_code.cpp
++++ b/src/post_code.cpp
+@@ -213,11 +213,9 @@
+     {
+         return;
+     }
+-    if (serialize(postCodeListPath).empty())
+-    {
+-        // Keep the records if persistence fails, rather than losing them.
+-        return;
+-    }
++    // Retain the latest completed cycle while powered off when possible.
++    // Even a persistence failure must not mix the next boot with old RAM data.
++    serialize(postCodeListPath);
+     postCodes.clear();
+     phosphor::logging::log<phosphor::logging::level::INFO>(
+         "POST cycle archived after host Off/reset state event");
+@@ -243,6 +241,10 @@
+ 
+     if (postCodes.empty())
+     {
++        // The first POST write after the host Off/reset boundary starts the
++        // latest cycle. Remove older archives and metadata before recording it.
++        // Keep the last completed cycle readable while the host stays off.
++        deleteAll();
+         firstPostCodeTimeSteady = postCodeTimeSteady;
+         firstPostCodeUsSinceEpoch = tsUS; // uS since epoch for 1st post code
+         incrBootCycle();

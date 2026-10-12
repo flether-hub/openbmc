@@ -1,0 +1,152 @@
+Subject: [PATCH] webui: distinguish AMI and Intel reference POST meanings by sequence
+
+Use DXE/BDS anchors per boot cycle before accepting a boot handoff. Keep
+unmapped platform bytes unknown instead of applying generic AMI errors.
+Intel memory names are reference meanings, not verified GNR-D mappings.
+
+Upstream-Status: Inappropriate [CEB-GNRD POST sequence policy]
+
+--- a/src/utils/amiPostCodes.js
++++ b/src/utils/amiPostCodes.js
+@@ -23,75 +23,74 @@
+   );
+ }
+ 
+-function inRange(key, name) {
+-  const [first, last] = catalog.contextRules[name];
+-  return key !== null && key >= first && key <= last;
++function newContext() {
++  return { phase: 'unknown', ready: false, handoff: false };
+ }
+ 
+-// Keep these rules aligned with PostContext in ceb-gnrd-boot-progress.py.
+-// This is a sequence hint, not confirmation of the GNR-D Intel RC code table.
++// Phase anchors are sequence hints for this board, not proof of which module
++// wrote a byte. Keep these rules aligned with the BootProgress service.
+ function consumeContext(state, key) {
++  if (!key) return 'unresolved';
+   const entry = definition(key);
+-  if (!entry) return '';
+-  let context = '';
+-  if (state.handoff && catalog.acpi[key]) context = 'acpi';
+-  else if (state.memoryPending && inRange(key, 'intelMemory'))
+-    context = 'intelMemory';
+-  else if (inRange(key, 'intelMemory') && !(state.lateBoot || state.handoff))
+-    context = 'intelAmbiguous';
+-  else if (inRange(key, 'intelMemoryErrors'))
+-    context = state.s3 ? 's3' : state.memoryPending ? 'intelMemoryError' : '';
+-
+-  if (
+-    ['acpi', 'intelMemory', 'intelAmbiguous', 'intelMemoryError'].includes(context)
+-  )
+-    return context;
+-  if (inRange(key, 'preMemory') && !state.handoff) {
+-    state.memoryPending = true;
+-    state.s3 = false;
+-  } else if (
+-    ['progress', 'runtime'].includes(entry.kind) &&
+-    (inRange(key, 'postMemory') || inRange(key, 'laterBoot'))
+-  ) {
+-    state.memoryPending = false;
+-    state.s3 = false;
+-    if (inRange(key, 'laterBoot')) state.lateBoot = true;
++  const rules = catalog.sequenceRules;
++  if (state.handoff && catalog.acpi[key]) return 'acpi';
++  if (key === '01' || (key === '10' && state.phase === 'unknown')) {
++    Object.assign(state, newContext(), { phase: 'pei' });
+   }
+-  if (inRange(key, 's3Progress')) {
+-    state.memoryPending = false;
+-    state.s3 = true;
+-  } else if (inRange(key, 'recoveryProgress') || key === 'B3') {
+-    Object.assign(state, {
+-      memoryPending: false,
+-      handoff: false,
+-      s3: false,
+-      lateBoot: false,
+-    });
+-  } else if (catalog.contextRules.handoff.includes(key)) {
+-    state.memoryPending = false;
++  if (!state.handoff && rules.dxeEntry.includes(key)) {
++    if (state.phase !== 'bds') state.phase = 'dxe';
++    return 'ami';
++  }
++  if (key === rules.bdsEntry && ['dxe', 'bds'].includes(state.phase)) {
++    state.phase = 'bds';
++    return 'ami';
++  }
++  if (state.phase === 'pei') {
++    if (key >= 'B0' && key <= 'BF') return 'intelMemory';
++    if (entry?.kind === 'progress' && rules.earlyAmiProgress.some(
++      ([first, last]) => key >= first && key <= last,
++    )) return 'ami';
++    // Includes early AA/AF, D*/E* and 50/55. Do not turn an unverified
++    // platform meaning into an AMI BDS, S3 or fatal-error diagnosis.
++    return 'intelPlatform';
++  }
++  if (state.phase === 'unknown') return 'unresolved';
++  if (state.phase === 'bds' && key === rules.readyToBoot) state.ready = true;
++  if (state.phase === 'bds' && state.ready && rules.bootExit.includes(key)) {
+     state.handoff = true;
+-    state.s3 = false;
+   }
+-  return context;
++  if (state.phase === 'bds' && key === 'B3') {
++    Object.assign(state, newContext());
++    return 'amiReset';
++  }
++  if (!entry || ['reserved', 'oem'].includes(entry.kind) ||
++      !['DXE', 'BDS'].includes(entry.phase)) return 'platformUnknown';
++  if (entry.phase === 'BDS' && state.phase !== 'bds') return 'platformUnknown';
++  return 'ami';
+ }
+ 
+-export function describePostCode(value, locale = 'en-US') {
++export function describePostCode(value, locale = 'en-US', context = '') {
+   const language = String(locale).startsWith('zh') ? 'zh' : 'en';
+   const key = codeKey(value);
+   const entry = definition(key);
+   const unmatched = catalog.unmatched[language];
++  const labels = catalog.contextText;
++  if (context === 'intelMemory') {
++    return `${labels.intelMemory[language]}: ${catalog.intelMemory[key]?.[language] || unmatched}`;
++  }
++  if (['intelPlatform', 'platformUnknown', 'unresolved'].includes(context)) {
++    return `${labels[context][language]}: ${unmatched}`;
++  }
++  if (context === 'acpi' && catalog.acpi[key]) {
++    return `AMI ACPI/ASL: ${catalog.acpi[key].description[language]}`;
++  }
++  // A single code without sequence context is a reference-table lookup.
++  // Never claim that this lookup establishes the actual writer or phase.
+   let text = unmatched;
+   if (entry) {
+-    const error =
+-      entry.kind === 'error' ? (language === 'zh' ? ' 错误' : ' error') : '';
+-    text = `${entry.phase}${error}: ${entry.description[language]}`;
++    const error = entry.kind === 'error' ? (language === 'zh' ? ' 错误' : ' error') : '';
++    text = `${labels.amiReference[language]} / ${entry.phase}${error}: ${entry.description[language]}`;
+     if (['reserved', 'oem'].includes(entry.kind)) text += `; ${unmatched}`;
+-  }
+-  // Show documented meanings only; omit unconfirmed Intel RC alternatives.
+-  const acpi = key && catalog.acpi[key];
+-  if (acpi && entry?.phase !== 'ACPI/ASL') {
+-    const or = language === 'zh' ? '或' : 'or';
+-    text += `; ${or} ACPI/ASL: ${acpi.description[language]}`;
+   }
+   return text;
+ }
+@@ -117,12 +116,7 @@
+     // the table's newest-first order, display sort, or second-resolution date.
+     const indexes = new Set(group.map((row) => row.index));
+     if (indexes.size !== group.length) continue;
+-    const state = {
+-      memoryPending: false,
+-      handoff: false,
+-      s3: false,
+-      lateBoot: false,
+-    };
++    const state = newContext();
+     for (const row of [...group].sort((a, b) => a.index - b.index)) {
+       const context = consumeContext(state, codeKey(row.postCode));
+       descriptions.set(row, describePostCode(row.postCode, locale, context));

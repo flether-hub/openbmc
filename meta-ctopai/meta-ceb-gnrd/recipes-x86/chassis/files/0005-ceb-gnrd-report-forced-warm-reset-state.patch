@@ -1,0 +1,37 @@
+Subject: [PATCH] power control: report forced warm reset to host-state consumers
+
+Upstream-Status: Inappropriate [CEB-GNRD latest boot history]
+
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -1726,6 +1726,10 @@
+             warmResetCheckTimerStart();
+             break;
+         case Event::resetRequest:
++            // Report a reset even if POST_COMPLETE is already deasserted.
++            // Consumers can start a fresh POST cycle before the reset pulse.
++            setPowerState(PowerState::checkForWarmReset);
++            warmResetCheckTimerStart();
+             reset();
+             break;
+         default:
+@@ -1868,7 +1872,8 @@
+             break;
+         case Event::resetRequest:
+             gracefulPowerOffTimer.cancel();
+-            setPowerState(PowerState::on);
++            setPowerState(PowerState::checkForWarmReset);
++            warmResetCheckTimerStart();
+             reset();
+             break;
+         default:
+@@ -1959,7 +1964,8 @@
+             break;
+         case Event::resetRequest:
+             gracefulPowerOffTimer.cancel();
+-            setPowerState(PowerState::on);
++            setPowerState(PowerState::checkForWarmReset);
++            warmResetCheckTimerStart();
+             reset();
+             break;
+         default:

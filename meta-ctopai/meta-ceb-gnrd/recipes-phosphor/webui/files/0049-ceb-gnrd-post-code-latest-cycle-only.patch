@@ -1,0 +1,18 @@
+Subject: [PATCH] post code logs: expose only the latest host boot cycle
+
+Upstream-Status: Inappropriate [CEB-GNRD latest boot history]
+
+--- a/src/store/modules/Logs/PostCodeLogsStore.js
++++ b/src/store/modules/Logs/PostCodeLogsStore.js
+@@ -37,7 +37,10 @@
+           // that the newest code comes first: by time, and for codes with the
+           // same time (the time has a resolution of a second) the later one in
+           // the service order first.
+-          const newestFirst = [...postCodeLogs].sort(
++          // Boot count 1 is the newest cycle. Exclude old archives from
++          // both the table and export, including during firmware migration.
++          const latestCycle = postCodeLogs.filter((log) => Number(log.bootCount) === 1);
++          const newestFirst = latestCycle.sort(
+             (a, b) => b.date - a.date || b.index - a.index,
+           );
+           newestFirst.forEach((log, position) => {

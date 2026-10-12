@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "reference": {
     "title": "AMI Aptio V BIOS POST Codes for Supermicro Motherboards",
     "revision": "1.0b",
@@ -1721,21 +1721,25 @@
     ]
   },
   "contextText": {
+    "amiReference": {
+      "en": "AMI reference",
+      "zh": "AMI 参考"
+    },
     "intelMemory": {
-      "zh": "可能的 Intel 内存初始化含义（GNR-D 映射未确认）",
-      "en": "Possible Intel memory initialization meaning (GNR-D mapping unconfirmed)"
+      "en": "Intel RC reference (PEI)",
+      "zh": "Intel RC 参考（PEI）"
     },
-    "intelMemoryError": {
-      "zh": "内存初始化期间可能的 Intel 平台错误；未匹配到 GNR-D 具体 POST code 说明",
-      "en": "Possible Intel platform error during memory initialization; no matching GNR-D-specific description"
+    "intelPlatform": {
+      "en": "Intel/OEM (PEI)",
+      "zh": "Intel/OEM（PEI）"
     },
-    "intelMemoryErrorAlternative": {
-      "zh": "冷启动时可能被 Intel 平台复用为内存错误，需以 GNR-D 平台码表确认",
-      "en": "May be reused for an Intel memory error during cold boot; requires the GNR-D platform code table"
+    "platformUnknown": {
+      "en": "Platform/OEM",
+      "zh": "平台/OEM"
     },
-    "intelE8Example": {
-      "zh": "参考：Intel S2600WFT 的 E8 表示未检测到内存，不代表已确认 GNR-D 同义",
-      "en": "Reference example: E8 indicates no detected memory on Intel S2600WFT, not a confirmed GNR-D mapping"
+    "unresolved": {
+      "en": "Source undetermined",
+      "zh": "来源未确定"
     }
   },
   "intelMemory": {
@@ -1797,7 +1801,37 @@
     }
   },
   "readingGuidance": {
-    "zh": "按启动轮次和接收顺序解读；进度码是已到达的检查点，停留不变不能单独证明该步骤失败。平台复用码需结合 BIOS 平台码表。",
-    "en": "Interpret within each boot cycle in receive order. A progress code marks a reached checkpoint; an unchanged code alone does not prove that step failed. Platform reuse requires the BIOS platform code table."
+    "zh": "按同一启动轮次的接收顺序解读。通过 4F/60、90、AD、AF/AE 跟踪阶段，早期 AA/AF 不表示已进入 OS。Intel RC 参考含义不是 GNR-D 项目码表；未匹配的子码保留为未匹配。",
+    "en": "Read in receive order within each boot cycle. Track phases using 4F/60, 90, AD and AF/AE; early AA/AF do not indicate OS entry. Intel RC reference meanings are not the GNR-D project code table. Unmatched subcodes remain unmatched."
+  },
+  "sequenceRules": {
+    "earlyAmiProgress": [
+      [
+        "01",
+        "0B"
+      ],
+      [
+        "10",
+        "1C"
+      ],
+      [
+        "2B",
+        "2F"
+      ],
+      [
+        "31",
+        "3E"
+      ]
+    ],
+    "dxeEntry": [
+      "4F",
+      "60"
+    ],
+    "bdsEntry": "90",
+    "readyToBoot": "AD",
+    "bootExit": [
+      "AE",
+      "AF"
+    ]
   }
 }

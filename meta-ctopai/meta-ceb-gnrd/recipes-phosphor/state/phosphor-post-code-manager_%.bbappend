@@ -1,6 +1,6 @@
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
-SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-post-history-warm-boot-cycle.patch file://ceb-gnrd-post-history-limit.py file://60-ceb-gnrd-post-history.conf"
-EXTRA_OEMESON:append:ceb-gnrd = " -Dmax-boot-cycle-count=2 -Dmax-post-code-size-per-cycle=512"
+SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-post-history-warm-boot-cycle.patch file://0002-ceb-gnrd-post-history-latest-cycle-only.patch file://ceb-gnrd-post-history-limit.py file://60-ceb-gnrd-post-history.conf"
+EXTRA_OEMESON:append:ceb-gnrd = " -Dmax-boot-cycle-count=1 -Dmax-post-code-size-per-cycle=512"
 RDEPENDS:${PN}:append:ceb-gnrd = " python3-core"
 
 do_install:append:ceb-gnrd() {

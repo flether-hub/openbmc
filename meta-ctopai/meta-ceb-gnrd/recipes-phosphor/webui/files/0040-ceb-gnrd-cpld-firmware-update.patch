@@ -61,12 +61,12 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
        if (this.isServerPowerOffRequired) {
 --- /dev/null
 +++ b/src/views/Operations/Firmware/FirmwareCpldUpdate.vue
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,189 @@
 +<template>
 +  <page-section :section-title="$t('pageCpld.title')">
 +    <b-row>
 +      <b-col xl="10">
-+        <alert variant="warning">
++        <alert v-if="status.phase !== 'Completed'" variant="warning">
 +          {{ $t('pageCpld.shutdownWarning') }}
 +        </alert>
 +        <div class="form-background p-3">
@@ -91,12 +91,10 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +          <p class="fw-bold">{{ $t(`pageCpld.phases.${status.phase || 'Preflight'}`) }}</p>
 +          <b-progress :value="status.progress || 0" :max="100" show-progress
 +            :variant="status.phase === 'Failed' ? 'danger' : status.phase === 'Completed' ? 'success' : 'primary'" />
-+          <p class="mt-2">{{ status.detail }}</p>
-+          <p v-if="status.phase === 'Verifying'">{{ $t('pageCpld.verifyHint') }}</p>
-+          <p v-if="disconnected">
++          <p v-if="status.phase !== 'Completed'" class="mt-2">{{ status.detail }}</p>
++          <p v-if="disconnected && status.phase !== 'Completed'">
 +            {{ $t('pageCpld.connectionLost') }}
 +          </p>
-+          <p v-if="status.phase === 'Completed'">{{ $t('pageCpld.completed') }}</p>
 +          <alert v-if="status.phase === 'Completed'" variant="warning">
 +            {{ $t('pageCpld.activationWarning') }}
 +          </alert>
@@ -213,12 +211,11 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +        const next = JSON.parse(response.data.data.Status);
 +        this.status = next;
 +        this.loaded = true;
-+        if (this.error === this.$t('pageCpld.unavailable') ||
-+            this.error === this.$t('pageCpld.unknownResponse')) this.error = '';
++        if (this.error === this.$t('pageCpld.unknownResponse')) this.error = '';
 +        this.disconnected = false;
 +        // A restarted service has no previous job. Drop browser bookkeeping
 +        // for that session instead of reporting a legacy recovery timeout.
-+        if (this.pending && (!next.job ||
++        if (this.pending && !this.submitting && ((!next.job && this.pending.job) ||
 +            (this.pending.bootId && next.currentBootId !== this.pending.bootId))) {
 +          this.remember(null);
 +          this.error = '';
@@ -238,8 +235,8 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +            previousJob: '', deadline: Date.now() + Math.min(600, Math.max(0, next.remainingSeconds || 0)) * 1000 });
 +        }
 +      } catch {
-+        this.disconnected = true;
-+        if (!this.pending) this.error = this.$t('pageCpld.unavailable');
++        this.disconnected = this.busy && this.status.phase !== 'Completed';
++        this.status = { ...this.status, ready: false };
 +      }
 +      this.now = Date.now();
 +      if (this.pending && !this.pending.expired && this.now >= this.pending.deadline) {
@@ -256,7 +253,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +</script>
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -1446,5 +1446,36 @@
+@@ -1446,5 +1446,34 @@
          "RPM": "RPM",
          "V": "V",
          "W": "W"
@@ -264,7 +261,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +  "pageCpld": {
 +    "title": "CPLD",
 +    "description": "Upload an Anlogic .bit file (maximum 1 MiB).",
-+    "shutdownWarning": "Shut down the host before programming. After programming and verification succeed, disconnect all AC inputs, wait for standby power to turn off, then restore AC to load the new CPLD firmware. Programming has a 10-minute timeout.",
++    "shutdownWarning": "Shut down the host before programming. The update has a 10-minute timeout.",
 +    "notReady": "Programming is blocked until the running design supports background programming, the target feature code is approved, and the JTAG device is available.",
 +    "image": "CPLD firmware (.bit)",
 +    "start": "Start update",
@@ -277,9 +274,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +    "connectionLost": "Connection to the BMC was lost. The displayed progress is the last received state; programming success has not been confirmed. Rechecking the existing job.",
 +    "remaining": "Time remaining in the complete update: {seconds} seconds.",
 +    "timeout": "The 10-minute monitoring timeout expired. Check the server update status before retrying.",
-+    "verifyHint": "After every Flash page passes readback verification, programming is successful. Activate the new firmware with a full board AC power cycle.",
 +    "activationWarning": "AC power cycle required: disconnect all PSU AC inputs, wait until the standby LEDs turn off, then restore AC to load the new CPLD firmware.",
-+    "completed": "Programming and Flash readback verification succeeded. The new CPLD firmware takes effect after a full board AC power cycle.",
 +    "phases": {
 +      "Idle": "Ready",
 +      "WaitingForHostOff": "Waiting for host shutdown",

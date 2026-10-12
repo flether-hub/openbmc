@@ -6,6 +6,7 @@ SRC_URI:append = " \
     file://0002-ceb-gnrd-own-bus-name-for-the-exported-buttons.patch \
     file://0003-ceb-gnrd-apply-power-restore-only-on-ac-boot.patch \
     file://0004-ceb-gnrd-log-dc-events-on-chassis-transitions.patch \
+    file://0005-ceb-gnrd-report-forced-warm-reset-state.patch \
     "
 
 EXTRA_OEMESON:append = " \

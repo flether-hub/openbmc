@@ -1451,7 +1451,7 @@
   "pageCpld": {
     "title": "CPLD",
     "description": "上传安路 .bit 文件（最大 1 MiB）。",
-    "shutdownWarning": "请先关闭 Host。烧录和校验成功后，请断开所有 PSU 的交流输入，待待机灯熄灭后重新上电，以加载新的 CPLD 固件。烧录过程超时为10分钟。",
+    "shutdownWarning": "请先关闭 Host。升级超时为 10 分钟。",
     "notReady": "尚未确认当前固件支持后台编程、批准目标配置码，或 JTAG 设备不可用，已阻止烧写。",
     "image": "CPLD 固件（.bit）",
     "start": "开始更新",
@@ -1464,7 +1464,6 @@
     "connectionLost": "与 BMC 的连接已中断，当前显示的是最后收到的进度；尚未确认烧录成功，正在重新查询已有任务。",
     "remaining": "整个升级流程剩余时间：{seconds} 秒。",
     "timeout": "10分钟监控超时，请检查服务端升级状态后再决定是否重试。",
-    "completed": "烧录和 Flash 回读校验成功。新的 CPLD 固件将在整板 AC 断电重上电后生效。",
     "phases": {
       "Idle": "就绪",
       "WaitingForHostOff": "等待 Host 关机",
@@ -1476,7 +1475,6 @@
       "Failed": "升级失败",
       "Cancelled": "已取消升级"
     },
-    "verifyHint": "全部 Flash 页回读校验通过后即判定烧录成功；请对整板执行 AC 断电重上电，以加载新固件。",
     "activationWarning": "需要 AC Power cycle：请断开所有 PSU 的交流输入，待待机灯熄灭后重新上电，使新的 CPLD 固件生效。"
   }
 }

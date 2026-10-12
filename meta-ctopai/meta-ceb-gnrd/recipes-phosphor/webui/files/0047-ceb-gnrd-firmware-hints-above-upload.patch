@@ -1,0 +1,28 @@
+Subject: [PATCH] firmware: put package format guidance above Add file
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware page]
+
+--- a/src/views/Operations/Firmware/FirmwareFormUpdate.vue
++++ b/src/views/Operations/Firmware/FirmwareFormUpdate.vue
+@@ -8,6 +8,10 @@
+           label-for="image-file"
+           class="mb-3"
+         >
++          <b-form-text id="image-file-help-block" class="mb-2">
++            {{ $t('pageFirmware.bmcPartitions.bmcFileFormat') }}<br />
++            {{ $t('pageFirmware.bmcPartitions.biosFileFormat') }}
++          </b-form-text>
+           <form-file
+             id="image-file"
+             :disabled="isPageDisabled || isUpdateRunning"
+@@ -21,10 +25,6 @@
+               </b-form-invalid-feedback>
+             </template>
+           </form-file>
+-          <b-form-text id="image-file-help-block">
+-            {{ $t('pageFirmware.bmcPartitions.bmcFileFormat') }}<br />
+-            {{ $t('pageFirmware.bmcPartitions.biosFileFormat') }}
+-          </b-form-text>
+         </b-form-group>
+ 
+         <div v-if="bmcRegions.length" class="mb-3">
