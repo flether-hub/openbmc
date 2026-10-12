@@ -693,6 +693,9 @@
     }
   },
   "pageOverview": {
+    "buildId": "构建标识",
+    "sourceVersion": "源码版本",
+    "gitCommit": "Git 提交",
     "backupVersion": "备份版本",
     "bmcTime": "BMC 日期时间",
     "criticalEvents": "严重",

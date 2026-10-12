@@ -1,0 +1,146 @@
+Subject: [PATCH] post codes: preserve the current host cycle across BMC and service restarts
+
+Upstream-Status: Inappropriate [CEB-GNRD host cycle retention]
+
+Empty process memory does not establish a Host reset. Restore the current
+archive and persist an explicit Off/reset boundary until the next POST write.
+Read Host state at startup to catch an Off event before this daemon subscribed.
+Missing state providers preserve the existing records conservatively.
+
+--- a/src/post_code.cpp
++++ b/src/post_code.cpp
+@@ -163,6 +163,7 @@
+     postCodes.clear();
+     currentBootCycleIndex = 0;
+     currentBootCycleCount(0);
++    nextBootCycle = false;
+ }
+ 
+ std::vector<postcode_t> PostCode::getPostCodes(uint16_t index)
+@@ -205,6 +206,16 @@
+ // after POST_COMPLETE deasserts. Persist before clearing the in-memory cycle.
+ void PostCode::archiveBootCycle()
+ {
++    // Record a real host boundary even when this daemon has no RAM records.
++    // The directory marker survives a BMC/daemon restart while the host is off.
++    nextBootCycle = true;
++    std::error_code error;
++    fs::create_directory(postCodeListPath / PostCodeCycleBoundaryName, error);
++    if (error)
++    {
++        phosphor::logging::log<phosphor::logging::level::ERR>(
++            "Unable to persist POST cycle boundary");
++    }
+     if (timer)
+     {
+         timer->stop();
+@@ -221,6 +232,31 @@
+         "POST cycle archived after host Off/reset state event");
+ }
+ 
++// Restore the current host cycle instead of treating empty process RAM as a
++// host restart. Existing timestamps stay unchanged; subsequent timestamps
++// advance monotonically even if the BMC wall clock moved backwards.
++void PostCode::restoreBootCycle()
++{
++    if (nextBootCycle || !currentBootCycleIndex || !currentBootCycleCount())
++    {
++        return;
++    }
++    decltype(postCodes) recovered;
++    if (!deserializePostCodes(
++            postCodeListPath / std::to_string(currentBootCycleIndex), recovered) ||
++        recovered.empty())
++    {
++        return;
++    }
++    postCodes = std::move(recovered);
++    firstPostCodeUsSinceEpoch = postCodes.begin()->first;
++    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
++        std::chrono::system_clock::now().time_since_epoch()).count();
++    const uint64_t resumeUs = std::max(nowUs, postCodes.rbegin()->first);
++    firstPostCodeTimeSteady = std::chrono::steady_clock::now() -
++        std::chrono::microseconds(resumeUs - firstPostCodeUsSinceEpoch);
++}
++
+ void PostCode::savePostCodes(postcode_t code)
+ {
+     if (!timer)
+@@ -239,12 +275,14 @@
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+ 
++    if (nextBootCycle)
++    {
++        // Only an observed host boundary starts a new cycle. Keep the old
++        // archive readable until its replacement's first POST write arrives.
++        deleteAll();
++    }
+     if (postCodes.empty())
+     {
+-        // The first POST write after the host Off/reset boundary starts the
+-        // latest cycle. Remove older archives and metadata before recording it.
+-        // Keep the last completed cycle readable while the host stays off.
+-        deleteAll();
+         firstPostCodeTimeSteady = postCodeTimeSteady;
+         firstPostCodeUsSinceEpoch = tsUS; // uS since epoch for 1st post code
+         incrBootCycle();
+--- a/inc/post_code.hpp
++++ b/inc/post_code.hpp
+@@ -44,6 +44,7 @@
+     "/xyz/openbmc_project/state/host";
+ const static constexpr char* PostCodeDataVersionName = "PostCodeDataVersion";
+ const static constexpr uint16_t PostCodeDataVersion = 1;
++const static constexpr char* PostCodeCycleBoundaryName = "CebGnrdNextPostCycle";
+ 
+ struct EventDeleter
+ {
+@@ -161,6 +162,35 @@
+             currentBootCycleCount(count);
+         }
+         maxBootCycleNum(MAX_BOOT_CYCLE_COUNT);
++        nextBootCycle = fs::exists(postCodeListPath / PostCodeCycleBoundaryName);
++        restoreBootCycle();
++
++        // The Off signal may have preceded service startup. Read the actual
++        // host state once; an unavailable provider is not evidence of a reset.
++        try
++        {
++            const std::string service = "xyz.openbmc_project.State.Host" +
++                std::to_string(node);
++            const std::string hostPath = HostStatePathPrefix +
++                std::to_string(node);
++            auto request = bus.new_method_call(
++                service.c_str(), hostPath.c_str(),
++                "org.freedesktop.DBus.Properties", "Get");
++            request.append("xyz.openbmc_project.State.Host", "CurrentHostState");
++            auto reply = bus.call(request);
++            std::variant<std::string> state;
++            reply.read(state);
++            if (StateServer::Host::convertHostStateFromString(
++                    std::get<std::string>(state)) == StateServer::Host::HostState::Off)
++            {
++                archiveBootCycle();
++            }
++        }
++        catch (const std::exception&)
++        {
++            phosphor::logging::log<phosphor::logging::level::INFO>(
++                "Initial host state unavailable; retaining current POST cycle");
++        }
+     }
+     ~PostCode() {}
+ 
+@@ -181,10 +211,12 @@
+     std::map<uint64_t, postcode_t> postCodes;
+     fs::path postCodeListPath;
+     uint16_t currentBootCycleIndex = 0;
++    bool nextBootCycle = false;
+     sdbusplus::match propertiesChangedSignalRaw;
+     sdbusplus::match propertiesChangedSignalCurrentHostState;
+ 
+     void archiveBootCycle();
++    void restoreBootCycle();
+     void savePostCodes(postcode_t code);
+     fs::path serialize(const fs::path& path);
+     bool deserialize(const fs::path& path, uint16_t& index);

@@ -1,0 +1,104 @@
+Subject: [PATCH] managers: expose existing os-release build identifiers
+
+Upstream-Status: Inappropriate [CEB-GNRD image identification]
+
+Use the authenticated Manager GET to expose only BUILD_ID, EXTENDED_VERSION
+and OPENBMC_TARGET_MACHINE from the running image's existing os-release.
+BUILD_ID stays an opaque identifier: reproducible builds may derive it from
+source timestamps, so do not claim that it is the actual compilation time.
+
+--- a/redfish-core/lib/managers.hpp
++++ b/redfish-core/lib/managers.hpp
+@@ -47,10 +47,12 @@
+ #include <cstdint>
+ #include <format>
++#include <fstream>
+ #include <functional>
+ #include <map>
+ #include <memory>
+ #include <optional>
+ #include <ranges>
++#include <sstream>
+ #include <string>
+ #include <string_view>
+ #include <utility>
+@@ -720,6 +722,65 @@
+         std::move(managerForChassis);
+ }
+ 
++// Read the existing image metadata. No build-log copy or generated runtime
++// file is needed, and unavailable fields are omitted rather than invented.
++inline nlohmann::json getCebGnrdImageBuildInfo()
++{
++    std::ifstream file("/etc/os-release", std::ios::binary);
++    if (!file)
++    {
++        return nlohmann::json::object();
++    }
++    std::array<char, 8192> buffer{};
++    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
++    std::istringstream fields(std::string(
++        buffer.data(), static_cast<std::size_t>(file.gcount())));
++    nlohmann::json result = nlohmann::json::object();
++    std::string line;
++    while (std::getline(fields, line))
++    {
++        if (!line.empty() && line.back() == '\r')
++        {
++            line.pop_back();
++        }
++        const auto equals = line.find('=');
++        if (equals == std::string::npos)
++        {
++            continue;
++        }
++        const std::string key = line.substr(0, equals);
++        std::string name;
++        if (key == "BUILD_ID")
++        {
++            name = "BuildId";
++        }
++        else if (key == "EXTENDED_VERSION")
++        {
++            name = "ExtendedVersion";
++        }
++        else if (key == "OPENBMC_TARGET_MACHINE")
++        {
++            name = "TargetMachine";
++        }
++        else
++        {
++            continue;
++        }
++        std::string value = line.substr(equals + 1);
++        if (value.size() >= 2 &&
++            ((value.front() == '"' && value.back() == '"') ||
++             (value.front() == '\'' && value.back() == '\'')))
++        {
++            value = value.substr(1, value.size() - 2);
++        }
++        if (!value.empty())
++        {
++            result[name] = std::move(value);
++        }
++    }
++    return result;
++}
++
+ inline void handleManagerGet(
+     App& app, const crow::Request& req,
+     const std::shared_ptr<bmcweb::AsyncResp>& asyncResp,
+@@ -822,6 +883,13 @@
+ 
+     sw_util::populateSoftwareInformation(asyncResp, sw_util::bmcPurpose,
+                                          "FirmwareVersion", true);
++
++    nlohmann::json buildInfo = getCebGnrdImageBuildInfo();
++    if (!buildInfo.empty())
++    {
++        asyncResp->res.jsonValue["Oem"]["CebGnrd"]["BuildInfo"] =
++            std::move(buildInfo);
++    }
+ 
+     managerGetLastResetTime(asyncResp);
+ 

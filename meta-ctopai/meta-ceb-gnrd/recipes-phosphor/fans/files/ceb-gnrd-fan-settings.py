@@ -84,18 +84,14 @@ ZONE_KEYS = ("MinThermalOutput",)
 
 APPLY_RETRY_SECONDS = 10
 CHECK_INTERVAL_SECONDS = 30
+DBUS_TIMEOUT_SECONDS = 5
 
 
 async def call(bus, destination, path, interface, member, signature="", body=None):
-    reply = await bus.call(
-        Message(
-            destination=destination,
-            path=path,
-            interface=interface,
-            member=member,
-            signature=signature,
-            body=body or [],
-        )
+    reply = await asyncio.wait_for(
+        bus.call(Message(destination=destination, path=path, interface=interface,
+                         member=member, signature=signature, body=body or [])),
+        timeout=DBUS_TIMEOUT_SECONDS,
     )
     if reply.message_type == MessageType.ERROR:
         raise RuntimeError("%s.%s failed: %s %s" % (interface, member, reply.error_name, reply.body))
@@ -131,6 +127,18 @@ async def read_config(bus, interface, keys):
             continue
         result[name] = {k: props[k] for k in keys if k in props}
     return result
+
+
+async def snapshot_config(bus, interface, requested):
+    """Validate every target and capture all old values before any write."""
+    keys = {key for values in requested.values() for key in values}
+    current = await read_config(bus, interface, keys)
+    snapshot = {}
+    for name, wanted in requested.items():
+        if name not in current or any(key not in current[name] for key in wanted):
+            raise RuntimeError("missing configuration/property: %s" % name)
+        snapshot[name] = {key: current[name][key] for key in wanted}
+    return snapshot
 
 
 async def write_config(bus, interface, stored):
@@ -192,6 +200,25 @@ async def refresh_control(bus):
     await call(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
                "org.freedesktop.systemd1.Manager", "RestartUnit", "ss",
                ["phosphor-pid-control.service", "replace"])
+
+
+async def finish_control_refresh(bus, iface):
+    """Only clear the retry flag after systemd accepted the restart."""
+    iface.refresh_pending = True
+    await refresh_control(bus)
+    iface.refresh_pending = False
+
+
+async def restore_pending_configuration(bus, iface):
+    """Retry a failed rollback before accepting another setting operation."""
+    snapshot = iface.rollback_pending
+    if snapshot is None:
+        return
+    iface.refresh_pending = True
+    await write_config(bus, PID_IFACE, snapshot["controllers"])
+    await write_config(bus, ZONE_IFACE, snapshot["zones"])
+    await finish_control_refresh(bus, iface)
+    iface.rollback_pending = None
 
 
 async def read_fan_rpms(bus):
@@ -261,6 +288,8 @@ class FanSettings(ServiceInterface):
         self.bus = bus
         self.persist = False
         self.operation_lock = asyncio.Lock()
+        self.refresh_pending = False
+        self.rollback_pending = None
 
     @dbus_property(access=PropertyAccess.READWRITE)
     def Persist(self) -> "b":
@@ -283,21 +312,30 @@ class FanSettings(ServiceInterface):
     async def KeepSettings(self) -> "b":
         """Keep the current fan settings after a BMC reboot."""
         async with self.operation_lock:
-            self.persist = True
-            self.emit_properties_changed({"Persist": True})
-            return await self._do_save()
+            return await self._set_persistence(True)
 
     @method()
     async def ForgetSettings(self) -> "b":
         """Do not keep the fan settings: a BMC reboot returns to adaptive mode."""
         async with self.operation_lock:
-            self.persist = False
-            self.emit_properties_changed({"Persist": False})
-            return await self._do_save()
+            return await self._set_persistence(False)
+
+    async def _set_persistence(self, value):
+        previous = self.persist
+        self.persist = value
+        if not await self._do_save():
+            self.persist = previous
+            return False
+        self.emit_properties_changed({"Persist": value})
+        return True
 
     @method()
     async def GetFans(self) -> "ay":
         """Fan status for the IPMI OEM Get command (see the module docstring)."""
+        async with self.operation_lock:
+            return await self._get_fans()
+
+    async def _get_fans(self):
         try:
             pids = await read_config(self.bus, PID_IFACE, PID_KEYS)
         except Exception as exc:
@@ -341,35 +379,56 @@ class FanSettings(ServiceInterface):
             return False
         names = PID_NAMES if fan == 0xFF else [PID_NAMES[fan]]
         low, high = (float(duty), float(duty)) if mode == 1 else (ADAPTIVE_MIN, ADAPTIVE_MAX)
+        requested = {name: {"OutLimitMin": low, "OutLimitMax": high} for name in names}
+        zone_requested = {ZONE_NAME: {"MinThermalOutput": ADAPTIVE_MIN}}
+        previous_persist = self.persist
+        snapshot = None
         try:
-            changed = await write_config(
-                self.bus, PID_IFACE,
-                {name: {"OutLimitMin": low, "OutLimitMax": high} for name in names})
+            await restore_pending_configuration(self.bus, self)
+            snapshot = {
+                "controllers": await snapshot_config(self.bus, PID_IFACE, requested),
+                "zones": await snapshot_config(self.bus, ZONE_IFACE, zone_requested),
+            }
+            # Keep the rollback target until configuration, restart request and
+            # persistence have all succeeded. No partial update is a success.
+            self.rollback_pending = snapshot
+            self.refresh_pending = True
+            changed = await write_config(self.bus, PID_IFACE, requested)
             # Fixed duties belong to the individual fan controllers. A shared
             # fixed floor would also constrain fans returned to adaptive mode.
-            changed += await write_config(self.bus, ZONE_IFACE,
-                                          {ZONE_NAME: {"MinThermalOutput": ADAPTIVE_MIN}})
-            await refresh_control(self.bus)
+            changed += await write_config(self.bus, ZONE_IFACE, zone_requested)
+            await finish_control_refresh(self.bus, self)
+            self.persist = bool(persist)
+            if not await self._do_save():
+                raise RuntimeError("cannot persist fan settings")
+            self.rollback_pending = None
         except Exception as exc:
+            self.persist = previous_persist
             LOG.error("SetFan failed: %s", exc)
+            if snapshot is not None:
+                try:
+                    await restore_pending_configuration(self.bus, self)
+                except Exception as rollback_error:
+                    # Maintenance retries this exact snapshot, even when the
+                    # user had not enabled persistent settings.
+                    LOG.error("Fan setting rollback pending: %s", rollback_error)
             return False
         LOG.info("SetFan: fan %s mode %s duty %d persist %d (%d value(s) changed)",
                  "all" if fan == 0xFF else fan, "fixed" if mode else "adaptive",
                  duty, persist, changed)
-        self.persist = bool(persist)
         self.emit_properties_changed({"Persist": self.persist})
-        return await self._do_save()
+        return True
 
     async def do_save(self) -> bool:
         async with self.operation_lock:
             return await self._do_save()
 
     async def _do_save(self) -> bool:
-        if not self.persist:
-            delete_state()
-            LOG.info("Save: persistence off, the next BMC reboot returns to adaptive mode")
-            return True
         try:
+            if not self.persist:
+                delete_state()
+                LOG.info("Save: persistence off, the next BMC reboot returns to adaptive mode")
+                return True
             state = {
                 "persist": True,
                 "controllers": await read_config(self.bus, PID_IFACE, PID_KEYS),
@@ -410,14 +469,20 @@ for _fan in range(FAN_COUNT + 1):
                 _mode, _duty, _persist))
 
 
-async def apply_stored(bus, state):
+async def apply_stored(bus, state, iface):
+    pending = iface.refresh_pending
+    # Preserve retry intent if any write or restart fails after a partial
+    # restore. Equality on the next read does not prove swampd reloaded it.
+    iface.refresh_pending = True
     changed = await write_config(bus, PID_IFACE, state.get("controllers", {}))
     # Migrate snapshots from versions that saved the all-fan fixed duty as
     # the zone floor. Keep the requested individual controller limits.
     changed += await write_config(bus, ZONE_IFACE,
                                   {ZONE_NAME: {"MinThermalOutput": ADAPTIVE_MIN}})
-    if changed:
-        await refresh_control(bus)
+    if changed or pending:
+        await finish_control_refresh(bus, iface)
+    else:
+        iface.refresh_pending = False
     return changed
 
 
@@ -425,29 +490,31 @@ async def maintain(bus, iface):
     """Apply the stored settings at boot and keep them applied."""
     first = True
     while True:
-        state = load_state()
-        if state and state.get("persist"):
-            try:
-                async with iface.operation_lock:
-                    # Re-read after acquiring the lock: a user may have replaced
-                    # or deleted the file while the restore task was waiting.
-                    state = load_state()
+        try:
+            async with iface.operation_lock:
+                await restore_pending_configuration(bus, iface)
+                state = load_state()
+                if state and state.get("persist"):
+                    # Read under the lock so a completed user operation takes
+                    # precedence over an older persisted snapshot.
                     changed = 0
-                    if state and state.get("persist"):
-                        if not iface.persist:
-                            iface.persist = True
-                            iface.emit_properties_changed({"Persist": True})
-                        changed = await apply_stored(bus, state)
-                if first:
-                    LOG.info("restored persisted fan settings (%d value(s) changed)", changed)
-                    first = False
-            except Exception as exc:
-                LOG.warning("waiting for Entity-Manager fan configuration: %s", exc)
-                await asyncio.sleep(APPLY_RETRY_SECONDS)
-                continue
-        elif first:
-            LOG.info("no persisted fan settings, using the adaptive defaults")
-            first = False
+                    if not iface.persist:
+                        iface.persist = True
+                        iface.emit_properties_changed({"Persist": True})
+                    changed = await apply_stored(bus, state, iface)
+                    if first:
+                        LOG.info("restored persisted fan settings (%d value(s) changed)", changed)
+                        first = False
+                else:
+                    if iface.refresh_pending:
+                        await finish_control_refresh(bus, iface)
+                    if first:
+                        LOG.info("no persisted fan settings, using the adaptive defaults")
+                        first = False
+        except Exception as exc:
+            LOG.warning("waiting to recover fan configuration/control: %s", exc)
+            await asyncio.sleep(APPLY_RETRY_SECONDS)
+            continue
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
 

@@ -49,6 +49,10 @@ SRC_URI:append:ceb-gnrd = " \
     file://0047-ceb-gnrd-firmware-hints-above-upload.patch \
     file://0048-ceb-gnrd-date-time-input-alignment.patch \
     file://0049-ceb-gnrd-post-code-latest-cycle-only.patch \
+    file://0050-ceb-gnrd-firmware-upload-mutual-exclusion.patch \
+    file://0051-ceb-gnrd-firmware-upload-labels.patch \
+    file://0052-ceb-gnrd-cpld-update-firmware-heading.patch \
+    file://0053-ceb-gnrd-overview-existing-build-info.patch \
     file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "

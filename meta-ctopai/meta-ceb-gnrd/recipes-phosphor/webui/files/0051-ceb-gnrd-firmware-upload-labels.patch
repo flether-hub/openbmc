@@ -1,0 +1,37 @@
+Subject: [PATCH] firmware: use firmware format guidance without an image file heading
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware page]
+
+--- a/src/views/Operations/Firmware/FirmwareFormUpdate.vue
++++ b/src/views/Operations/Firmware/FirmwareFormUpdate.vue
+@@ -4,7 +4,6 @@
+       <b-form @submit.prevent="onSubmitUpload">
+         <!-- Workstation Upload -->
+         <b-form-group
+-          :label="$t('pageFirmware.form.updateFirmware.imageFile')"
+           label-for="image-file"
+           class="mb-3"
+         >
+--- a/src/views/Operations/Firmware/BmcPartitionMessages.js
++++ b/src/views/Operations/Firmware/BmcPartitionMessages.js
+@@ -1,7 +1,7 @@
+ export default {
+   "en-US": {
+-    "bmcFileFormat": "BMC: upload a .static.mtd.tar partition update package.",
+-    "biosFileFormat": "BIOS: upload a BIOS .tar update package. Raw .bin/.rom files are not supported here.",
++    "bmcFileFormat": "BMC firmware: upload a .static.mtd.tar partition update package.",
++    "biosFileFormat": "BIOS firmware: upload a BIOS .tar update package. Raw .bin/.rom files are not supported here.",
+     "title": "BMC partitions to update",
+     "hint": "U-Boot and its environment are preserved by default. Kernel and read-only filesystem are updated together. Updating rwfs retains only the configured preserved settings.",
+     "required": "(required together)",
+@@ -12,8 +12,8 @@
+     "invalidPackage": "Select a BMC .static.mtd.tar partition package or a BIOS update package. Raw/full-flash images and invalid archives are not supported here."
+   },
+   "zh-CN": {
+-    "bmcFileFormat": "BMC：上传 .static.mtd.tar 分区更新包。",
+-    "biosFileFormat": "BIOS：上传 BIOS .tar 更新包。此处不支持直接上传 .bin/.rom 原始文件。",
++    "bmcFileFormat": "BMC 固件：上传 .static.mtd.tar 分区更新包。",
++    "biosFileFormat": "BIOS 固件：上传 BIOS .tar 更新包。此处不支持直接上传 .bin/.rom 原始文件。",
+     "title": "选择 BMC 更新分区",
+     "hint": "默认保留 U-Boot 和 environment。kernel 与 rofs 必须一起更新；更新 rwfs 时仅保留配置清单中指定的设置。",
+     "required": "（必须一起更新）",

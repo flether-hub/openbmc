@@ -31,6 +31,11 @@ temperatures run the fans at 60 %.  The zone's own fail-safe speed is kept at
 the minimum on purpose: the number of readable fans must not decide the fan
 speed.  No alarm is raised for the substitute value.
 
+If the sampling loop stops completing for more than 15 seconds, an independent
+monitor publishes at least this protection temperature (retaining any hotter
+last reading), marks it non-functional and stops pinging the systemd watchdog.
+This also covers a suspended D-Bus call or a blocked sysfs worker thread.
+
 All discovered sources and their group are written to the journal whenever the
 set changes:  journalctl -u ceb-gnrd-temp-max
 """
@@ -78,6 +83,7 @@ TEMP_INPUT_RE = re.compile(r"temp(\d+)_input$")
 CPU_INPUT_LABEL_RE = re.compile(r"Die|Core\s+\d+", re.IGNORECASE)
 
 POLL_SECONDS = 2
+SAMPLE_STALE_SECONDS = 15
 PECI_RESCAN_SECONDS = 30
 PECI_DEVICE_ROOT = "/sys/bus/peci/devices"
 PECI_RESCAN = "/sys/bus/peci/rescan"
@@ -505,11 +511,29 @@ def sd_notify(message):
         pass
 
 
-async def watchdog_task(interval=15):
-    """Ping the systemd watchdog from the event loop: a blocked or hung loop stops
-    the pings and systemd restarts the service (WatchdogSec= in the unit)."""
+async def watchdog_task(sensors, availability, operational, progress, interval=5):
+    """Require sampling progress, including when a D-Bus/sysfs await stalls.
+
+    Publish a protection input immediately on expiry and stop watchdog pings
+    until sampling recovers. Never replace a hotter last reading with 70 C.
+    """
+    stale = False
     while True:
-        sd_notify("WATCHDOG=1")
+        expired = time.monotonic() - progress["last_sample"] > SAMPLE_STALE_SECONDS
+        if expired:
+            for group, sensor in sensors.items():
+                value = sensor.value
+                sensor.update(max(FAILSAFE_TEMP, value) if math.isfinite(value)
+                              else FAILSAFE_TEMP)
+                availability[group].update(True)
+                operational[group].update(False)
+            if not stale:
+                LOG.error("Temperature sampling stalled; protecting fan demand and withholding watchdog pings")
+        else:
+            if stale:
+                LOG.info("Temperature sampling resumed")
+            sd_notify("WATCHDOG=1")
+        stale = expired
         await asyncio.sleep(interval)
 
 async def main():
@@ -521,6 +545,10 @@ async def main():
     availability = {g: Availability() for g in sensors}
     operational = {g: OperationalStatus() for g in sensors}
     for group, sensor in sensors.items():
+        # Protect a running host while initial discovery is still pending.
+        # A confirmed Off sample will replace this with zero normally.
+        sensor.update(FAILSAFE_TEMP)
+        availability[group].update(True)
         path = "%s/%s" % (SENSOR_ROOT, sensor.sensor_name)
         bus.export(path, sensor)
         bus.export(path, assocs[group])
@@ -544,7 +572,8 @@ async def main():
     await bus.request_name(BUS_NAME)
     LOG.info("started, publishing CPU_MAX_TEMP and DIMM_MAX_TEMP")
     sd_notify("READY=1")
-    asyncio.create_task(watchdog_task())
+    progress = {"last_sample": time.monotonic()}
+    asyncio.create_task(watchdog_task(sensors, availability, operational, progress))
 
     known = None
     default_assoc = []
@@ -623,6 +652,7 @@ async def main():
                                      or await find_default_assoc(bus))
                 if default_assoc:
                     assocs[group].update(default_assoc)
+        progress["last_sample"] = time.monotonic()
         await asyncio.sleep(POLL_SECONDS)
 
 

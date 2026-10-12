@@ -1,0 +1,102 @@
+Subject: [PATCH] overview: show running-image build ID and Git version
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware overview]
+
+Display existing image identifiers without a download link or a new metadata
+file. Missing data remains unavailable, and cannot hide the firmware version.
+
+--- a/src/views/Overview/OverviewFirmware.vue
++++ b/src/views/Overview/OverviewFirmware.vue
+@@ -11,11 +11,30 @@
+           <dd>{{ dataFormatter(runningVersion) }}</dd>
+         </dl>
+       </b-col>
++      <b-col sm="6">
++        <dl>
++          <dt>{{ $t('pageOverview.buildId') }}</dt>
++          <dd class="text-break">{{ dataFormatter(buildInfo.BuildId) }}</dd>
++        </dl>
++      </b-col>
++      <b-col sm="12">
++        <dl>
++          <dt>{{ $t('pageOverview.sourceVersion') }}</dt>
++          <dd class="text-break">{{ dataFormatter(buildInfo.ExtendedVersion) }}</dd>
++        </dl>
++      </b-col>
++      <b-col v-if="gitCommit" sm="6">
++        <dl>
++          <dt>{{ $t('pageOverview.gitCommit') }}</dt>
++          <dd>{{ gitCommit }}</dd>
++        </dl>
++      </b-col>
+     </b-row>
+   </overview-card>
+ </template>
+ 
+ <script>
++import api from '@/store/api';
+ import OverviewCard from './OverviewCard';
+ import DataFormatterMixin from '@/components/Mixins/DataFormatterMixin';
+ import { mapState } from 'vuex';
+@@ -26,7 +45,15 @@
+     OverviewCard,
+   },
+   mixins: [DataFormatterMixin],
++  data() {
++    return { buildInfo: {} };
++  },
+   computed: {
++    gitCommit() {
++      const version = this.buildInfo.ExtendedVersion;
++      if (typeof version !== 'string') return '';
++      return version.match(/-g([0-9a-f]{7,40})(?:-dirty)?$/i)?.[1] || '';
++    },
+     ...mapState({
+       activeBmcFirmware() {
+         return this.$store.getters[`firmware/activeBmcFirmware`];
+@@ -37,9 +64,32 @@
+     }),
+   },
+   created() {
+-    this.$store.dispatch('firmware/getFirmwareInformation').finally(() => {
++    Promise.allSettled([
++      this.$store.dispatch('firmware/getFirmwareInformation'),
++      this.loadBuildInfo(),
++    ]).finally(() => {
+       this.$eventBus.$emit('overview-firmware-complete');
+     });
+   },
++  methods: {
++    async loadBuildInfo() {
++      try {
++        const managerPath = await this.$store.dispatch('global/getBmcPath');
++        if (!managerPath) return;
++        const response = await api.get(managerPath, { timeout: 5000 });
++        const info = response.data?.Oem?.CebGnrd?.BuildInfo;
++        if (info && typeof info === 'object' && !Array.isArray(info)) {
++          // Accept only the metadata fields needed for display.
++          this.buildInfo = Object.fromEntries(
++            ['BuildId', 'ExtendedVersion'].filter(key => typeof info[key] === 'string')
++              .map(key => [key, info[key]]),
++          );
++        }
++      } catch {
++        // Older images do not publish build metadata. Keep the version card.
++        this.buildInfo = {};
++      }
++    },
++  },
+ };
+ </script>
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -693,6 +693,9 @@
+         }
+     },
+     "pageOverview": {
++        "buildId": "Build ID",
++        "sourceVersion": "Source version",
++        "gitCommit": "Git commit",
+         "backupVersion": "Backup",
+         "bmcTime": "BMC date and time",
+         "criticalEvents": "Critical",
