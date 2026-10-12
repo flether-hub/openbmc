@@ -151,7 +151,12 @@ ceb-gnrd-cpld-update.service -o short-monotonic` for a separate live view.
 
 There is no software latch for CPLD outputs controlling BMC power/reset.
 `persist_bit=1` permits background programming; it does not provide IO hold
-during Refresh. EF3L90 does not support StateHold IO. This logging change
+during Refresh. DS600 states EF3L90 does not support its StateHold IO feature;
+this does not establish the availability of a separate JTAG-assisted hold
+procedure. The official catalog lists APUG065_Anlogic StateHoldIO_JTAG and
+its reference package, but this implementation has not obtained/validated
+that procedure for EF3L90. No undocumented IO-hold instruction is emitted.
+The earlier logging change
 does not alter JTAG instructions, clock counts, power enables or reset outputs.
 
 To disable the temporary console copy and detailed markers after validation,
@@ -187,8 +192,9 @@ The Golden v1 tag remains the earlier baseline.
 
 ## Experimental direct Refresh (2026-10-12)
 
-At the board owner's request, the shipped JSON now selects
-`"refresh_mode": "direct"` for a diagnostic trial. This is not the complete
+At the board owner's request, `"refresh_mode": "direct"` was initially
+selected for a diagnostic trial;
+the latest template selects `openfpgaloader` as described below. Direct is not the complete
 vendor Refresh SVF and has not been validated on the board. Configurations
 without this key keep the original `vendor` sequence; other values are rejected
 before programming. Select `vendor` to restore the complete supplied sequence.
@@ -208,6 +214,53 @@ selected sequence returned, not that the full vendor SVF ran or CPLD DONE rose.
 Keep the serial terminal transcript outside BMC when trying direct mode.
 Existing `/etc` overlay configuration can override the new shipped JSON;
 check `/etc/ceb-gnrd/cpld-update.json` before starting the trial.
+
+## openFPGALoader compatibility mode (2026-10-12)
+
+The board owner authorized the assumption that EF3 and EF2 are compatible
+for this trial. The new shipped configuration selects
+`"refresh_mode": "openfpgaloader"`. Existing configurations are not silently
+migrated: missing mode remains `vendor`, and an explicit `direct` keeps that
+diagnostic path. The service records the selected mode at Start and passes it
+to the worker so editing configuration during shutdown wait cannot switch
+the job's algorithm. Persist-bit/image approval is checked again by the worker.
+
+The reference is openFPGALoader commit
+`bf2b52916e7b6216ba1cc0b30933827d7735b05d`:
+
+- [Anlogic::reset / SPI wrapper](https://github.com/trabucayre/openFPGALoader/blob/bf2b52916e7b6216ba1cc0b30933827d7735b05d/src/anlogic.cpp)
+- [SPI write-enable / completion checks](https://github.com/trabucayre/openFPGALoader/blob/bf2b52916e7b6216ba1cc0b30933827d7735b05d/src/spiFlash.cpp)
+- [JTAG state and default idle clock values](https://github.com/trabucayre/openFPGALoader/blob/bf2b52916e7b6216ba1cc0b30933827d7735b05d/src/jtag.hpp)
+
+Implementation differences and retained guarantees:
+
+1. Keep the supplier-verified EF3 background entry and A5 SPI tunnel, image
+   parser, erase/program address vectors and full readback comparison. Upstream
+   normal flash access starts with Refresh and uses a different SPI wrapper;
+   those parts are not copied onto a board where reload affects BMC supply.
+2. Assuming SPI status compatibility, use opcode `05` for WIP bit 0 and WEL
+   bit 1. Probe idle before QE/erase, require idle+WEL after every WREN, and
+   poll WIP after QE, each erase and page write rather than fixed clock waits.
+   WEL wait is bounded to 1 second, QE/program to 2 seconds, sector erase to
+   10 seconds; all are clipped by the original total deadline. An all-FF status,
+   missing WEL, busy timeout, Host On or readback mismatch blocks Refresh.
+   This is SPI Flash RDSR under IR 39, not CPLD JTAG read_status IR 20.
+3. After verified receipt + final Host Off checks, emit the upstream reset
+   sequence: `SIR FF -> SIR 01 -> 15 TCK -> SIR FF -> 200000 TCK`.
+   It skips IR 20 and the undocumented EF3 control-register cleanup/re-entry.
+4. The three IR scans and 15 clocks plus the first 4039 idle clocks are sent
+   in one 4096-clock ioctl. This removes user-space/logging gaps across the
+   short reset sequence without changing TAP IDLE transitions or clock counts.
+   Remaining 195961 idle clocks use bounded batches. No new kernel ABI is used;
+   actual BMC power loss can still interrupt any batch.
+5. Recheck Host Off after the pre-Refresh diagnostic pause, immediately before
+   disruptive clocks. Pre-Refresh receipt still precedes every IR 01, the total
+   timeout remains 600 seconds, and no BMC software reboot is issued.
+
+This mode does not lock IO, verify DONE/running version, enable Golden fallback
+or prove EF3/EF2 compatibility. Its receipt records the compatibility assumption.
+Board validation must establish SPI status validity, JTAG waveform and CPLD/BMC
+power/reset recovery; a successful offline test is not proof of those properties.
 
 ## Dual Boot and reserved Golden region
 

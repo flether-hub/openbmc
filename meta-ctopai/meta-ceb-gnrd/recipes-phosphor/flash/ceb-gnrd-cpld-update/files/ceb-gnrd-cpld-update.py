@@ -132,7 +132,7 @@ class Update(ServiceInterface):
                 output.write(raw)
             self.deadline = time.monotonic() + 600
             self.state = dict(job=job, phase='WaitingForHostOff', progress=0,
-                              detail='Please shut down the host. Waiting for stable Off state.',
+                              detail=f'Please shut down the host. Waiting for stable Off state. Refresh mode: {mode}.',
                               sha256=digest, feature=feature, bootId=boot_id(),
                               flashVerified=False, refreshMode=mode)
             checkpoint(self.state)
@@ -214,6 +214,7 @@ class Update(ServiceInterface):
             process = await asyncio.create_subprocess_exec(
                 '/usr/bin/python3', '/usr/libexec/cpld_jtag.py', str(image), job,
                 str(max(0.1, deadline - time.monotonic())),
+                self.state['refreshMode'],
                 # Diagnostics go directly to the service journal; do not put
                 # them in an undrained pipe that can block the JTAG worker.
                 stdout=asyncio.subprocess.PIPE)

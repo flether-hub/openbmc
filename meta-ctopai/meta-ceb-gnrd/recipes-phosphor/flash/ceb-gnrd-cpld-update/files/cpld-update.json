@@ -1,5 +1,5 @@
 {
-  "refresh_mode": "direct",
+  "refresh_mode": "openfpgaloader",
   "running_persist_bit_confirmed": true,
   "confirmation_reference": "2026-10-12: board owner confirmed persist_bit=1 for INS_ZQ6_CPLD_V3",
   "approved_feature_codes": [
