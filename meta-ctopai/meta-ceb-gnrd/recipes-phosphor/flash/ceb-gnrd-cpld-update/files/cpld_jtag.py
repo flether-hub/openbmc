@@ -1,19 +1,15 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: Apache-2.0
-"""Restricted EF3L90 player, based on the reviewed TD 1.5 background SVF.
+"""AST2600 bounded JTAG transport, guards and serial diagnostics.
 
-No arbitrary SVF execution. The input is a bounded Anlogic .bit. Erase/program
-and full readback retain the supplied vectors; optional openfpgaloader mode
-uses SPI status polling/reset under the board owner's EF3/EF2 compatibility
-assumption. Reference SVFs:
-495be9e6fe834049bdf7be25a542071fcc165e4654d7d30c123186a717adc22f
-cf303350980139dc36f03c8a63f7fca64217a54f36134a688ae615bd8b75ad89
+Firmware updates are executed by cpld_svf.py from reviewed SVF commands.
+The pure .bit parser/SPI vector helpers remain for development-host reference
+audits; this module has no native bitstream programming entry point.
 """
 import ctypes
 import fcntl
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -142,13 +138,6 @@ def require_background(feature, cfg):
         raise ValueError('Target feature code has not been approved for background programming')
 
 
-def refresh_mode(cfg):
-    mode = cfg.get('refresh_mode', 'vendor')
-    if mode not in ('vendor', 'direct', 'openfpgaloader'):
-        raise ValueError('refresh_mode must be vendor, direct or openfpgaloader')
-    return mode
-
-
 
 def host_off():
     result = subprocess.run(
@@ -271,250 +260,6 @@ class Jtag:
         self.scan(16, 0x60a5)
 
 
-    def flash_status(self):
-        # Retain the EF3 A5 SPI tunnel already verified against TD vectors.
-        # Assuming EF2/EF3 compatibility, SPI 05 reads WIP bit0 and WEL bit1.
-        # Prefix A5 + opcode 05 occupy 16 bits, followed by the 1-bit delay.
-        value = self.spi(bytes([0x05, 0x00]), True)
-        status = REVERSE[(value >> 17) & 0xff]
-        if status == 0xff:
-            raise RuntimeError('Flash status is 0xFF; status polling unsupported or device unavailable; programming blocked')
-        return status
-
-    def wait_flash_status(self, mask, expected, timeout, operation):
-        until = min(self.deadline, time.monotonic() + timeout)
-        status = None
-        while time.monotonic() < until:
-            status = self.flash_status()
-            if time.monotonic() >= until:
-                break
-            if status & mask == expected:
-                return status
-            time.sleep(min(0.002, max(0, until - time.monotonic())))
-        value = 'unknown' if status is None else f'0x{status:02x}'
-        raise TimeoutError(f'{operation} timed out: Flash status={value}, mask=0x{mask:02x}, expected=0x{expected:02x}; Refresh blocked')
-
-    def write_enable_checked(self):
-        self.wren()
-        # Require idle AND WEL, not merely WEL on a busy device.
-        return self.wait_flash_status(0x03, 0x02, 1, 'Flash write-enable')
-
-    def wait_flash_ready(self, timeout, operation):
-        return self.wait_flash_status(0x01, 0x00, timeout, operation)
-
-    def refresh_openfpgaloader(self):
-        # Mirrors Anlogic::reset() at upstream bf2b52916e7b6216ba1cc0b30933827d7735b05d.
-        # Enter/leave every IR scan in IDLE. Keep the short sequence in one
-        # bounded ioctl so there are no user-space/logging/Host-check gaps
-        # between IR 01, its 15 clocks and BYPASS. Power loss can still abort it.
-        control = (self.scan_bits(8, 0xff, True) + self.scan_bits(8, 0x01, True) +
-                   [0] * 15 + self.scan_bits(8, 0xff, True))
-        idle_first = 4096 - len(control)
-        trace('openFPGALoader critical batch: FF -> 01 -> 15 TCK -> FF, then initial idle clocks')
-        self.clocks(control + [0] * idle_first)
-        trace(f'openFPGALoader critical batch returned; {200000 - idle_first} idle clocks remain')
-        self.run(200000 - idle_first)
-
-
-def update(path, job, remaining, selected_mode=None):
-    if not 0 < remaining <= 600:
-        raise ValueError("Invalid remaining upgrade timeout")
-    deadline = time.monotonic() + remaining
-    trace(f'BEGIN job={job} timeoutRemaining={remaining:.3f}s')
-    data, feature, digest = bitstream(Path(path).read_bytes())
-    cfg = configuration()
-    require_background(feature, cfg)
-    mode = refresh_mode(cfg if selected_mode is None else {'refresh_mode': selected_mode})
-    trace(f'Refresh mode={mode}; openfpgaloader assumes EF3/EF2 compatibility; direct is experimental')
-    trace(f'Image approved sha256={digest} feature={feature} bytes={len(data)}; no output latch is provided')
-    old_boot = boot_id()
-    last_host_check = 0.0
-
-    def guard(force=False):
-        nonlocal last_host_check
-        now = time.monotonic()
-        if force or now - last_host_check >= 0.5:
-            if not host_off():
-                raise RuntimeError('Host is no longer Off; programming stopped; do not reload CPLD')
-            last_host_check = now
-
-    def step(label, operation, *args, **kwargs):
-        trace(f'BEGIN {label}')
-        if label in (
-                'Post-verify read_status SDR 32 (not a DONE check)',
-                'Final Host Off check before Refresh',
-                'Persist flashVerified receipt before Refresh',
-                'Refresh SIR 01',
-                'openFPGALoader Refresh critical batch'):
-            diagnostic_pause(label, deadline)
-        result = operation(*args, **kwargs)
-        trace(f'END {label}')
-        return result
-
-    step('Host Off check before programming', guard, force=True)
-    jtag = step('Open JTAG Master-1', Jtag, deadline, guard)
-    try:
-        event('Preflight', 5, 'Checking JTAG IDCODE')
-        step('Initial IDCODE check', jtag.identify)
-        trace('BEGIN background programming entry (no Refresh)')
-        # Exact TD background entry; deliberately no IR 0x01 here.
-        jtag.ir(0x80)
-        jtag.scan(64, 0x00800000000000a5)
-        jtag.run(200)
-        jtag.ir(0xff)
-        jtag.ir(0x39)
-        jtag.run(50000)
-        trace('END background programming entry')
-        # Use the same reviewed SPI read command and one-bit delay as the
-        # supplier's verify SVF. No inferred EF3 feature-register/JEDEC opcode.
-        response = jtag.spi(bytes([0x03, 0, 0, 0]) + bytes(256), True)
-        existing = ((response >> 41) & ((1 << 2048) - 1)).to_bytes(256, 'little').translate(REVERSE)
-        if existing[16:52] != b'\xff' * 32 + bytes.fromhex('cc55aa33'):
-            raise RuntimeError('Internal Flash header not recognized; no erase attempted')
-        event('Preflight', 8, 'Existing Flash header read successfully')
-        trace('Existing Flash header accepted; BEGIN QE setup')
-        if mode == 'openfpgaloader':
-            status = step('Initial SPI Flash WIP check (05)', jtag.wait_flash_ready, 2, 'Initial Flash readiness')
-            trace(f'SPI Flash status=0x{status:02x}; status polling enabled')
-            jtag.write_enable_checked()
-        else:
-            jtag.wren()
-        jtag.scan(32, 0x400080a5)
-        if mode == 'openfpgaloader':
-            step('Wait for QE write completion', jtag.wait_flash_ready, 2, 'QE register write')
-        else:
-            jtag.run(100000)
-        trace('END QE setup')
-        sectors = math.ceil(len(data) / 4096)
-        for i in range(sectors):
-            trace(f'BEGIN erase sector {i + 1}/{sectors} address=0x{i * 4096:06x}')
-            if mode == 'openfpgaloader':
-                jtag.write_enable_checked()
-            else:
-                jtag.wren()
-            jtag.spi(bytes([0x20]) + (i * 4096).to_bytes(3, 'big'))
-            if mode == 'openfpgaloader':
-                jtag.wait_flash_ready(10, f'Erase sector {i + 1}/{sectors}')
-            else:
-                jtag.run(150000)
-            trace(f'END erase sector {i + 1}/{sectors}')
-            event('Erasing', 10 + i * 20 // sectors, f'Erase sector {i + 1}/{sectors}')
-        pages = len(data) // 256
-        for i in range(pages):
-            if i % 16 == 0 or i >= pages - 16:
-                trace(f'BEGIN write page {i + 1}/{pages} address=0x{i * 256:06x}')
-            if mode == 'openfpgaloader':
-                jtag.write_enable_checked()
-            else:
-                jtag.wren()
-            jtag.spi(bytes([0x02]) + (i * 256).to_bytes(3, 'big') + data[i * 256:(i + 1) * 256])
-            if mode == 'openfpgaloader':
-                jtag.wait_flash_ready(2, f'Program page {i + 1}/{pages}')
-            else:
-                jtag.run(5000)
-            if (i + 1) % 16 == 0 or i >= pages - 16:
-                trace(f'END write page {i + 1}/{pages}')
-            if i % 16 == 0 or i + 1 == pages:
-                event('Writing', 30 + i * 40 // pages, f'Write page {i + 1}/{pages}')
-        for i in range(pages):
-            if i % 16 == 0 or i >= pages - 16:
-                trace(f'BEGIN verify page {i + 1}/{pages} address=0x{i * 256:06x}')
-            value = jtag.spi(bytes([0x03]) + (i * 256).to_bytes(3, 'big') + bytes(256), True)
-            found = ((value >> 41) & ((1 << 2048) - 1)).to_bytes(256, 'little').translate(REVERSE)
-            if found != data[i * 256:(i + 1) * 256]:
-                raise RuntimeError(f'Flash readback mismatch at page {i}; Refresh blocked')
-            if (i + 1) % 16 == 0 or i >= pages - 16:
-                trace(f'END verify page {i + 1}/{pages} MATCH')
-            if i % 16 == 0 or i + 1 == pages:
-                event('Verifying', 70 + i * 23 // pages, f'Verify page {i + 1}/{pages}')
-        event('Verifying', 93, f'Flash readback passed for all {pages} pages',
-              flashVerified=True)
-        trace(f'ALL FLASH PAGES VERIFIED pages={pages}; Refresh not yet sent')
-        if mode == 'vendor':
-            step('Post-verify status SIR FF', jtag.ir, 0xff)
-            step('Post-verify read_status SIR 20', jtag.ir, 0x20)
-            step('Post-verify read_status SDR 32 (not a DONE check)', jtag.scan, 32, 0)
-            step('Exit programming SIR 80', jtag.ir, 0x80)
-            step('Exit programming SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
-            step('Exit programming RUNTEST 200 TCK', jtag.run, 200)
-            step('Host Off check after verify', guard)
-            # Exact independent TD Refresh sequence (IDCODE was checked above).
-            step('Refresh preparation SIR 80', jtag.ir, 0x80)
-            step('Refresh preparation SDR 64 00800000000000A5', jtag.scan, 64, 0x00800000000000a5)
-            step('Refresh preparation RUNTEST 200 TCK', jtag.run, 200)
-            step('Refresh preparation SIR FF (1)', jtag.ir, 0xff)
-            step('Refresh preparation SIR FF (2)', jtag.ir, 0xff)
-            step('Refresh preparation SIR 06 IDCODE', jtag.ir, 0x06)
-            step('Refresh preparation RUNTEST 15 TCK', jtag.run, 15)
-            found_id = step('Refresh preparation SDR 32 IDCODE', jtag.scan, 32, 0)
-            trace(f'Refresh IDCODE=0x{found_id:08x} expected=0x{IDCODE:08x}')
-            if found_id != IDCODE:
-                raise RuntimeError('IDCODE changed before Refresh')
-            step('Refresh preparation SIR FF', jtag.ir, 0xff)
-        elif mode == 'direct':
-            # Board-owner-authorized experiment: stay in IDLE after the last
-            # verified SPI read and go directly to IR 01. No inferred register
-            # writes or post-verify SDR 32. Initial exact IDCODE is still required.
-            trace('EXPERIMENT direct Refresh: skipping post-verify status, mode-exit and repeated IDCODE sequence')
-        else:
-            trace('openFPGALoader mode: skip SIR 20/SDR 32 and EF3 control-register exit/re-entry')
-        step('Final Host Off check before Refresh', guard, force=True)
-        # Durable, bounded receipt MUST precede the instruction resetting BMC.
-        receipt = dict(job=job, phase='AwaitBmcReboot', progress=95,
-                       detail=f'Flash verified; preparing {mode} JTAG Refresh and waiting for BMC restart',
-                       sha256=digest, feature=feature, bootId=old_boot,
-                       armedUnix=time.time(),
-                       deadlineUnix=time.time() + max(0, deadline - time.monotonic()),
-                       flashVerified=True, refreshSequenceCompleted=False, refreshMode=mode)
-        if mode == 'openfpgaloader':
-            receipt['compatibilityAssumption'] = 'EF3/EF2 SPI status and Refresh compatible; no IO-hold protocol implemented'
-        step('Persist flashVerified receipt before Refresh', checkpoint, receipt)
-        event('AwaitBmcReboot', 95, receipt['detail'], flashVerified=True,
-              refreshSequenceCompleted=False, refreshMode=mode)
-        # Host state is checked immediately before Refresh. After it is sent,
-        # BMC services may disappear normally; do not turn that into Failed.
-        trace('NEXT SIR 01 triggers CPLD reload; BMC power/reset and serial may disappear; outputs are not latched')
-        def begin_refresh(operation, *args):
-            # The diagnostic pause/receipt write may take seconds. Check Off
-            # again AFTER those waits, immediately before the disruptive scan.
-            guard(force=True)
-            jtag.guard = lambda: None
-            return operation(*args)
-
-        if mode == 'openfpgaloader':
-            step('openFPGALoader Refresh critical batch', begin_refresh, jtag.refresh_openfpgaloader)
-        else:
-            step('Refresh SIR 01', begin_refresh, jtag.ir, 0x01)
-            step('Refresh RUNTEST 15 TCK', jtag.run, 15)
-        if mode == 'vendor':
-            step('Refresh SIR FF', jtag.ir, 0xff)
-            step('Refresh RUNTEST 200000 TCK', jtag.run, 200000)
-            step('Refresh cleanup SIR 80', jtag.ir, 0x80)
-            step('Refresh cleanup SDR 64 00000000000000A5', jtag.scan, 64, 0x00000000000000a5)
-            step('Refresh cleanup RUNTEST 200 TCK', jtag.run, 200)
-        elif mode == 'direct':
-            trace('EXPERIMENT direct Refresh: IR 01 and 15 TCK returned; no further JTAG commands will be sent')
-        # This records completion of the selected sequence, not FPGA DONE.
-        # If BMC power/reset interrupts it, the durable flag remains false.
-        receipt.update(progress=97, refreshSequenceCompleted=True,
-                       detail=f'{mode} JTAG Refresh sequence completed; waiting for BMC restart')
-        step('Persist Refresh sequence completion (not a DONE check)', checkpoint, receipt)
-        event('AwaitBmcReboot', 97, receipt['detail'], refreshSequenceCompleted=True)
-        trace('WAIT for BMC restart within original deadline; no BMC software reboot is issued')
-        # Returning from Refresh is not success: wait for a NEW BMC boot ID.
-        while time.monotonic() < deadline:
-            time.sleep(1)
-        raise TimeoutError('Flash verified, but BMC did not restart within 10 minutes')
-    finally:
-        trace('BEGIN close JTAG device')
-        jtag.close()
-        trace('END close JTAG device')
-
-
 if __name__ == '__main__':
-    try:
-        update(sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4] if len(sys.argv) > 4 else None)
-    except Exception as exc:
-        trace(f'FAILED {type(exc).__name__}: {str(exc)[:512]}')
-        event('Failed', 0, str(exc)[:512])
-        sys.exit(1)
+    print('Use cpld_svf.py through the guarded CPLD update service.', file=sys.stderr)
+    sys.exit(2)

@@ -13,8 +13,9 @@ Checkpoint meanings and stages use the same AMI Aptio V reference catalog
 as the POST-code log page. Exact error definitions take priority over broad
 ranges. OEM, reserved and unknown codes do not advance boot progress; the
 raw code is retained and the Web page reports that no definition matched.
-The old guessed Intel MRC overlap at 0xB0-0xDF is intentionally removed:
-the supplied reference defines B0/B1 as runtime mapping and D0-DD as errors.
+Intel reference codes can reuse B0-BF during pre-memory initialization.
+Sequence context suppresses their AMI BDS stage/reset effects; GNR-D-specific
+meanings remain unconfirmed. D0-DD retain the documented DXE/BDS errors.
 ACPI/ASL codes reuse some POST values. After a boot handoff, these reused
 values do not regress the coarse stage to CPU/memory initialization. The
 Web explanation shows both documented meanings where context is ambiguous.
@@ -70,13 +71,68 @@ def definition_for(code):
     return None
 
 
+def in_range(code, name):
+    bounds = CATALOG["contextRules"][name]
+    return isinstance(code, int) and int(bounds[0], 16) <= code <= int(bounds[1], 16)
+
+
+class PostContext:
+    """Sequence hints only: never assert a GNR-D Intel RC mapping."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.memory_pending = False
+        self.handoff = False
+        self.s3 = False
+        self.late_boot = False
+
+    def consume(self, code):
+        entry = definition_for(code)
+        if entry is None:
+            return ""
+        key = "%02X" % code
+        context = ""
+        if self.handoff and key in CATALOG["acpi"]:
+            context = "acpi"
+        elif self.memory_pending and in_range(code, "intelMemory"):
+            context = "intelMemory"
+        elif in_range(code, "intelMemory") and not (self.late_boot or self.handoff):
+            context = "intelAmbiguous"
+        elif in_range(code, "intelMemoryErrors"):
+            context = "s3" if self.s3 else ("intelMemoryError" if self.memory_pending else "")
+
+        if context in ("acpi", "intelMemory", "intelAmbiguous", "intelMemoryError"):
+            return context
+        if in_range(code, "preMemory") and not self.handoff:
+            self.memory_pending, self.s3 = True, False
+        elif entry["kind"] in ("progress", "runtime") and (
+                in_range(code, "postMemory") or in_range(code, "laterBoot")):
+            self.memory_pending, self.s3 = False, False
+            if in_range(code, "laterBoot"):
+                self.late_boot = True
+        if in_range(code, "s3Progress"):
+            self.memory_pending, self.s3 = False, True
+        elif in_range(code, "recoveryProgress"):
+            self.reset()
+        elif key in CATALOG["contextRules"]["handoff"]:
+            self.memory_pending, self.handoff, self.s3 = False, True, False
+        elif code == 0xB3:
+            self.reset()
+        return context
+
+
 def checkpoint_for(code):
     return "Post%02X" % code if definition_for(code) else "Unknown"
 
 
-def stage_for(code, after_handoff=False):
+def stage_for(code, after_handoff=False, context=""):
     entry = definition_for(code)
     if entry is None:
+        return None
+    # A sequence hint is insufficient to publish an Intel RC boot stage.
+    # In particular, pre-memory B0/B1 must not prematurely publish OSStart.
+    if context in ("intelMemory", "intelAmbiguous", "intelMemoryError", "acpi"):
         return None
     # SEC/PEI values can also describe ACPI sleep transitions after boot.
     if after_handoff and "%02X" % code in CATALOG["acpi"]:
@@ -90,6 +146,7 @@ class Checkpoint(ServiceInterface):
         self.detail = ""
         self.code = ""
         self.kind = ""
+        self.context = ""
 
     @dbus_property(access=PropertyAccess.READ)
     def BootCheckpoint(self) -> "s":
@@ -103,12 +160,16 @@ class Checkpoint(ServiceInterface):
     def BootPostCodeKind(self) -> "s":
         return self.kind
 
-    def set(self, detail, code="", kind=""):
-        if (detail, code, kind) == (self.detail, self.code, self.kind):
+    @dbus_property(access=PropertyAccess.READ)
+    def BootPostCodeContext(self) -> "s":
+        return self.context
+
+    def set(self, detail, code="", kind="", context=""):
+        if (detail, code, kind, context) == (self.detail, self.code, self.kind, self.context):
             return
-        self.detail, self.code, self.kind = detail, code, kind
+        self.detail, self.code, self.kind, self.context = detail, code, kind, context
         self.emit_properties_changed({"BootCheckpoint": detail, "BootPostCode": code,
-                                      "BootPostCodeKind": kind})
+                                      "BootPostCodeKind": kind, "BootPostCodeContext": context})
 
 
 def sd_notify(message):
@@ -181,7 +242,8 @@ async def main():
     checkpoint = Checkpoint()
     bus.export(HOST_PATH, checkpoint)
     await bus.request_name(BUS_NAME)
-    state = {"standby": False, "handoff": False}
+    state = {"standby": False}
+    post_context = PostContext()
 
     def on_message(msg):
         if (msg.message_type != MessageType.SIGNAL or msg.member != "PropertiesChanged"
@@ -194,16 +256,23 @@ async def main():
         if code is None:
             return
         entry = definition_for(code)
+        context = post_context.consume(code)
+        kind = entry["kind"] if entry else "unknown"
+        if context in ("intelMemory", "intelAmbiguous"):
+            kind = "ambiguous"
+        elif context == "intelMemoryError":
+            kind = "error"
+        elif context == "acpi":
+            kind = "runtime"
         checkpoint.set(checkpoint_for(code), "0x%02X" % code,
-                       entry["kind"] if entry else "unknown")
-        if code == 0xB3:
-            state["handoff"] = False
+                       kind, context)
+        if code == 0xB3 and context not in ("intelMemory", "intelAmbiguous"):
             progress.set("Unspecified", "BIOS system reset checkpoint")
-        stage = stage_for(code, state["handoff"])
+        stage = stage_for(code, post_context.handoff, context)
         if stage:
             progress.set(stage, "POST code 0x%02X" % code)
             if stage == "OSStart":
-                state["handoff"] = True
+                post_context.handoff = True
 
     bus.add_message_handler(on_message)
     match = ("type='signal',interface='%s',member='PropertiesChanged',"
@@ -219,7 +288,7 @@ async def main():
         try:
             power = str(await get_property(bus, *CHASSIS))
             if not power.endswith(".On"):
-                state["handoff"] = False
+                post_context.reset()
                 progress.set("Unspecified", "host off")
                 checkpoint.set("")
                 state["standby"] = False
@@ -229,11 +298,14 @@ async def main():
                 if standby and not checkpoint.detail:
                     checkpoint.set("POSTComplete")
                 if standby and not state["standby"]:
-                    state["handoff"] = True
+                    post_context.handoff = True
+                    post_context.memory_pending = False
+                    post_context.s3 = False
                     if checkpoint.kind != "error":
                         progress.set("OSStart", "BIOS POST complete")
                 if state.get("standby") and not standby:
-                    state["handoff"] = False   # warm reset: the next POST starts over
+                    # Warm reset: the next POST starts over.
+                    post_context.reset()
                     checkpoint.set("")
                     progress.set("Unspecified", "BIOS POST complete deasserted")
                 state["standby"] = standby

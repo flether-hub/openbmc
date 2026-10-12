@@ -14,9 +14,10 @@ from dbus_fast import DBusError, Message
 from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, RequestNameReply
 from dbus_fast.service import ServiceInterface, dbus_property, method
-from cpld_jtag import (DEVICE, MAX_IMAGE, RECEIPT, bitstream, boot_id,
+from cpld_jtag import (DEVICE, RECEIPT, boot_id,
                        checkpoint, configuration, console_debug_enabled,
-                       console_log, host_off, refresh_mode, require_background)
+                       console_log, host_off, require_background)
+from cpld_svf import MAX_SVF, validate
 
 LOG = logging.getLogger('ceb-gnrd-cpld-update')
 
@@ -69,7 +70,6 @@ class Update(ServiceInterface):
     def ready(self):
         try:
             cfg = configuration()
-            refresh_mode(cfg)
             features = cfg.get('approved_feature_codes')
             if not isinstance(features, list) or not features:
                 return False
@@ -81,6 +81,7 @@ class Update(ServiceInterface):
     @dbus_property(access=PropertyAccess.READ)
     def Status(self) -> 's':
         value = dict(self.state, ready=self.ready(), timeoutSeconds=600,
+                     supportedFormat='svf', maxUploadBytes=MAX_SVF,
                      currentBootId=boot_id(),
                      remainingSeconds=max(0, int(self.deadline - time.monotonic())))
         return json.dumps(value, separators=(',', ':'))
@@ -105,13 +106,12 @@ class Update(ServiceInterface):
         image = None
         job = None
         try:
-            if len(encoded) > 4 * ((MAX_IMAGE + 2) // 3):
-                raise ValueError('Image exceeds 1 MiB')
+            accepted_deadline = time.monotonic() + 600
+            if len(encoded) > 4 * ((MAX_SVF + 2) // 3):
+                raise ValueError('SVF exceeds 4 MiB')
             raw = binascii.a2b_base64(encoded, strict_mode=True)
-            _, feature, digest = bitstream(raw)
             cfg = configuration()
-            require_background(feature, cfg)
-            mode = refresh_mode(cfg)
+            plan = validate(raw, cfg)
             if not Path(DEVICE).exists():
                 raise ValueError('JTAG Master-1 device is unavailable')
             RUN.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -126,15 +126,18 @@ class Update(ServiceInterface):
                     raise ValueError('BIOS or CPLD update is already active')
                 self.locks.append(fd)
             job = os.urandom(16).hex()
-            image = RUN / 'image.bit'
+            image = RUN / 'image.svf'
             fd = os.open(image, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, 'wb') as output:
                 output.write(raw)
-            self.deadline = time.monotonic() + 600
+            self.deadline = accepted_deadline
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError('The upgrade deadline expired while validating the SVF')
             self.state = dict(job=job, phase='WaitingForHostOff', progress=0,
-                              detail=f'Please shut down the host. Waiting for stable Off state. Refresh mode: {mode}.',
-                              sha256=digest, feature=feature, bootId=boot_id(),
-                              flashVerified=False, refreshMode=mode)
+                              detail='Please shut down the host. Waiting for stable Off state before SVF playback.',
+                              sha256=plan['sha256'], flashSha256=plan['flashSha256'],
+                              feature=plan['feature'], bootId=boot_id(),
+                              flashVerified=False, programmingFormat='svf')
             checkpoint(self.state)
             self.publish()
             self.cancel_requested = False
@@ -212,9 +215,9 @@ class Update(ServiceInterface):
             self.publish(phase='Preflight', progress=3, detail='Host is Off; checking JTAG')
             checkpoint(self.state)
             process = await asyncio.create_subprocess_exec(
-                '/usr/bin/python3', '/usr/libexec/cpld_jtag.py', str(image), job,
+                '/usr/bin/python3', '/usr/libexec/cpld_svf.py', str(image), job,
                 str(max(0.1, deadline - time.monotonic())),
-                self.state['refreshMode'],
+                self.state['sha256'],
                 # Diagnostics go directly to the service journal; do not put
                 # them in an undrained pipe that can block the JTAG worker.
                 stdout=asyncio.subprocess.PIPE)
@@ -222,11 +225,9 @@ class Update(ServiceInterface):
             async def messages():
                 while line := await process.stdout.readline():
                     value = json.loads(line)
-                    phase_changed = value['phase'] != self.state['phase']
                     self.publish(**value)
-                    # Worker persists its verified receipt BEFORE Refresh.
-                    if phase_changed and value['phase'] != 'AwaitBmcReboot':
-                        checkpoint(self.state)
+                    # Once launched, the worker owns the verified receipt.
+                    # Delayed progress must not overwrite its pre-Refresh proof.
                 await process.wait()
                 if process.returncode:
                     raise RuntimeError(self.state.get('detail') or

@@ -1,5 +1,5 @@
 [Unit]
-Description=CEB-GNRD EF3L90 CPLD firmware update
+Description=CEB-GNRD EF3L90 CPLD SVF firmware update
 After=dbus.service
 Requires=dbus.service
 

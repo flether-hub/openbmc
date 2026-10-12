@@ -8,22 +8,20 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 
 --- a/src/views/Operations/Firmware/Firmware.vue
 +++ b/src/views/Operations/Firmware/Firmware.vue
-@@ -47,6 +47,7 @@
+@@ -47,5 +47,6 @@
          </b-col>
        </b-row>
      </page-section>
 +    <cpld-update :disabled="!hasAdminPrivilege" @busy-change="cpldBusy = $event" />
    </b-container>
  </template>
-
-@@ -57,6 +58,7 @@
+@@ -57,5 +58,6 @@
  import BmcCards from './FirmwareCardsBmc';
  import FormUpdate from './FirmwareFormUpdate';
  import BiosCards from './FirmwareCardsBios';
 +import CpldUpdate from './FirmwareCpldUpdate';
  import PageSection from '@/components/Global/PageSection';
  import PageTitle from '@/components/Global/PageTitle';
-
 @@ -71,6 +73,7 @@
      BmcCards,
      FormUpdate,
@@ -72,7 +70,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +        <div class="form-background p-3">
 +          <b-form @submit.prevent="start">
 +            <b-form-group :label="$t('pageCpld.image')" label-for="cpld-image" class="mb-3">
-+              <form-file id="cpld-image" accept=".bit" :model-value="file"
++              <form-file id="cpld-image" accept=".svf" :model-value="file"
 +                :disabled="disabled || busy || submitting"
 +                @update:model-value="selectFile" />
 +            </b-form-group>
@@ -164,7 +162,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +      this.file = null;
 +      this.error = '';
 +      if (!file) return;
-+      if (!file.name.toLowerCase().endsWith('.bit') || file.size > 1048576) {
++      if (!file.name.toLowerCase().endsWith('.svf') || file.size > 4194304) {
 +        this.error = this.$t('pageCpld.invalidFile');
 +        return;
 +      }
@@ -263,19 +261,19 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +    },
 +  "pageCpld": {
 +    "title": "CPLD firmware update",
-+    "description": "EF3L90CG400B — AST2600 JTAG Master-1. Upload an Anlogic .bit file (maximum 1 MiB).",
-+    "shutdownWarning": "Shut down the host before programming. This update waits for the host to turn off. CPLD reload will restart the BMC. The complete operation has a 10-minute timeout.",
++    "description": "EF3L90CG400B — AST2600 JTAG Master-1. Upload a combined Anlogic background/verify/Refresh .svf file (maximum 4 MiB).",
++    "shutdownWarning": "Shut down the host before programming. This update waits for the host to turn off. CPLD reload may interrupt BMC power or reset. The complete operation has a 10-minute timeout.",
 +    "notReady": "Programming is blocked until the running design supports background programming, the target feature code is approved, and the JTAG device is available.",
-+    "image": "CPLD firmware (.bit)",
++    "image": "CPLD firmware (.svf)",
 +    "start": "Start CPLD update",
 +    "cancel": "Cancel waiting",
-+    "invalidFile": "Select an Anlogic .bit file no larger than 1 MiB.",
++    "invalidFile": "Select a combined Anlogic background/verify/Refresh .svf file no larger than 4 MiB.",
 +    "startFailed": "Unable to start the CPLD update.",
 +    "unknownResponse": "The upload response was lost. Checking the existing job; do not submit another update.",
 +    "cancelFailed": "Unable to cancel. Programming may already have started.",
 +    "unavailable": "CPLD update service is unavailable.",
-+    "reconnecting": "Waiting for the BMC to reconnect. Do not remove power.",
-+    "automaticRefresh": "After every Flash page passes verification, JTAG Refresh activates the image automatically and the page waits for BMC recovery.",
++    "reconnecting": "Flash was verified; waiting for the BMC to reconnect. If the board does not recover automatically, an operator may disconnect all AC inputs and restore power.",
++    "automaticRefresh": "After all Flash pages pass TDO/MASK verification, the remaining Refresh commands in the uploaded SVF are played and the page waits for BMC recovery.",
 +    "connectionLost": "Connection to the BMC was lost. The displayed progress is the last received state; Refresh has not been confirmed by this page. Rechecking the existing job.",
 +    "remaining": "Time remaining in the complete update: {seconds} seconds.",
 +    "refreshUnconfirmed": "Completion of the full JTAG Refresh sequence was not recorded. Flash was verified and a new BMC boot was observed; confirm CPLD operation and automatic power recovery separately.",

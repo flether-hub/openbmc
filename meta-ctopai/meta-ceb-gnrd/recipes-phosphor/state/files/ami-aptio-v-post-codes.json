@@ -1,12 +1,27 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "reference": {
     "title": "AMI Aptio V BIOS POST Codes for Supermicro Motherboards",
     "revision": "1.0b",
     "date": "2024-08-06",
     "aptioRevision": "2.04",
     "aptioDate": "2024-04-20",
-    "pages": "7-12"
+    "pages": "7-12",
+    "updateDocument": "ami-aptio-v-post-codes.md",
+    "updateDate": "2026-10-12",
+    "url": "https://www.supermicro.com/manuals/other/AMI_AptioV_BIOS_POST_Codes_for_SM_Motherboards.pdf",
+    "contextSources": [
+      {
+        "title": "Oracle Server X5-4 Service Manual: AMI Checkpoint Ranges",
+        "url": "https://docs.oracle.com/cd/E56388_01/html/E56396/gnwjq.html",
+        "scope": "Intel RC alternatives; GNR-D mappings unconfirmed"
+      },
+      {
+        "title": "Intel support article 000055207",
+        "url": "https://www.intel.com/content/www/us/en/support/articles/000055207/server-products/server-boards.html",
+        "scope": "E8 memory-not-detected example for S2600WFT only"
+      }
+    ]
   },
   "unmatched": {
     "en": "No matching POST code description",
@@ -19,7 +34,7 @@
       "stage": null,
       "description": {
         "en": "Unused checkpoint",
-        "zh": "未使用的代码"
+        "zh": "未使用"
       }
     },
     "01": {
@@ -28,7 +43,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "Power-on reset type detection",
-        "zh": "上电并检测复位类型（软复位或硬复位）"
+        "zh": "上电，检测复位类型（软/硬复位）"
       }
     },
     "02": {
@@ -37,7 +52,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "AP initialization before microcode",
-        "zh": "微码加载前初始化应用处理器（AP）"
+        "zh": "微码加载前的 AP 初始化"
       }
     },
     "03": {
@@ -46,7 +61,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "North Bridge initialization before microcode",
-        "zh": "微码加载前初始化北桥"
+        "zh": "微码加载前的北桥（系统代理）初始化"
       }
     },
     "04": {
@@ -55,16 +70,16 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "South Bridge initialization before microcode",
-        "zh": "微码加载前初始化南桥"
+        "zh": "微码加载前的南桥（PCH）初始化"
       }
     },
     "05": {
       "phase": "SEC",
-      "kind": "progress",
-      "stage": "PrimaryProcInit",
+      "kind": "oem",
+      "stage": null,
       "description": {
         "en": "OEM initialization before microcode",
-        "zh": "微码加载前执行 OEM 初始化"
+        "zh": "微码加载前的 OEM 初始化"
       }
     },
     "06": {
@@ -73,7 +88,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "Loading CPU microcode",
-        "zh": "加载 CPU 微码"
+        "zh": "加载微码"
       }
     },
     "07": {
@@ -82,7 +97,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "AP initialization after microcode",
-        "zh": "微码加载后初始化应用处理器（AP）"
+        "zh": "微码加载后的 AP 初始化"
       }
     },
     "08": {
@@ -91,7 +106,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "North Bridge initialization after microcode",
-        "zh": "微码加载后初始化北桥"
+        "zh": "微码加载后的北桥初始化"
       }
     },
     "09": {
@@ -100,16 +115,16 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "South Bridge initialization after microcode",
-        "zh": "微码加载后初始化南桥"
+        "zh": "微码加载后的南桥初始化"
       }
     },
     "0A": {
       "phase": "SEC",
-      "kind": "progress",
-      "stage": "PrimaryProcInit",
+      "kind": "oem",
+      "stage": null,
       "description": {
         "en": "OEM initialization after microcode",
-        "zh": "微码加载后执行 OEM 初始化"
+        "zh": "微码加载后的 OEM 初始化"
       }
     },
     "0B": {
@@ -117,8 +132,8 @@
       "kind": "progress",
       "stage": "PrimaryProcInit",
       "description": {
-        "en": "Initializing CPU cache",
-        "zh": "初始化 CPU 缓存"
+        "en": "Initializing CPU cache (Cache-as-RAM)",
+        "zh": "Cache 初始化（CAR）"
       }
     },
     "0E": {
@@ -127,7 +142,7 @@
       "stage": null,
       "description": {
         "en": "CPU microcode missing",
-        "zh": "未找到 CPU 微码"
+        "zh": "找不到微码"
       }
     },
     "0F": {
@@ -136,7 +151,7 @@
       "stage": null,
       "description": {
         "en": "CPU microcode was not loaded",
-        "zh": "CPU 微码未加载"
+        "zh": "微码未加载"
       }
     },
     "10": {
@@ -145,7 +160,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "Starting the PEI core",
-        "zh": "启动 PEI 核心"
+        "zh": "PEI Core 启动"
       }
     },
     "11": {
@@ -154,7 +169,7 @@
       "stage": "PrimaryProcInit",
       "description": {
         "en": "Starting CPU initialization before memory",
-        "zh": "开始内存初始化前的 CPU 初始化"
+        "zh": "内存前 CPU 初始化开始"
       }
     },
     "12": {
@@ -190,7 +205,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting North Bridge initialization before memory",
-        "zh": "开始内存初始化前的北桥初始化"
+        "zh": "内存前北桥初始化开始"
       }
     },
     "16": {
@@ -226,7 +241,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting South Bridge initialization before memory",
-        "zh": "开始内存初始化前的南桥初始化"
+        "zh": "内存前南桥初始化开始"
       }
     },
     "1A": {
@@ -262,7 +277,7 @@
       "stage": "MemoryInit",
       "description": {
         "en": "Reading memory SPD data",
-        "zh": "初始化内存：读取 SPD 信息"
+        "zh": "内存初始化：读 SPD"
       }
     },
     "2C": {
@@ -271,7 +286,7 @@
       "stage": "MemoryInit",
       "description": {
         "en": "Detecting installed memory",
-        "zh": "初始化内存：检测内存是否存在"
+        "zh": "内存初始化：检测内存在位"
       }
     },
     "2D": {
@@ -280,7 +295,7 @@
       "stage": "MemoryInit",
       "description": {
         "en": "Programming memory timing",
-        "zh": "初始化内存：设置内存时序"
+        "zh": "内存初始化：编程时序参数"
       }
     },
     "2E": {
@@ -289,7 +304,7 @@
       "stage": "MemoryInit",
       "description": {
         "en": "Configuring memory",
-        "zh": "初始化内存：配置内存"
+        "zh": "内存初始化：配置内存"
       }
     },
     "2F": {
@@ -297,8 +312,8 @@
       "kind": "progress",
       "stage": "MemoryInit",
       "description": {
-        "en": "Other memory initialization operations",
-        "zh": "初始化内存：其他操作"
+        "en": "Other memory initialization, including training",
+        "zh": "内存初始化：其他（含训练）"
       }
     },
     "30": {
@@ -315,8 +330,8 @@
       "kind": "progress",
       "stage": "MemoryInit",
       "description": {
-        "en": "Memory is installed",
-        "zh": "已检测到内存"
+        "en": "Memory installed; InstallPeiMemory completed",
+        "zh": "内存已安装（InstallPeiMemory 完成）"
       }
     },
     "32": {
@@ -325,7 +340,7 @@
       "stage": "SecondaryProcInit",
       "description": {
         "en": "Starting CPU initialization after memory",
-        "zh": "开始内存初始化后的 CPU 初始化"
+        "zh": "内存后 CPU 初始化开始"
       }
     },
     "33": {
@@ -334,7 +349,7 @@
       "stage": "SecondaryProcInit",
       "description": {
         "en": "Initializing CPU cache after memory",
-        "zh": "内存初始化后初始化 CPU 缓存"
+        "zh": "CPU：Cache 初始化"
       }
     },
     "34": {
@@ -343,7 +358,7 @@
       "stage": "SecondaryProcInit",
       "description": {
         "en": "Initializing application processors after memory",
-        "zh": "内存初始化后初始化应用处理器（AP）"
+        "zh": "CPU：AP 初始化"
       }
     },
     "35": {
@@ -352,7 +367,7 @@
       "stage": "SecondaryProcInit",
       "description": {
         "en": "Selecting the bootstrap processor",
-        "zh": "选择引导处理器（BSP）"
+        "zh": "CPU：BSP 选择"
       }
     },
     "36": {
@@ -361,7 +376,7 @@
       "stage": "SecondaryProcInit",
       "description": {
         "en": "Initializing CPU System Management Mode",
-        "zh": "初始化 CPU 系统管理模式（SMM）"
+        "zh": "CPU：SMM 初始化"
       }
     },
     "37": {
@@ -370,7 +385,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting North Bridge initialization after memory",
-        "zh": "开始内存初始化后的北桥初始化"
+        "zh": "内存后北桥初始化开始"
       }
     },
     "38": {
@@ -406,7 +421,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting South Bridge initialization after memory",
-        "zh": "开始内存初始化后的南桥初始化"
+        "zh": "内存后南桥初始化开始"
       }
     },
     "3C": {
@@ -442,7 +457,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting the DXE initial program loader",
-        "zh": "启动 DXE 初始程序加载器（IPL）"
+        "zh": "DXE IPL 启动（准备进入 DXE）"
       }
     },
     "50": {
@@ -451,7 +466,7 @@
       "stage": null,
       "description": {
         "en": "Unsupported memory type or speed",
-        "zh": "内存初始化失败：内存类型或速度不兼容"
+        "zh": "内存初始化错误：类型无效或速度不兼容"
       }
     },
     "51": {
@@ -460,7 +475,7 @@
       "stage": null,
       "description": {
         "en": "Memory SPD read failed",
-        "zh": "内存初始化失败：SPD 读取失败"
+        "zh": "内存初始化错误：SPD 读取失败"
       }
     },
     "52": {
@@ -469,7 +484,7 @@
       "stage": null,
       "description": {
         "en": "Invalid memory size or mismatched modules",
-        "zh": "内存初始化失败：容量无效或内存条不匹配"
+        "zh": "内存初始化错误：容量无效或模组不匹配"
       }
     },
     "53": {
@@ -478,7 +493,7 @@
       "stage": null,
       "description": {
         "en": "No usable memory detected",
-        "zh": "内存初始化失败：未检测到可用内存"
+        "zh": "内存初始化错误：没有可用内存"
       }
     },
     "54": {
@@ -487,7 +502,7 @@
       "stage": null,
       "description": {
         "en": "Unspecified memory initialization failure",
-        "zh": "内存初始化失败：未指定具体原因"
+        "zh": "未指明的内存初始化错误"
       }
     },
     "55": {
@@ -505,7 +520,7 @@
       "stage": null,
       "description": {
         "en": "Invalid CPU type or speed",
-        "zh": "CPU 类型或速度无效"
+        "zh": "CPU 类型或频率无效"
       }
     },
     "57": {
@@ -523,7 +538,7 @@
       "stage": null,
       "description": {
         "en": "CPU self-test or cache failure",
-        "zh": "CPU 自检失败或缓存可能异常"
+        "zh": "CPU 自检失败或可能的 Cache 错误"
       }
     },
     "59": {
@@ -532,7 +547,7 @@
       "stage": null,
       "description": {
         "en": "CPU microcode missing or update failed",
-        "zh": "未找到 CPU 微码或微码更新失败"
+        "zh": "找不到 CPU 微码或微码更新失败"
       }
     },
     "5A": {
@@ -550,7 +565,7 @@
       "stage": null,
       "description": {
         "en": "Reset PPI unavailable",
-        "zh": "复位 PPI 不可用"
+        "zh": "Reset PPI 不可用"
       }
     },
     "5C": {
@@ -558,8 +573,8 @@
       "kind": "error",
       "stage": null,
       "description": {
-        "en": "BMC self-test failed during PEI",
-        "zh": "PEI 阶段 BMC 自检失败"
+        "zh": "PEI 阶段 BMC 自检失败；参考表也将其列为保留，需以平台码表确认",
+        "en": "PEI BMC self-test failure; also listed as reserved in the reference, requires platform confirmation"
       }
     },
     "60": {
@@ -568,7 +583,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting the DXE core",
-        "zh": "启动 DXE 核心"
+        "zh": "DXE Core 启动"
       }
     },
     "61": {
@@ -577,7 +592,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Initializing NVRAM",
-        "zh": "初始化 NVRAM"
+        "zh": "NVRAM 初始化"
       }
     },
     "62": {
@@ -586,7 +601,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Installing South Bridge runtime services",
-        "zh": "安装南桥运行时服务"
+        "zh": "安装南桥 Runtime Services"
       }
     },
     "63": {
@@ -595,7 +610,7 @@
       "stage": "SecondaryProcInit",
       "description": {
         "en": "Starting CPU DXE initialization",
-        "zh": "开始 CPU DXE 初始化"
+        "zh": "CPU DXE 初始化开始"
       }
     },
     "64": {
@@ -640,7 +655,7 @@
       "stage": "PCIInit",
       "description": {
         "en": "Initializing the PCI host bridge",
-        "zh": "初始化 PCI 主桥"
+        "zh": "PCI Host Bridge 初始化"
       }
     },
     "69": {
@@ -649,7 +664,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting North Bridge DXE initialization",
-        "zh": "开始北桥 DXE 初始化"
+        "zh": "北桥 DXE 初始化开始"
       }
     },
     "6A": {
@@ -658,7 +673,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting North Bridge SMM initialization",
-        "zh": "开始北桥 DXE SMM 初始化"
+        "zh": "北桥 DXE SMM 初始化开始"
       }
     },
     "6B": {
@@ -712,7 +727,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting South Bridge DXE initialization",
-        "zh": "开始南桥 DXE 初始化"
+        "zh": "南桥 DXE 初始化开始"
       }
     },
     "71": {
@@ -721,7 +736,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting South Bridge SMM initialization",
-        "zh": "开始南桥 DXE SMM 初始化"
+        "zh": "南桥 DXE SMM 初始化开始"
       }
     },
     "72": {
@@ -730,7 +745,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Initializing South Bridge devices",
-        "zh": "初始化南桥设备"
+        "zh": "南桥设备初始化"
       }
     },
     "73": {
@@ -784,7 +799,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Initializing ACPI",
-        "zh": "初始化 ACPI 模块"
+        "zh": "ACPI 模块初始化"
       }
     },
     "79": {
@@ -793,7 +808,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Initializing the Compatibility Support Module",
-        "zh": "初始化兼容性支持模块（CSM）"
+        "zh": "CSM 初始化"
       }
     },
     "90": {
@@ -802,7 +817,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting boot device selection",
-        "zh": "开始启动设备选择（BDS）"
+        "zh": "BDS 阶段开始"
       }
     },
     "91": {
@@ -811,7 +826,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Connecting firmware drivers",
-        "zh": "开始连接固件驱动"
+        "zh": "开始连接驱动"
       }
     },
     "92": {
@@ -820,7 +835,7 @@
       "stage": "PCIInit",
       "description": {
         "en": "Starting PCI bus initialization",
-        "zh": "开始 PCI 总线初始化"
+        "zh": "PCI 总线初始化开始"
       }
     },
     "93": {
@@ -829,7 +844,7 @@
       "stage": "PCIInit",
       "description": {
         "en": "Initializing the PCI hot-plug controller",
-        "zh": "初始化 PCI 热插拔控制器"
+        "zh": "PCI 热插拔控制器初始化"
       }
     },
     "94": {
@@ -838,7 +853,7 @@
       "stage": "PCIInit",
       "description": {
         "en": "Enumerating PCI devices",
-        "zh": "枚举 PCI 总线设备"
+        "zh": "PCI 总线枚举"
       }
     },
     "95": {
@@ -847,7 +862,7 @@
       "stage": "PCIInit",
       "description": {
         "en": "Requesting PCI resources",
-        "zh": "请求 PCI 总线资源"
+        "zh": "PCI 总线请求资源"
       }
     },
     "96": {
@@ -856,7 +871,7 @@
       "stage": "PCIInit",
       "description": {
         "en": "Assigning PCI resources",
-        "zh": "分配 PCI 总线资源"
+        "zh": "PCI 总线分配资源"
       }
     },
     "97": {
@@ -883,7 +898,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Initializing Super I/O",
-        "zh": "初始化 Super I/O"
+        "zh": "Super I/O 初始化"
       }
     },
     "9A": {
@@ -892,7 +907,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting USB initialization",
-        "zh": "开始 USB 初始化"
+        "zh": "USB 初始化开始"
       }
     },
     "9B": {
@@ -901,7 +916,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Resetting USB",
-        "zh": "复位 USB"
+        "zh": "USB 复位"
       }
     },
     "9C": {
@@ -910,7 +925,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Detecting USB devices",
-        "zh": "检测 USB 设备"
+        "zh": "USB 检测"
       }
     },
     "9D": {
@@ -919,7 +934,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Enabling USB devices",
-        "zh": "启用 USB 设备"
+        "zh": "USB 使能"
       }
     },
     "A0": {
@@ -928,7 +943,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting IDE initialization",
-        "zh": "开始 IDE 初始化"
+        "zh": "IDE 初始化开始"
       }
     },
     "A1": {
@@ -937,7 +952,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Resetting IDE",
-        "zh": "复位 IDE"
+        "zh": "IDE 复位"
       }
     },
     "A2": {
@@ -946,7 +961,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Detecting IDE devices",
-        "zh": "检测 IDE 设备"
+        "zh": "IDE 检测"
       }
     },
     "A3": {
@@ -955,7 +970,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Enabling IDE devices",
-        "zh": "启用 IDE 设备"
+        "zh": "IDE 使能"
       }
     },
     "A4": {
@@ -964,7 +979,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Starting SCSI initialization",
-        "zh": "开始 SCSI 初始化"
+        "zh": "SCSI 初始化开始"
       }
     },
     "A5": {
@@ -973,7 +988,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Resetting SCSI",
-        "zh": "复位 SCSI"
+        "zh": "SCSI 复位"
       }
     },
     "A6": {
@@ -982,7 +997,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Detecting SCSI devices",
-        "zh": "检测 SCSI 设备"
+        "zh": "SCSI 检测"
       }
     },
     "A7": {
@@ -991,7 +1006,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Enabling SCSI devices",
-        "zh": "启用 SCSI 设备"
+        "zh": "SCSI 使能"
       }
     },
     "A8": {
@@ -1000,7 +1015,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Verifying the BIOS setup password",
-        "zh": "验证 BIOS 设置密码"
+        "zh": "Setup 校验密码"
       }
     },
     "A9": {
@@ -1009,7 +1024,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Entering BIOS setup",
-        "zh": "进入 BIOS 设置界面"
+        "zh": "进入 Setup"
       }
     },
     "AA": {
@@ -1027,7 +1042,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Waiting for BIOS setup input",
-        "zh": "BIOS 设置界面等待输入"
+        "zh": "Setup 等待输入"
       }
     },
     "AC": {
@@ -1045,7 +1060,7 @@
       "stage": "OSStart",
       "description": {
         "en": "Ready-to-Boot event",
-        "zh": "触发 Ready To Boot 事件，准备启动操作系统"
+        "zh": "Ready To Boot 事件"
       }
     },
     "AE": {
@@ -1054,7 +1069,7 @@
       "stage": "OSStart",
       "description": {
         "en": "Legacy Boot event",
-        "zh": "触发 Legacy Boot 事件，进入传统启动流程"
+        "zh": "Legacy Boot 事件"
       }
     },
     "AF": {
@@ -1063,7 +1078,7 @@
       "stage": "OSStart",
       "description": {
         "en": "ExitBootServices event",
-        "zh": "触发 Exit Boot Services 事件，退出 UEFI 启动服务"
+        "zh": "Exit Boot Services 事件"
       }
     },
     "B0": {
@@ -1072,7 +1087,7 @@
       "stage": "OSStart",
       "description": {
         "en": "Starting runtime virtual address mapping",
-        "zh": "开始设置运行时虚拟地址映射"
+        "zh": "Runtime SetVirtualAddressMap 开始"
       }
     },
     "B1": {
@@ -1081,7 +1096,7 @@
       "stage": "OSStart",
       "description": {
         "en": "Completing runtime virtual address mapping",
-        "zh": "完成运行时虚拟地址映射"
+        "zh": "Runtime SetVirtualAddressMap 结束"
       }
     },
     "B2": {
@@ -1090,7 +1105,7 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Initializing legacy Option ROMs",
-        "zh": "初始化传统 Option ROM"
+        "zh": "Legacy Option ROM 初始化"
       }
     },
     "B3": {
@@ -1117,7 +1132,7 @@
       "stage": null,
       "description": {
         "en": "PCI bus hot-plug",
-        "zh": "PCI 总线热插拔"
+        "zh": "PCI 热插拔"
       }
     },
     "B6": {
@@ -1135,83 +1150,83 @@
       "stage": "MotherboardInit",
       "description": {
         "en": "Resetting NVRAM configuration",
-        "zh": "复位 NVRAM 配置"
+        "zh": "配置复位（NVRAM 设置恢复默认）"
       }
     },
     "D0": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "CPU initialization failure",
-        "zh": "CPU 初始化失败"
+        "zh": "CPU 初始化错误"
       }
     },
     "D1": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "North Bridge initialization failure",
-        "zh": "北桥初始化失败"
+        "zh": "北桥初始化错误"
       }
     },
     "D2": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "South Bridge initialization failure",
-        "zh": "南桥初始化失败"
+        "zh": "南桥初始化错误"
       }
     },
     "D3": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "Required architectural protocols unavailable",
-        "zh": "部分必需的架构协议不可用"
+        "zh": "部分架构协议（Architectural Protocols）不可用"
       }
     },
     "D4": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "Insufficient resources for PCI allocation",
-        "zh": "PCI 资源分配失败：资源不足"
+        "zh": "PCI 资源分配错误（资源不足）"
       }
     },
     "D5": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "Insufficient space for a legacy Option ROM",
-        "zh": "传统 Option ROM 空间不足"
+        "zh": "Legacy Option ROM 空间不足"
       }
     },
     "D6": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "No console output devices found",
-        "zh": "未找到控制台输出设备"
+        "zh": "找不到控制台输出设备"
       }
     },
     "D7": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "No console input devices found",
-        "zh": "未找到控制台输入设备"
+        "zh": "找不到控制台输入设备"
       }
     },
     "D8": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
@@ -1220,25 +1235,25 @@
       }
     },
     "D9": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "Boot option image loading failed",
-        "zh": "启动项镜像加载失败（LoadImage 返回错误）"
+        "zh": "加载启动项失败（LoadImage 返回错误）"
       }
     },
     "DA": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "Boot option image execution failed",
-        "zh": "启动项镜像执行失败（StartImage 返回错误）"
+        "zh": "启动项执行失败（StartImage 返回错误）"
       }
     },
     "DB": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
@@ -1247,16 +1262,16 @@
       }
     },
     "DC": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
         "en": "Reset protocol unavailable",
-        "zh": "复位协议不可用"
+        "zh": "Reset Protocol 不可用"
       }
     },
     "DD": {
-      "phase": "DXE",
+      "phase": "DXE/BDS",
       "kind": "error",
       "stage": null,
       "description": {
@@ -1270,7 +1285,7 @@
       "stage": null,
       "description": {
         "en": "Starting resume from S3",
-        "zh": "开始从 S3 恢复（DXE IPL 调用 S3 Resume PPI）"
+        "zh": "S3 Resume 开始（调用 S3 Resume PPI）"
       }
     },
     "E1": {
@@ -1279,7 +1294,7 @@
       "stage": null,
       "description": {
         "en": "Executing the S3 boot script",
-        "zh": "执行 S3 启动脚本"
+        "zh": "执行 S3 Boot Script"
       }
     },
     "E2": {
@@ -1288,7 +1303,7 @@
       "stage": null,
       "description": {
         "en": "Reinitializing video during S3 resume",
-        "zh": "S3 恢复时重新初始化视频"
+        "zh": "视频重新 POST"
       }
     },
     "E3": {
@@ -1297,7 +1312,7 @@
       "stage": null,
       "description": {
         "en": "Calling the OS S3 wake vector",
-        "zh": "调用操作系统 S3 唤醒向量"
+        "zh": "调用 OS S3 唤醒向量"
       }
     },
     "E8": {
@@ -1306,7 +1321,7 @@
       "stage": null,
       "description": {
         "en": "S3 resume failed",
-        "zh": "S3 恢复失败"
+        "zh": "S3 Resume 失败"
       }
     },
     "E9": {
@@ -1315,7 +1330,7 @@
       "stage": null,
       "description": {
         "en": "S3 Resume PPI missing",
-        "zh": "未找到 S3 Resume PPI"
+        "zh": "找不到 S3 Resume PPI"
       }
     },
     "EA": {
@@ -1324,7 +1339,7 @@
       "stage": null,
       "description": {
         "en": "S3 boot script failure",
-        "zh": "S3 恢复启动脚本错误"
+        "zh": "S3 Boot Script 执行错误"
       }
     },
     "EB": {
@@ -1333,7 +1348,7 @@
       "stage": null,
       "description": {
         "en": "OS wake from S3 failed",
-        "zh": "操作系统 S3 唤醒失败"
+        "zh": "S3 OS 唤醒错误"
       }
     },
     "F0": {
@@ -1342,7 +1357,7 @@
       "stage": null,
       "description": {
         "en": "Firmware requested automatic recovery",
-        "zh": "固件触发自动恢复"
+        "zh": "固件触发恢复（自动恢复）"
       }
     },
     "F1": {
@@ -1351,7 +1366,7 @@
       "stage": null,
       "description": {
         "en": "User requested forced recovery",
-        "zh": "用户触发强制恢复"
+        "zh": "用户触发恢复（强制恢复）"
       }
     },
     "F2": {
@@ -1360,7 +1375,7 @@
       "stage": null,
       "description": {
         "en": "Starting firmware recovery",
-        "zh": "开始固件恢复"
+        "zh": "恢复流程开始"
       }
     },
     "F3": {
@@ -1369,7 +1384,7 @@
       "stage": null,
       "description": {
         "en": "Recovery firmware image located",
-        "zh": "已找到恢复固件镜像"
+        "zh": "找到恢复固件镜像"
       }
     },
     "F4": {
@@ -1378,7 +1393,7 @@
       "stage": null,
       "description": {
         "en": "Recovery firmware image loaded",
-        "zh": "已加载恢复固件镜像"
+        "zh": "恢复固件镜像已加载"
       }
     },
     "F8": {
@@ -1387,7 +1402,7 @@
       "stage": null,
       "description": {
         "en": "Recovery PPI unavailable",
-        "zh": "恢复 PPI 不可用"
+        "zh": "Recovery PPI 不可用"
       }
     },
     "F9": {
@@ -1396,7 +1411,7 @@
       "stage": null,
       "description": {
         "en": "Recovery capsule missing",
-        "zh": "未找到恢复胶囊文件"
+        "zh": "找不到恢复 Capsule"
       }
     },
     "FA": {
@@ -1405,7 +1420,7 @@
       "stage": null,
       "description": {
         "en": "Invalid recovery capsule",
-        "zh": "恢复胶囊文件无效"
+        "zh": "恢复 Capsule 无效"
       }
     }
   },
@@ -1444,7 +1459,7 @@
       }
     },
     {
-      "first": "5C",
+      "first": "5D",
       "last": "5F",
       "phase": "PEI",
       "kind": "reserved",
@@ -1507,6 +1522,17 @@
       "description": {
         "en": "OEM BDS initialization",
         "zh": "OEM BDS 初始化"
+      }
+    },
+    {
+      "first": "DE",
+      "last": "DF",
+      "phase": "DXE/BDS",
+      "kind": "reserved",
+      "stage": null,
+      "description": {
+        "zh": "未定义的保留错误码",
+        "en": "Undefined reserved error checkpoint"
       }
     },
     {
@@ -1654,5 +1680,124 @@
         "zh": "已进入 ACPI 模式，中断控制器处于 PIC 模式"
       }
     }
+  },
+  "contextRules": {
+    "preMemory": [
+      "10",
+      "2F"
+    ],
+    "postMemory": [
+      "31",
+      "4F"
+    ],
+    "laterBoot": [
+      "60",
+      "AF"
+    ],
+    "intelMemory": [
+      "B0",
+      "BF"
+    ],
+    "intelMemoryErrors": [
+      "E8",
+      "EF"
+    ],
+    "s3Progress": [
+      "E0",
+      "E3"
+    ],
+    "recoveryProgress": [
+      "F0",
+      "F4"
+    ],
+    "handoff": [
+      "AD",
+      "AE",
+      "AF",
+      "B0",
+      "B1",
+      "AA",
+      "AC"
+    ]
+  },
+  "contextText": {
+    "intelMemory": {
+      "zh": "可能的 Intel 内存初始化含义（GNR-D 映射未确认）",
+      "en": "Possible Intel memory initialization meaning (GNR-D mapping unconfirmed)"
+    },
+    "intelMemoryError": {
+      "zh": "内存初始化期间可能的 Intel 平台错误；未匹配到 GNR-D 具体 POST code 说明",
+      "en": "Possible Intel platform error during memory initialization; no matching GNR-D-specific description"
+    },
+    "intelMemoryErrorAlternative": {
+      "zh": "冷启动时可能被 Intel 平台复用为内存错误，需以 GNR-D 平台码表确认",
+      "en": "May be reused for an Intel memory error during cold boot; requires the GNR-D platform code table"
+    },
+    "intelE8Example": {
+      "zh": "参考：Intel S2600WFT 的 E8 表示未检测到内存，不代表已确认 GNR-D 同义",
+      "en": "Reference example: E8 indicates no detected memory on Intel S2600WFT, not a confirmed GNR-D mapping"
+    }
+  },
+  "intelMemory": {
+    "B0": {
+      "zh": "检测 DIMM",
+      "en": "Detecting DIMMs"
+    },
+    "B1": {
+      "zh": "初始化内存时钟",
+      "en": "Initializing memory clocks"
+    },
+    "B2": {
+      "zh": "读取 SPD",
+      "en": "Reading SPD data"
+    },
+    "B3": {
+      "zh": "早期全局内存初始化",
+      "en": "Early global memory initialization"
+    },
+    "B4": {
+      "zh": "检测 Rank",
+      "en": "Detecting memory ranks"
+    },
+    "B5": {
+      "zh": "早期通道初始化",
+      "en": "Early memory channel initialization"
+    },
+    "B6": {
+      "zh": "JEDEC 内存初始化",
+      "en": "JEDEC memory initialization"
+    },
+    "B7": {
+      "zh": "通道训练",
+      "en": "Training memory channels"
+    },
+    "B8": {
+      "zh": "初始化内存节流控制",
+      "en": "Initializing memory throttling"
+    },
+    "B9": {
+      "zh": "内存内建自检（BIST）",
+      "en": "Memory built-in self-test"
+    },
+    "BA": {
+      "zh": "初始化内存",
+      "en": "Initializing memory"
+    },
+    "BB": {
+      "zh": "配置 DDR 内存映射",
+      "en": "Configuring the DDR memory map"
+    },
+    "BC": {
+      "zh": "配置 RAS",
+      "en": "Configuring memory RAS"
+    },
+    "BF": {
+      "zh": "MRC 完成",
+      "en": "MRC completed"
+    }
+  },
+  "readingGuidance": {
+    "zh": "按启动轮次和接收顺序解读；进度码是已到达的检查点，停留不变不能单独证明该步骤失败。平台复用码需结合 BIOS 平台码表。",
+    "en": "Interpret within each boot cycle in receive order. A progress code marks a reached checkpoint; an unchanged code alone does not prove that step failed. Platform reuse requires the BIOS platform code table."
   }
 }

@@ -1,0 +1,224 @@
+Subject: [PATCH] webui: interpret reused POST codes within each boot cycle
+
+Use the 2026-10-12 AMI Aptio V reference update. Intel RC alternatives are
+explicitly unconfirmed for GNR-D. Decode pre-memory overlaps in receive order,
+retain both interpretations without reliable context, and use live context
+from the boot-progress service. Keep unmatched values visible.
+
+Upstream-Status: Inappropriate [CEB-GNRD firmware reference]
+
+--- a/src/utils/amiPostCodes.js
++++ b/src/utils/amiPostCodes.js
+@@ -1,7 +1,6 @@
+ import catalog from '@/data/amiAptioVPostCodes.json';
+ 
+-// Redfish renders the complete POST byte vector as hex. Do not truncate an
+-// unknown or multi-byte value into a different, seemingly recognized code.
++// Retain complete values: a multi-byte code must not become a known low byte.
+ function codeKey(value) {
+   if (typeof value === 'number') {
+     if (!Number.isInteger(value) || value < 0 || value > 0xff) return null;
+@@ -17,18 +16,79 @@
+ 
+ function definition(key) {
+   if (!key) return null;
+-  if (catalog.codes[key]) return catalog.codes[key];
+   return (
++    catalog.codes[key] ||
+     catalog.ranges.find((range) => key >= range.first && key <= range.last) ||
+     null
+   );
+ }
+ 
+-export function describePostCode(value, locale = 'en-US') {
++function inRange(key, name) {
++  const [first, last] = catalog.contextRules[name];
++  return key !== null && key >= first && key <= last;
++}
++
++// Keep these rules aligned with PostContext in ceb-gnrd-boot-progress.py.
++// This is a sequence hint, not confirmation of the GNR-D Intel RC code table.
++function consumeContext(state, key) {
++  const entry = definition(key);
++  if (!entry) return '';
++  let context = '';
++  if (state.handoff && catalog.acpi[key]) context = 'acpi';
++  else if (state.memoryPending && inRange(key, 'intelMemory'))
++    context = 'intelMemory';
++  else if (inRange(key, 'intelMemory') && !(state.lateBoot || state.handoff))
++    context = 'intelAmbiguous';
++  else if (inRange(key, 'intelMemoryErrors'))
++    context = state.s3 ? 's3' : state.memoryPending ? 'intelMemoryError' : '';
++
++  if (
++    ['acpi', 'intelMemory', 'intelAmbiguous', 'intelMemoryError'].includes(context)
++  )
++    return context;
++  if (inRange(key, 'preMemory') && !state.handoff) {
++    state.memoryPending = true;
++    state.s3 = false;
++  } else if (
++    ['progress', 'runtime'].includes(entry.kind) &&
++    (inRange(key, 'postMemory') || inRange(key, 'laterBoot'))
++  ) {
++    state.memoryPending = false;
++    state.s3 = false;
++    if (inRange(key, 'laterBoot')) state.lateBoot = true;
++  }
++  if (inRange(key, 's3Progress')) {
++    state.memoryPending = false;
++    state.s3 = true;
++  } else if (inRange(key, 'recoveryProgress') || key === 'B3') {
++    Object.assign(state, {
++      memoryPending: false,
++      handoff: false,
++      s3: false,
++      lateBoot: false,
++    });
++  } else if (catalog.contextRules.handoff.includes(key)) {
++    state.memoryPending = false;
++    state.handoff = true;
++    state.s3 = false;
++  }
++  return context;
++}
++
++export function describePostCode(value, locale = 'en-US', context = '') {
+   const language = String(locale).startsWith('zh') ? 'zh' : 'en';
+   const key = codeKey(value);
+   const entry = definition(key);
+   const unmatched = catalog.unmatched[language];
++  const texts = catalog.contextText;
++  const intel = key && catalog.intelMemory[key];
++  if (context === 'intelMemory') {
++    return `${texts.intelMemory[language]}: ${intel?.[language] || unmatched}`;
++  }
++  if (context === 'intelMemoryError') {
++    const example = key === 'E8' ? `; ${texts.intelE8Example[language]}` : '';
++    return `${texts.intelMemoryError[language]}${example}`;
++  }
+   let text = unmatched;
+   if (entry) {
+     const error =
+@@ -36,12 +96,57 @@
+     text = `${entry.phase}${error}: ${entry.description[language]}`;
+     if (['reserved', 'oem'].includes(entry.kind)) text += `; ${unmatched}`;
+   }
+-  // The reference gives two meanings for some values. History has no reliable
+-  // firmware-phase context, so retain both instead of guessing from the value.
++  // Retain both meanings for reused values. Even an ACPI sequence hint is
++  // not proof of OS activity when warm reset records are missing.
+   const acpi = key && catalog.acpi[key];
+   if (acpi && entry?.phase !== 'ACPI/ASL') {
+     const or = language === 'zh' ? '或' : 'or';
+     text += `; ${or} ACPI/ASL: ${acpi.description[language]}`;
+   }
++  if (intel) text += `; ${texts.intelMemory[language]}: ${intel[language]}`;
++  if (inRange(key, 'intelMemoryErrors') && context !== 's3') {
++    text += `; ${texts.intelMemoryErrorAlternative[language]}`;
++    if (key === 'E8') text += `; ${texts.intelE8Example[language]}`;
++  }
+   return text;
+ }
++
++export function describePostCodeLogs(rows, locale) {
++  const groups = new Map();
++  const descriptions = new Map();
++  for (const row of rows) {
++    descriptions.set(row, describePostCode(row.postCode, locale));
++    const cycle = Number(row.bootCount);
++    if (
++      !Number.isInteger(cycle) ||
++      cycle < 1 ||
++      !Number.isInteger(row.index) ||
++      row.index < 0
++    )
++      continue;
++    if (!groups.has(cycle)) groups.set(cycle, []);
++    groups.get(cycle).push(row);
++  }
++  for (const group of groups.values()) {
++    // Store index follows API receive order within each cycle. Never use
++    // the table's newest-first order, display sort, or second-resolution date.
++    const indexes = new Set(group.map((row) => row.index));
++    if (indexes.size !== group.length) continue;
++    const state = {
++      memoryPending: false,
++      handoff: false,
++      s3: false,
++      lateBoot: false,
++    };
++    for (const row of [...group].sort((a, b) => a.index - b.index)) {
++      const context = consumeContext(state, codeKey(row.postCode));
++      descriptions.set(row, describePostCode(row.postCode, locale, context));
++    }
++  }
++  return rows.map((row) => ({ ...row, description: descriptions.get(row) }));
++}
++
++export function postCodeReadingGuidance(locale) {
++  const language = String(locale).startsWith('zh') ? 'zh' : 'en';
++  return catalog.readingGuidance[language];
++}
+--- a/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
++++ b/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
+@@ -1,6 +1,7 @@
+ <template>
+   <b-container fluid="xl" class="logs-page">
+     <page-title />
++    <p class="text-muted">{{ readingGuidance }}</p>
+     <b-row class="align-items-start">
+       <b-col sm="8" xl="6" class="d-sm-flex align-items-end mb-4">
+         <search
+@@ -172,7 +173,10 @@
+   searchFilter,
+ } from '@/components/Mixins/SearchFilterMixin';
+ import i18n from '@/i18n';
+-import { describePostCode } from '@/utils/amiPostCodes';
++import {
++  describePostCodeLogs,
++  postCodeReadingGuidance,
++} from '@/utils/amiPostCodes';
+ import { useModal } from 'bootstrap-vue-next';
+ 
+ export default {
+@@ -256,6 +260,9 @@
+     };
+   },
+   computed: {
++    readingGuidance() {
++      return postCodeReadingGuidance(this.$i18n.locale);
++    },
+     href() {
+       return `data:text/json;charset=utf-8,${this.exportAllLogsString()}`;
+     },
+@@ -265,10 +272,10 @@
+         : this.filteredLogs.length;
+     },
+     allLogs() {
+-      return this.$store.getters['postCodeLogs/allPostCodes'].map((postCode) => ({
+-        ...postCode,
+-        description: describePostCode(postCode.postCode, this.$i18n.locale),
+-      }));
++      return describePostCodeLogs(
++        this.$store.getters['postCodeLogs/allPostCodes'],
++        this.$i18n.locale,
++      );
+     },
+     batchExportData() {
+       return this.selectedRows;
+--- a/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
++++ b/src/views/HardwareStatus/Sensors/DiscreteSensors.vue
+@@ -82,7 +82,11 @@
+       const stage = stateText(data[sensor.property]);
+       if (sensor.property !== 'BootProgress') return stage;
+       if (data.BootPostCode) {
+-        const detail = describePostCode(data.BootPostCode, this.$i18n.locale);
++        const detail = describePostCode(
++          data.BootPostCode,
++          this.$i18n.locale,
++          data.BootPostCodeContext,
++        );
+         return `${stage} — ${detail} (${data.BootPostCode})`;
+       }
+       if (!data.BootCheckpoint) return stage;
