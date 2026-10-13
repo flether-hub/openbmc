@@ -98,8 +98,8 @@ diff --git a/bmc/static/flash.cpp b/bmc/static/flash.cpp
 +    if (stagedBmcLocks || !interlock->valid() || pending || pendingError)
 +    {
 +        error("BMC activation blocked: another firmware update is active or staged");
-+        softwareServer::Activation::activation(
-+            softwareServer::Activation::Activations::Failed);
++        activation(sdbusplus::server::xyz::openbmc_project::software::
++                       Activation::Activations::Failed);
 +        return;
 +    }
  
