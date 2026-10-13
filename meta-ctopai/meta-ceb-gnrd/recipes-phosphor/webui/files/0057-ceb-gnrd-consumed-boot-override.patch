@@ -1,0 +1,93 @@
+Subject: [PATCH] webui: refresh consumed boot overrides and save only edits
+
+Upstream-Status: Inappropriate [CEB-GNRD boot settings]
+
+BIOS can clear BootSourceOverrideEnabled while the power page stays open.
+Refresh that state, display None for Disabled regardless of the stored target,
+and retain unsaved user edits. Only write boot settings when their controls
+were edited, so saving TPM policy does not re-arm an old Once override.
+None always disables the override even if a stale one-time flag is present.
+
+---
+--- a/src/store/modules/Operations/BootSettingsStore.js
++++ b/src/store/modules/Operations/BootSettingsStore.js
+@@ -39,7 +39,14 @@
+             Boot?.['BootSourceOverrideTarget@Redfish.AllowableValues'] ?? [],
+           );
+           commit('setOverrideEnabled', Boot.BootSourceOverrideEnabled);
+-          commit('setBootSource', Boot.BootSourceOverrideTarget);
++          // The target may remain stored after BIOS clears the valid bit.
++          // A disabled override must not appear as an active boot selection.
++          commit(
++            'setBootSource',
++            Boot.BootSourceOverrideEnabled === 'Disabled'
++              ? 'None'
++              : Boot.BootSourceOverrideTarget,
++          );
+         })
+         .catch((error) => console.log(error));
+     },
+@@ -50,10 +57,10 @@
+       const data = { Boot: {} };
+       data.Boot.BootSourceOverrideTarget = bootSource;
+ 
+-      if (overrideEnabled) {
++      if (bootSource === 'None') {
++        data.Boot.BootSourceOverrideEnabled = 'Disabled';
++      } else if (overrideEnabled) {
+         data.Boot.BootSourceOverrideEnabled = 'Once';
+-      } else if (bootSource === 'None') {
+-        data.Boot.BootSourceOverrideEnabled = 'Disabled';
+       } else {
+         data.Boot.BootSourceOverrideEnabled = 'Continuous';
+       }
+--- a/src/views/Operations/ServerPowerOperations/BootSettings.vue
++++ b/src/views/Operations/ServerPowerOperations/BootSettings.vue
+@@ -95,9 +95,13 @@
+   },
+   watch: {
+     bootSource: function (value) {
++      // Poll consumed overrides without replacing an unsaved boot selection.
++      if (this.v$.form.bootOption.$dirty || this.v$.form.oneTimeBoot.$dirty) return;
+       this.form.bootOption = value;
+     },
+     overrideEnabled: function (value) {
++      // Poll consumed overrides without replacing an unsaved boot selection.
++      if (this.v$.form.bootOption.$dirty || this.v$.form.oneTimeBoot.$dirty) return;
+       this.form.oneTimeBoot = value;
+     },
+     tpmEnabled: function (value) {
+@@ -127,8 +131,11 @@
+       this.startLoader();
+       const tpmPolicyChanged = this.v$.form.tpmPolicyOn.$dirty;
+       let settings;
+-      let bootSource = this.form.bootOption;
+-      let overrideEnabled = this.form.oneTimeBoot;
++      const bootSettingsChanged =
++        this.v$.form.bootOption.$dirty || this.v$.form.oneTimeBoot.$dirty;
++      // Saving TPM policy must not re-arm a previously consumed boot override.
++      let bootSource = bootSettingsChanged ? this.form.bootOption : null;
++      let overrideEnabled = bootSettingsChanged ? this.form.oneTimeBoot : null;
+       let tpmEnabled = null;
+ 
+       if (tpmPolicyChanged) tpmEnabled = this.form.tpmPolicyOn;
+@@ -140,6 +147,9 @@
+         .catch(({ message }) => this.errorToast(message))
+         .finally(() => {
+           this.v$.form.$reset();
++          // A refresh may have updated the store while the form was dirty.
++          this.form.bootOption = this.bootSource;
++          this.form.oneTimeBoot = this.overrideEnabled;
+           this.endLoader();
+         });
+     },
+--- a/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
++++ b/src/views/Operations/ServerPowerOperations/ServerPowerOperations.vue
+@@ -193,6 +193,7 @@
+       [
+         'global/getSystemInfo',
+         'controls/getLastPowerOperationTime',
++        'serverBootSettings/getBootSettings',
+       ],
+       10000,
+     ),
