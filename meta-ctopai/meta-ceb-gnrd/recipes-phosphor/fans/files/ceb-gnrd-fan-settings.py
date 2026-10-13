@@ -39,11 +39,12 @@ Everything is logged to the journal: journalctl -u ceb-gnrd-fan-settings
 import asyncio
 import json
 import logging
+import math
 import os
 import socket
 import sys
 
-from dbus_fast import BusType, Message, MessageType, Variant
+from dbus_fast import BusType, DBusError, Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
 from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, method
 
@@ -348,16 +349,29 @@ class FanSettings(ServiceInterface):
     async def _get_fans(self):
         try:
             pids = await read_config(self.bus, PID_IFACE, PID_KEYS)
+            limits = []
+            # Mode is authoritative only when all six controller limits are
+            # readable. A partial configuration must not look like adaptive mode.
+            for name in PID_NAMES:
+                props = pids.get(name, {})
+                if any(key not in props for key in PID_KEYS):
+                    raise RuntimeError("missing configuration/property: %s" % name)
+                low, high = (props[key] for key in PID_KEYS)
+                if any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value) for value in (low, high)):
+                    raise RuntimeError("invalid fan output limits: %s" % name)
+                if not 0 <= low <= high <= 100:
+                    raise RuntimeError("fan output limits out of range: %s" % name)
+                limits.append((low, high))
         except Exception as exc:
             LOG.error("GetFans: cannot read the fan controllers: %s", exc)
-            pids = {}
+            raise DBusError(IFACE + ".ConfigurationUnavailable",
+                            "Fan controller configuration is unavailable: %s" % exc) from exc
         rpms = await read_fan_rpms(self.bus)
         out = [1 if self.persist else 0]
         for index, name in enumerate(FAN_NAMES):
-            limits = pids.get(PID_NAMES[index], {})
-            low = limits.get("OutLimitMin")
-            high = limits.get("OutLimitMax")
-            fixed = low is not None and high is not None and low == high
+            low, high = limits[index]
+            fixed = low == high
             if fixed:
                 duty = int(round(high))
             else:

@@ -1,0 +1,232 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] Use individual authority certificates as the persistent store
+
+The bundle uploaded by InstallAll/ReplaceAll is only a staging input.
+Reloading that snapshot after single-certificate CRUD silently revokes
+new trust decisions and resurrects certificates deleted by the user.
+Discard the snapshot before bulk commit and migrate existing stores to
+their individual payloads, including empty stores. Sync acknowledged CA
+mutations while preserving bulk staging and rollback. Normal manager
+destruction must preserve the canonical CA payloads; explicit deletion
+and retired transaction objects continue to remove their files.
+
+Upstream-Status: Inappropriate [board trust-store persistence policy]
+
+--- a/certificate.hpp
++++ b/certificate.hpp
+@@ -219,6 +219,9 @@
+     /** Relocate already validated storage without allocating at commit. */
+     void relocateStorage(std::string directory, std::string file) noexcept;
+ 
++    /** Keep persistent payloads when their manager shuts down normally. */
++    void preserveStorage() noexcept;
++
+   private:
+     /**
+      * @brief Populate certificate properties by parsing given certificate
+@@ -307,6 +310,9 @@
+     /** @brief Certificate file installation path */
+     std::string certInstallPath;
+ 
++    /** Explicit deletions and transaction cleanup still remove their files. */
++    bool removeStorageOnDestruction = true;
++
+     /** @brief Type specific function pointer map for appending private key */
+     std::unordered_map<CertificateType, internal::AppendPrivKeyFunc>
+         appendKeyMap;
+--- a/certificate.cpp
++++ b/certificate.cpp
+@@ -293,6 +293,10 @@
+ 
+ Certificate::~Certificate()
+ {
++    if (!removeStorageOnDestruction)
++    {
++        return;
++    }
+     std::error_code ec;
+     if (!fs::remove(certFilePath, ec))
+     {
+@@ -732,4 +736,9 @@
+     certFilePath.swap(file);
+ }
+ 
++void Certificate::preserveStorage() noexcept
++{
++    removeStorageOnDestruction = false;
++}
++
+ } // namespace phosphor::certs
+--- a/certs_manager.hpp
++++ b/certs_manager.hpp
+@@ -54,7 +54,7 @@
+     Manager& operator=(const Manager&) = delete;
+     Manager(Manager&&) = delete;
+     Manager& operator=(Manager&&) = delete;
+-    virtual ~Manager() = default;
++    virtual ~Manager();
+ 
+     /** @brief Constructor to put object onto bus at a dbus path.
+      *  @param[in] bus - Bus to attach to.
+--- a/certs_manager.cpp
++++ b/certs_manager.cpp
+@@ -174,33 +174,13 @@
+ 
+ void validateAuthorityDirectory(const fs::path& directory)
+ {
+-    const fs::path list = directory / defaultAuthoritiesListFileName;
+-    if (fs::exists(list))
+-    {
+-        checkAuthorityListSize(list);
+-        const auto authorities = splitCertificates(list);
+-        if (authorities.empty() || authorities.size() > maxNumAuthorityCertificates)
+-        {
+-            elog<InvalidCertificate>(InvalidCertificateReason("Invalid CA bundle count"));
+-        }
+-        auto store = getX509Store(list);
+-        for (const auto& pem : authorities)
+-        {
+-            if (pem.size() >= 32 * 1024)
+-            {
+-                elog<InvalidCertificate>(InvalidCertificateReason("CA exceeds size limit"));
+-            }
+-            auto certificate = parseCert(pem);
+-            validateCertificateAgainstStore(*store, *certificate);
+-            validateCertificateStartDate(*certificate);
+-            validateCertificateInSSLContext(*certificate);
+-        }
+-        return;
+-    }
++    // Individual payloads are the authoritative store. An old upload bundle
++    // may still contain certificates that were subsequently removed/replaced.
+     size_t count = 0;
+     for (const auto& entry : fs::directory_iterator(directory))
+     {
+-        if (fs::is_symlink(entry) || !fs::is_regular_file(entry))
++        if (entry.path().filename() == defaultAuthoritiesListFileName ||
++            fs::is_symlink(entry) || !fs::is_regular_file(entry))
+         {
+             continue;
+         }
+@@ -215,10 +195,8 @@
+         validateCertificateStartDate(*certificate);
+         validateCertificateInSSLContext(*certificate);
+     }
+-    if (count == 0)
+-    {
+-        elog<InvalidCertificate>(InvalidCertificateReason("CA storage is empty"));
+-    }
++    // An empty trust store is valid after deleting the last CA. Treating it
++    // as damaged would restore revoked certificates from a previous copy.
+ }
+ 
+ } // namespace
+@@ -394,6 +372,20 @@
+     }
+ }
+ 
++Manager::~Manager()
++{
++    if (certType == CertificateType::authority)
++    {
++        // Destruction unregisters D-Bus objects; it is not a trust deletion.
++        // Explicit Delete/DeleteAll and retired transaction objects retain
++        // their normal file-removal behavior.
++        for (auto& cert : installedCerts)
++        {
++            cert->preserveStorage();
++        }
++    }
++}
++
+ std::string Manager::install(const std::string filePath)
+ {
+     if (certType != CertificateType::authority && !installedCerts.empty())
+@@ -413,8 +405,14 @@
+         installedCerts.emplace_back(std::make_unique<Certificate>(
+             bus, certObjectPath, certType, certInstallPath, filePath,
+             certWatchPtr.get(), *this, /*restore=*/false));
++        // Once an object exists its ID must not be reused, even if storage
++        // synchronization or the consumer reload reports an error.
++        certIdCounter++;
++        if (certType == CertificateType::authority)
++        {
++            syncAuthorityDirectory(certInstallPath);
++        }
+         reloadOrReset(unitToRestart);
+-        certIdCounter++;
+     }
+     else
+     {
+@@ -497,6 +495,10 @@
+             certWatchPtr.get(), *this, /*restore=*/false));
+         objects.emplace_back(certObjectPath);
+     }
++    // The bundle is an upload snapshot, not a second persistent trust store.
++    // Keep only the validated payloads, so all certificate APIs share the
++    // same source on restart. Staging still provides all-or-none replacement.
++    fs::remove(stagedList);
+     for (const auto& entry : fs::directory_iterator(tempPath))
+     {
+         if (fs::is_symlink(entry))
+@@ -650,6 +652,10 @@
+     }
+     certIdCounter = 1;
+     storageUpdate();
++    if (certType == CertificateType::authority)
++    {
++        syncAuthorityDirectory(certInstallPath);
++    }
+     reloadOrReset(unitToRestart);
+ }
+ 
+@@ -664,6 +670,10 @@
+     {
+         installedCerts.erase(certIt);
+         storageUpdate();
++        if (certType == CertificateType::authority)
++        {
++            syncAuthorityDirectory(certInstallPath);
++        }
+         reloadOrReset(unitToRestart);
+     }
+     else
+@@ -681,6 +691,10 @@
+     {
+         certificate->install(filePath, false);
+         storageUpdate();
++        if (certType == CertificateType::authority)
++        {
++            syncAuthorityDirectory(certInstallPath);
++        }
+         reloadOrReset(unitToRestart);
+     }
+     else
+@@ -1215,15 +1229,18 @@
+             elog<InternalFailure>();
+         }
+ 
+-        // If the authorities list exists, recover from it and return
+-        if (fs::path authoritiesListFilePath =
+-                fs::path(certInstallPath) / defaultAuthoritiesListFileName;
+-            fs::exists(authoritiesListFilePath))
+-        {
+-            // The transactional installer validates the bundle before
+-            // replacing storage. Preserve individual CAs if it is damaged.
+-            installAll(authoritiesListFilePath);
+-            return;
++        // Retire upload snapshots left by older firmware. Bulk installation
++        // always created individual payloads before publishing the directory;
++        // only those files reflect subsequent single install/delete/replace.
++        // A bundle-only directory must stay empty rather than resurrect all
++        // CAs after they were individually deleted or their storage was lost.
++        const fs::path authoritiesListFilePath =
++            fs::path(certInstallPath) / defaultAuthoritiesListFileName;
++        if (fs::exists(authoritiesListFilePath))
++        {
++            syncAuthorityDirectory(certInstallPath);
++            fs::remove(authoritiesListFilePath);
++            syncAuthorityPath(certInstallPath, true);
+         }
+ 
+         for (auto& path : fs::directory_iterator(certInstallPath))

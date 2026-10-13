@@ -25,9 +25,11 @@ HardShutdown, nothing may power the system off), so phosphor-sel-logger records 
 alarms and IPMI shows UNC / UC / UNR.
 
 When the host is off the value is 0 (no thermal load); when the host is on but
-no source sensor is readable the value is FAILSAFE_TEMP.  Both fan curves in
-ceb-gnrd.json give exactly 60 % at that temperature, so unreadable CPU or DIMM
-temperatures run the fans at 60 %.  The zone's own fail-safe speed is kept at
+no source sensor is readable the value is at least FAILSAFE_TEMP, retaining any
+hotter last reading until a valid sample arrives or host DC power is confirmed
+off. Both fan curves in ceb-gnrd.json give exactly 60 % at FAILSAFE_TEMP, so
+unreadable CPU or DIMM temperatures request at least 60 % fan duty in adaptive
+mode. The zone's own fail-safe speed is kept at
 the minimum on purpose: the number of readable fans must not decide the fan
 speed.  No alarm is raised for the substitute value.
 
@@ -102,8 +104,9 @@ PECI_RESCAN_SECONDS = 30
 PECI_DEVICE_ROOT = "/sys/bus/peci/devices"
 PECI_RESCAN = "/sys/bus/peci/rescan"
 
-# Published while the host is on but no temperature can be read: 70 degC, the
-# point where both fan curves give 60 % (keep them in sync with ceb-gnrd.json)
+# Minimum input while the host is on but no temperature can be read: 70 degC,
+# the point where both fan curves give 60 % (keep in sync with ceb-gnrd.json).
+# A hotter last reading must never be lowered merely because a read failed.
 FAILSAFE_TEMP = 70.0
 
 # Upper thresholds in degrees C: (non-critical UNC, critical UC, non-recoverable UNR)
@@ -140,6 +143,12 @@ class TempSensor(ServiceInterface):
         if value != self.value and not (math.isnan(value) and math.isnan(self.value)):
             self.value = value
             self.emit_properties_changed({"Value": value})
+
+    def protect(self):
+        """Retain a hotter control input until a real sample or DC-off arrives."""
+        value = self.value
+        self.update(max(FAILSAFE_TEMP, value) if math.isfinite(value)
+                    else FAILSAFE_TEMP)
 
 
 class SensorQuality(ServiceInterface):
@@ -536,9 +545,7 @@ async def watchdog_task(sensors, availability, operational, progress, interval=5
         expired = time.monotonic() - progress["last_sample"] > SAMPLE_STALE_SECONDS
         if expired:
             for group, sensor in sensors.items():
-                value = sensor.value
-                sensor.update(max(FAILSAFE_TEMP, value) if math.isfinite(value)
-                              else FAILSAFE_TEMP)
+                sensor.protect()
                 availability[group].update(True)
                 operational[group].update(False)
             if not stale:
@@ -673,7 +680,7 @@ async def main():
                              and now - missing_since[group] >= MISSING_LOG_DELAY_SECONDS}
             recovered = missing_groups - missing
             if newly_missing:
-                LOG.warning("No readable PECI temperature for %s; using %.1f C fan failsafe",
+                LOG.warning("No readable PECI temperature for %s; retaining at least %.1f C fan protection input",
                             ", ".join(sorted(newly_missing)), FAILSAFE_TEMP)
             if recovered:
                 LOG.info("PECI temperature sources recovered for %s",
@@ -689,11 +696,11 @@ async def main():
             if values:
                 sensor.update(real)
             elif on:
-                sensor.update(FAILSAFE_TEMP)   # no reading while the host is on: 60 % fans
+                sensor.protect()               # a failed read must not reduce cooling
             else:
                 sensor.update(0.0)             # host off: no thermal load
             # Available means a usable control input is published. Keep the
-            # finite 70 C protection input available so PID does not replace it
+            # finite protection input available so PID does not replace it
             # with the zone's lower failsafe speed. Functional distinguishes
             # this substitute from a genuine PECI sample. Off publishes 0 C.
             operational[group].update(not on or bool(values))
