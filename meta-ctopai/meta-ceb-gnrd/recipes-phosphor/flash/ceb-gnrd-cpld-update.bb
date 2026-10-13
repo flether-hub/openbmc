@@ -11,7 +11,7 @@ SRC_URI = "file://ceb-gnrd-cpld-update.py file://cpld_jtag.py file://cpld-update
 S = "${UNPACKDIR}"
 SYSTEMD_SERVICE:${PN} = "ceb-gnrd-cpld-update.service"
 SYSTEMD_AUTO_ENABLE = "enable"
-RDEPENDS:${PN} = "python3-core python3-asyncio python3-dbus-fast python3-xml python3-logging python3-threading python3-ctypes python3-fcntl python3-json python3-crypt python3-math systemd"
+RDEPENDS:${PN} = "python3-core python3-asyncio python3-dbus-fast python3-xml python3-logging python3-threading python3-ctypes python3-fcntl python3-json python3-crypt python3-math systemd phosphor-software-manager-updater"
 
 do_install() {
     install -Dm0755 ${UNPACKDIR}/ceb-gnrd-cpld-update.py ${D}${libexecdir}/ceb-gnrd-cpld-update.py

@@ -19,11 +19,13 @@ STATUS=/sys/class/watchdog/watchdog0/bootstatus
 CARDRESET=32
 
 sel_add() {
+    # IPMI 2.0 Table 42-3: Watchdog 2 (0x23), hard reset (offset 0x01).
+    # No board SDR exists for this event; use 0xff without inventing a number.
     i=0
     while [ "$i" -lt 10 ]; do
         busctl --system call xyz.openbmc_project.Logging.IPMI /xyz/openbmc_project/Logging/IPMI \
-            xyz.openbmc_project.Logging.IPMI IpmiSelAdd ssaybq "$1" /xyz/openbmc_project/state/bmc0 \
-            3 0x00 0xFF 0xFF true 0x0020 >/dev/null 2>&1 && return 0
+            xyz.openbmc_project.Logging.IPMI IpmiSelAddPlatform syyyaybq \
+            "$1" 0x23 0xff 0x6f 3 0x01 0xFF 0xFF true 0x0020 >/dev/null 2>&1 && return 0
         i=$((i + 1)); sleep 3
     done
     echo "SEL add failed: $1"

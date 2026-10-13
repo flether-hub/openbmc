@@ -56,6 +56,16 @@ from dbus_fast.service import (PropertyAccess, ServiceInterface, dbus_property, 
 
 LOG = logging.getLogger("ceb-gnrd-temp-max")
 
+
+class JournalFormatter(logging.Formatter):
+    """Systemd reads the syslog priority prefix on each journal stream line."""
+    def format(self, record):
+        priority = (2 if record.levelno >= logging.CRITICAL else
+                    3 if record.levelno >= logging.ERROR else
+                    4 if record.levelno >= logging.WARNING else
+                    6 if record.levelno >= logging.INFO else 7)
+        return "<%d>%s" % (priority, super().format(record))
+
 BUS_NAME = "com.ctopai.CebGnrd.TempMax"
 SENSOR_BASE = "/xyz/openbmc_project/sensors"
 SENSOR_ROOT = SENSOR_BASE + "/temperature"
@@ -542,6 +552,8 @@ async def watchdog_task(sensors, availability, operational, progress, interval=5
 
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(JournalFormatter("%(levelname)s %(message)s"))
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     log_state = {"settle_until": time.monotonic() + SENSOR_LOG_SETTLE_SECONDS,
                  "host_state": None}

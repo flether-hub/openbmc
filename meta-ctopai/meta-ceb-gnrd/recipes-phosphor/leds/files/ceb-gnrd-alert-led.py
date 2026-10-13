@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import socket
 import subprocess
@@ -10,6 +11,16 @@ import time
 
 
 LOG = logging.getLogger("ceb-gnrd-alert-led")
+
+
+class JournalFormatter(logging.Formatter):
+    """Keep each Python record's actual priority in the systemd journal."""
+    def format(self, record):
+        priority = (2 if record.levelno >= logging.CRITICAL else
+                    3 if record.levelno >= logging.ERROR else
+                    4 if record.levelno >= logging.WARNING else
+                    6 if record.levelno >= logging.INFO else 7)
+        return "<%d>%s" % (priority, super().format(record))
 # The system alert LED is the "fault" LED of phosphor-led-manager: this service only
 # asserts or de-asserts the standard enclosure_fault group, the LED manager drives
 # the physical LED (kernel LED label "fault", see led.json).
@@ -20,12 +31,17 @@ LED_REASSERT_SECONDS = 30
 STATE_DIR = "/run/ceb-gnrd-alert-led"
 WATCHDOG_LATCH = os.path.join(STATE_DIR, "watchdog-timeout")
 BOOT_LATCH = os.path.join(STATE_DIR, "bios-boot-timeout")
+SENSOR_ALARM_CACHE = os.path.join(STATE_DIR, "sensor-alarms.json")
 BOOT_TIMEOUT_SECONDS = 600
 
 MAPPER = "xyz.openbmc_project.ObjectMapper"
 MAPPER_PATH = "/xyz/openbmc_project/object_mapper"
 MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper"
 SENSOR_VALUE = "xyz.openbmc_project.Sensor.Value"
+SENSOR_QUALITY = {
+    "xyz.openbmc_project.State.Decorator.Availability": "Available",
+    "xyz.openbmc_project.State.Decorator.OperationalStatus": "Functional",
+}
 # Entity-Manager "Severity" 4 (non-recoverable) is published as HardShutdown.
 VOLTAGE_ROOT = "/xyz/openbmc_project/sensors/voltage"
 TEMPERATURE_ROOT = "/xyz/openbmc_project/sensors/temperature"
@@ -42,6 +58,13 @@ THRESHOLD_INTERFACES = (
 # Other temperatures retain the upper non-recoverable policy.
 TEMPERATURE_CRITICAL_SENSORS = {"CPU_MAX_TEMP", "DIMM_MAX_TEMP"}
 TEMPERATURE_ALARM_PROPERTIES = ("NonRecoverableAlarmHigh",)
+# These rails use PowerState=ChassisOn in ceb-gnrd.json. Standby/PSU/inlet
+# sensors remain eligible while the host is off, including their real alarms.
+HOST_POWERED_SENSORS = TEMPERATURE_CRITICAL_SENSORS | {
+    "P12V_SYS", "P5V0_SYS", "P3V3_SYS", "PVCCIN_CPU", "PVNN_NAC_CPU",
+    "PVCCD0_HV_CPU", "PVCCINF_CPU", "PVNN_MAIN_CPU", "PVCCFA_EHV_CPU",
+    "PVCCD1_HV_CPU", "PVCCINF_EHV_FIVRA_CPU",
+}
 WATCHDOG_MATCH = (
     "type='signal',interface='xyz.openbmc_project.Watchdog',"
     "member='Timeout',path='/xyz/openbmc_project/watchdog/host0'"
@@ -89,7 +112,7 @@ def unwrap_variant(value):
 def mapper_sensors(root):
     # The mapper only reports the requested interfaces, so the threshold
     # interfaces must be part of the filter to be visible in the result.
-    interfaces = (SENSOR_VALUE,) + THRESHOLD_INTERFACES
+    interfaces = (SENSOR_VALUE,) + THRESHOLD_INTERFACES + tuple(SENSOR_QUALITY)
     result = busctl(
         "--json=short",
         "call",
@@ -161,11 +184,53 @@ def as_bool(value):
 
 missing_sensor_since = {}
 missing_sensor_reported = set()
+# Keep an asserted fault until that exact property explicitly clears. A
+# temporarily absent provider is not a recovery. /run retains this across an
+# alert-service restart, but it starts fresh on an actual BMC reboot.
+sensor_alarms = set()
 
 
-def any_alarm(root, property_filter):
+def load_sensor_alarms():
+    try:
+        with open(SENSOR_ALARM_CACHE, encoding="utf-8") as handle:
+            entries = json.load(handle)
+        if not isinstance(entries, list):
+            raise ValueError("alarm cache is not a list")
+        for entry in entries:
+            if (not isinstance(entry, list) or len(entry) != 4
+                    or not all(isinstance(value, str) for value in entry)
+                    or entry[0] not in (VOLTAGE_ROOT, TEMPERATURE_ROOT)):
+                raise ValueError("invalid alarm cache entry")
+        sensor_alarms.update(tuple(entry) for entry in entries)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, TypeError) as exc:
+        LOG.error("Unable to restore sensor alarm state: %s", exc)
+
+
+def save_sensor_alarms(previous):
+    if previous == sensor_alarms:
+        return
+    try:
+        temporary = SENSOR_ALARM_CACHE + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(sorted(sensor_alarms), handle)
+        os.replace(temporary, SENSOR_ALARM_CACHE)
+    except OSError as exc:
+        LOG.error("Unable to retain sensor alarm state for service restart: %s", exc)
+
+
+def any_alarm(root, property_filter, host_off=False):
     """True if any sensor under root has an asserted alarm accepted by
     property_filter(path, name); None when the state cannot be determined."""
+    previous = sensor_alarms.copy()
+    cleared_for_power_off = False
+    if host_off:
+        inactive = {entry for entry in sensor_alarms if entry[0] == root
+                    and entry[1].rsplit("/", 1)[-1] in HOST_POWERED_SENSORS}
+        sensor_alarms.difference_update(inactive)
+        cleared_for_power_off = bool(inactive)
+        save_sensor_alarms(previous)
     try:
         sensors = mapper_sensors(root)
         if not sensors:
@@ -173,24 +238,59 @@ def any_alarm(root, property_filter):
             if time.monotonic() - since >= 60 and root not in missing_sensor_reported:
                 LOG.warning("No sensors under %s for 60 seconds; alarm state is unknown", root)
                 missing_sensor_reported.add(root)
-            return None
+            if any(entry[0] == root for entry in sensor_alarms):
+                return True
+            return False if cleared_for_power_off else None
         missing_sensor_since.pop(root, None)
         if root in missing_sensor_reported:
             LOG.info("Sensor discovery recovered under %s", root)
             missing_sensor_reported.discard(root)
         for service, path, interfaces in sensors:
             sd_notify("WATCHDOG=1")
+            if host_off and path.rsplit("/", 1)[-1] in HOST_POWERED_SENSORS:
+                continue
+            can_clear = True
+            if any(entry[0] == root and entry[1] == path for entry in sensor_alarms):
+                # A restarted provider initially exports false alarms before
+                # its first sample. Only healthy telemetry confirms recovery.
+                for interface, property_name in SENSOR_QUALITY.items():
+                    if interface in interfaces:
+                        quality = property_map(get_all_properties(service, path, interface))
+                        if not as_bool(quality.get(property_name)):
+                            can_clear = False
+                if can_clear:
+                    if SENSOR_VALUE not in interfaces:
+                        can_clear = False
+                    else:
+                        values = property_map(get_all_properties(service, path, SENSOR_VALUE))
+                        reading = unwrap_variant(values.get("Value"))
+                        while isinstance(reading, list) and len(reading) == 1:
+                            reading = unwrap_variant(reading[0])
+                        # Some providers initially export healthy quality but
+                        # NaN Value. Their default false alarm is not recovery.
+                        can_clear = (not isinstance(reading, bool)
+                                     and isinstance(reading, (int, float))
+                                     and math.isfinite(reading))
             for interface in THRESHOLD_INTERFACES:
                 if interface not in interfaces:
                     continue
                 props = property_map(get_all_properties(service, path, interface))
                 for name, value in props.items():
-                    if property_filter(path, name) and as_bool(value):
-                        return True
+                    if not property_filter(path, name):
+                        continue
+                    key = (root, path, interface, name)
+                    if as_bool(value):
+                        sensor_alarms.add(key)
+                    elif can_clear:
+                        sensor_alarms.discard(key)
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        save_sensor_alarms(previous)
         LOG.warning("Unable to read threshold alarms under %s: %s", root, exc)
-        return None
-    return False
+        if any(entry[0] == root for entry in sensor_alarms):
+            return True
+        return False if cleared_for_power_off else None
+    save_sensor_alarms(previous)
+    return any(entry[0] == root for entry in sensor_alarms)
 
 
 def voltage_alarm_property(path, name):
@@ -204,7 +304,7 @@ def temperature_alarm_property(path, name):
     )
 
 
-def sel_add(message, path, data=(0x00, 0xFF, 0xFF)):
+def sel_add(message, sensor_type, data=(0x00, 0xFF, 0xFF)):
     """Add an IPMI SEL record through phosphor-sel-logger (asserted event)."""
     for attempt in range(3):
         try:
@@ -213,10 +313,12 @@ def sel_add(message, path, data=(0x00, 0xFF, 0xFF)):
                 "xyz.openbmc_project.Logging.IPMI",
                 "/xyz/openbmc_project/Logging/IPMI",
                 "xyz.openbmc_project.Logging.IPMI",
-                "IpmiSelAdd",
-                "ssaybq",
+                "IpmiSelAddPlatform",
+                "syyyaybq",
                 message,
-                path,
+                hex(sensor_type),
+                "0xff",  # this software event has no actual SDR sensor
+                "0x6f",  # sensor-specific event offset, IPMI 2.0 Table 42-3
                 str(len(data)),
                 *[hex(b) for b in data],
                 "true",
@@ -234,7 +336,10 @@ INTRUSION_NORMAL = "Normal"
 # IPMI sensor type 0x05 (Physical Security), event offset 0x00 (General Chassis
 # Intrusion): the SEL event data byte 1 carries the offset.
 INTRUSION_SEL_DATA = (0x00, 0xFF, 0xFF)
-INTRUSION_SEL_PATH = "/xyz/openbmc_project/sensors/physical_security/Chassis_Intrusion"
+INTRUSION_SENSOR_TYPE = 0x05
+BIOS_FIRMWARE_SENSOR_TYPE = 0x0F
+# System Firmware Hang, unspecified initialization step; no invented POST code.
+BIOS_HANG_SEL_DATA = (0x01, 0xFF, 0xFF)
 _intrusion_object = None
 
 
@@ -360,7 +465,10 @@ def set_led(on):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(JournalFormatter("%(levelname)s %(message)s"))
     os.makedirs(STATE_DIR, exist_ok=True)
+    load_sensor_alarms()
     threading.Thread(target=watchdog_monitor, daemon=True).start()
 
     boot_deadline = None
@@ -379,6 +487,7 @@ def main():
 
     while True:
         sd_notify("WATCHDOG=1")
+        power_good = None
         try:
             power_good = chassis_power_on()
             boot_ok = bios_boot_ok()
@@ -421,7 +530,7 @@ def main():
                 sel_add(
                     "BIOS boot failure: BOOT_OK not asserted within %d seconds"
                     % BOOT_TIMEOUT_SECONDS,
-                    "/xyz/openbmc_project/state/host0",
+                    BIOS_FIRMWARE_SENSOR_TYPE, BIOS_HANG_SEL_DATA,
                 )
 
         # Chassis intrusion: one SEL record (and, through sel-logger, one Redfish
@@ -433,14 +542,16 @@ def main():
             normal = status.rsplit(".", 1)[-1] == INTRUSION_NORMAL
             if not normal and status != intrusion_last:
                 LOG.error("Chassis intrusion detected (%s)", status)
-                if not sel_add("Chassis intrusion detected", INTRUSION_SEL_PATH, INTRUSION_SEL_DATA):
+                if not sel_add("Chassis intrusion detected", INTRUSION_SENSOR_TYPE, INTRUSION_SEL_DATA):
                     status = intrusion_last  # retry on the next cycle
             intrusion_last = status
         watchdog_failed = watchdog_failed or os.path.exists(WATCHDOG_LATCH)
-        voltage_state = any_alarm(VOLTAGE_ROOT, voltage_alarm_property)
+        voltage_state = any_alarm(VOLTAGE_ROOT, voltage_alarm_property,
+                                  host_off=power_good is False)
         if voltage_state is not None:
             voltage_alarm = voltage_state
-        temperature_state = any_alarm(TEMPERATURE_ROOT, temperature_alarm_property)
+        temperature_state = any_alarm(TEMPERATURE_ROOT, temperature_alarm_property,
+                                      host_off=power_good is False)
         if temperature_state is not None:
             if temperature_state != temperature_alarm:
                 LOG.info("Temperature fault alarm %s", "asserted" if temperature_state else "cleared")

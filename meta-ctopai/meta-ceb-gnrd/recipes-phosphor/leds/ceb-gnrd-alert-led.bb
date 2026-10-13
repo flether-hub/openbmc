@@ -16,7 +16,7 @@ S = "${UNPACKDIR}"
 SYSTEMD_SERVICE:${PN} = "ceb-gnrd-alert-led.service"
 SYSTEMD_AUTO_ENABLE = "enable"
 
-RDEPENDS:${PN} = "python3-core python3-json python3-logging python3-threading systemd phosphor-watchdog"
+RDEPENDS:${PN} = "python3-core python3-json python3-logging python3-threading systemd phosphor-watchdog phosphor-sel-logger"
 
 do_install() {
     install -d ${D}${systemd_system_unitdir} ${D}${libexecdir}

@@ -1,0 +1,202 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] state: interlock BMC reboots with BIOS and CPLD programming
+
+Reject both ordinary and hard BMC transition requests while a host firmware
+job owns its programming lock. This includes the physical UID long-press
+request. Retain the shared lock for an accepted reboot until daemon shutdown
+to prevent another job from starting before the reboot takes effect.
+Propagate rejected systemd requests without discarding the state monitor.
+
+Upstream-Status: Inappropriate [CEB-GNRD update policy]
+
+diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
+--- a/bmc_state_manager.cpp
++++ b/bmc_state_manager.cpp
+@@ -18,12 +18,60 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <iostream>
++#include <fcntl.h>
++#include <memory>
++#include <string>
++#include <sys/file.h>
++#include <unistd.h>
++#include <utility>
+ #include <system_error>
+ 
+ namespace phosphor::state::manager
+ {
+ 
+ PHOSPHOR_LOG2_USING;
++
++namespace
++{
++// BIOS and CPLD hold this lock exclusively while waiting/programming. Keep a
++// shared reference after an accepted reboot so a new job cannot start between
++// the D-Bus reply and systemd shutting down the update services.
++class HostFlashRebootGuard
++{
++  public:
++    HostFlashRebootGuard()
++    {
++        fd = open("/run/lock/ceb-gnrd-host-flash.lock",
++                  O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
++        if (fd < 0)
++        {
++            throw sdbusplus::xyz::openbmc_project::Common::Error::Unavailable();
++        }
++        if (flock(fd, LOCK_SH | LOCK_NB) != 0)
++        {
++            close(fd);
++            fd = -1;
++            info("BIOS/CPLD update is active; BMC reboot request rejected");
++            throw sdbusplus::xyz::openbmc_project::Common::Error::Unavailable();
++        }
++    }
++    ~HostFlashRebootGuard()
++    {
++        if (fd >= 0)
++        {
++            close(fd);
++        }
++    }
++    HostFlashRebootGuard(const HostFlashRebootGuard&) = delete;
++    HostFlashRebootGuard& operator=(const HostFlashRebootGuard&) = delete;
++
++  private:
++    int fd = -1;
++};
++std::unique_ptr<HostFlashRebootGuard> queuedRebootGuard;
++std::string queuedRebootJob;
++std::string failedRebootJob;
++} // namespace
+ 
+ // When you see server:: you know we're referencing our base class
+ namespace server = sdbusplus::server::xyz::openbmc_project::state;
+@@ -148,9 +196,6 @@
+         // This signals external Redfish clients to cease communication.
+         // To avoid generating event logs which are intended for the
+         // BMC startup process, call the sdbusplus class directly.
+-        info("Setting the BMCState field to BMC_NOTREADY");
+-        server::BMC::currentBMCState(BMCState::NotReady);
+-        this->stateSignal.reset();
+ 
+         auto method =
+             this->bus.new_method_call(SYSTEMD_SERVICE, SYSTEMD_OBJ_PATH,
+@@ -162,7 +207,13 @@
+         catch (const sdbusplus::exception_t& e)
+         {
+             info("Error in HardReboot: {ERROR}", "ERROR", e);
+-        }
++            throw;
++        }
++        // Publish NotReady only after systemd accepted the request. A rejected
++        // reboot must leave the state monitor and firmware interlock usable.
++        info("Setting the BMCState field to BMC_NOTREADY");
++        server::BMC::currentBMCState(BMCState::NotReady);
++        this->stateSignal.reset();
+     }
+     else
+     {
+@@ -188,19 +239,30 @@
+         // This signals external Redfish clients to cease communication.
+         // To avoid generating event logs which are intended for the
+         // BMC startup process, call the sdbusplus class directly.
++
++        try
++        {
++            auto reply = this->bus.call(method);
++            sdbusplus::object_path job;
++            reply.read(job);
++            queuedRebootJob = static_cast<std::string>(job);
++            // A failure signal can arrive during the synchronous method call.
++            if (failedRebootJob == queuedRebootJob)
++            {
++                throw sdbusplus::xyz::openbmc_project::Common::Error::Unavailable();
++            }
++        }
++        catch (const sdbusplus::exception_t& e)
++        {
++            queuedRebootJob.clear();
++            info("Error in StartUnit - replace-irreversibly: {ERROR}", "ERROR",
++                 e);
++            throw;
++        }
+         info("Setting the BMCState field to BMC_NOTREADY");
+         server::BMC::currentBMCState(BMCState::NotReady);
+-        this->stateSignal.reset();
+-
+-        try
+-        {
+-            this->bus.call(method);
+-        }
+-        catch (const sdbusplus::exception_t& e)
+-        {
+-            info("Error in StartUnit - replace-irreversibly: {ERROR}", "ERROR",
+-                 e);
+-        }
++        // Retain the monitor to release a queued lock if systemd later fails
++        // or cancels this exact job instead of shutting down the daemon.
+     }
+     return;
+ }
+@@ -214,6 +276,24 @@
+ 
+     // Read the msg and populate each variable
+     msg.read(newStateID, newStateObjPath, newStateUnit, newStateResult);
++
++    if (newStateUnit == "reboot.target" && newStateResult != signalDone)
++    {
++        failedRebootJob = static_cast<std::string>(newStateObjPath);
++    }
++    if (queuedRebootGuard)
++    {
++        if (static_cast<std::string>(newStateObjPath) == queuedRebootJob &&
++            newStateResult != signalDone)
++        {
++            queuedRebootGuard.reset();
++            queuedRebootJob.clear();
++            info("BMC reboot job did not complete; firmware lock released");
++            discoverInitialState();
++        }
++        // Other boot-state signals must not mark an accepted reboot Ready.
++        return 0;
++    }
+ 
+     if ((newStateUnit == obmcQuiesceTarget) && (newStateResult == signalDone) &&
+         (getUnitState(newStateUnit) == activeState))
+@@ -253,7 +333,34 @@
+         }
+     }
+ 
++    if (queuedRebootGuard && value == Transition::Reboot)
++    {
++        // Repeated ordinary requests refer to the already accepted job.
++        return server::BMC::requestedBMCTransition(value);
++    }
++    std::unique_ptr<HostFlashRebootGuard> rebootGuard;
++    if ((value == Transition::Reboot || value == Transition::HardReboot) &&
++        !queuedRebootGuard)
++    {
++        rebootGuard = std::make_unique<HostFlashRebootGuard>();
++    }
++    if (value == Transition::Reboot && !stateSignal)
++    {
++        // Quiesced removed the boot-state subscription. Observe the reboot
++        // job as well so a cancellation cannot strand the programming lock.
++        utils::subscribeToSystemdSignals(bus);
++        stateSignal = std::make_unique<decltype(stateSignal)::element_type>(
++            bus,
++            sdbusRule::type::signal() + sdbusRule::member("JobRemoved") +
++                sdbusRule::path(SYSTEMD_OBJ_PATH) +
++                sdbusRule::interface(SYSTEMD_MANAGER_INTERFACE),
++            [this](sdbusplus::message_t& message) { bmcStateChange(message); });
++    }
+     executeTransition(value);
++    if (rebootGuard)
++    {
++        queuedRebootGuard = std::move(rebootGuard);
++    }
+     return server::BMC::requestedBMCTransition(value);
+ }
+ 

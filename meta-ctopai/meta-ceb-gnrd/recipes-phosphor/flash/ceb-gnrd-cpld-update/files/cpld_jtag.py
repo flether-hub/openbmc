@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -20,6 +21,7 @@ import time
 CONFIG = Path('/etc/ceb-gnrd/cpld-update.json')
 DEVICE = '/dev/ceb-cpld-jtag'
 RECEIPT = Path('/var/lib/ceb-gnrd-cpld-update/result.json')
+RECOVERY = RECEIPT.with_name('recovery.json')
 MAX_IMAGE = 1024 * 1024
 # DS600_1.8 section 2.9.11, EF3L90CG400: Golden feature/address at
 # 0x060000, Golden bitstream at 0x061000. Never erase/program that region.
@@ -125,26 +127,100 @@ def boot_id():
     return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 
 
-def checkpoint(value):
+def persist_json(path, value):
     encoded = json.dumps(value, separators=(',', ':')).encode()
     if len(encoded) > 8192:
         raise ValueError('Upgrade receipt exceeds its storage budget')
-    RECEIPT.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    tmp = RECEIPT.with_suffix('.tmp')
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tmp = path.with_suffix('.tmp')
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(fd, 'wb') as output:
             output.write(encoded)
             output.flush()
             os.fsync(output.fileno())
-        os.replace(tmp, RECEIPT)
-        directory = os.open(RECEIPT.parent, os.O_RDONLY | os.O_DIRECTORY)
+        os.replace(tmp, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory)
         finally:
             os.close(directory)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def checkpoint(value):
+    persist_json(RECEIPT, value)
+
+
+def recovery_boot_allowed(record):
+    previous_boot = record.get('bootId', '')
+    if re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', previous_boot) is None:
+        return False
+    if previous_boot == boot_id():
+        return True
+    # Cross-AC recovery can run the Golden design. It needs its own explicit
+    # persist_bit approval; a receipt cannot establish that hardware fact.
+    cfg = configuration()
+    reference = cfg.get('golden_confirmation_reference')
+    if (cfg.get('golden_persist_bit_confirmed') is True and
+            isinstance(reference, str) and reference.strip()):
+        return True
+    # Without Golden approval, allow only an explicit warm reset indication.
+    # Missing/unknown/POR information fails closed.
+    try:
+        with Path('/sys/firmware/devicetree/base/chosen/aspeed,boot-reason').open('rb') as source:
+            reason = source.read(64)
+        return reason in (b'warm', b'warm\x00')
+    except OSError:
+        return False
+
+
+def recovery_matches(plan):
+    """Authorize only the same approved image after a recorded destructive job."""
+    try:
+        fd = os.open(RECOVERY, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 8192:
+                return False
+            record = json.loads(source.read(8193))
+        original = bytes.fromhex(record['originalHeader'])
+        return (record.get('version') == 1 and record.get('idcode') == IDCODE and
+                recovery_boot_allowed(record) and
+                record.get('primaryLimit') == PRIMARY_FLASH_LIMIT and
+                re.fullmatch(r'[0-9a-f]{32}', record.get('job', '')) is not None and
+                record.get('sha256') == plan['sha256'] and
+                record.get('flashSha256') == plan['flashSha256'] and
+                record.get('feature') == plan['feature'] and
+                record.get('programmedBytes') == len(plan['data']) and
+                len(original) == 256 and
+                original[16:52] == b'\xff' * 32 + bytes.fromhex('cc55aa33'))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def arm_recovery(plan, job, original):
+    # Persist before the first erase. The normal job receipt may be cleared by
+    # a service restart; this separate recovery authority remains until verify.
+    if original[16:52] != b'\xff' * 32 + bytes.fromhex('cc55aa33'):
+        if not recovery_matches(plan):
+            raise RuntimeError('Missing matching CPLD recovery authority')
+        return  # Keep the original recognized header from the interrupted job.
+    persist_json(RECOVERY, dict(version=1, idcode=IDCODE, bootId=boot_id(),
+                 primaryLimit=PRIMARY_FLASH_LIMIT, job=job,
+                 sha256=plan['sha256'], flashSha256=plan['flashSha256'],
+                 feature=plan['feature'], programmedBytes=len(plan['data']),
+                 originalHeader=original.hex()))
+
+
+def clear_recovery():
+    RECOVERY.unlink(missing_ok=True)
+    directory = os.open(RECOVERY.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def event(phase, progress, detail, **extra):
@@ -303,12 +379,15 @@ def update(path, job, remaining, expected_digest=None):
         response = jtag.spi(bytes([0x03, 0, 0, 0]) + bytes(256), True)
         existing = ((response >> 41) & ((1 << 2048) - 1)).to_bytes(256, 'little').translate(REVERSE)
         if existing[16:52] != b'\xff' * 32 + bytes.fromhex('cc55aa33'):
-            raise RuntimeError('Existing Flash header not recognized; no erase attempted')
+            if not recovery_matches(plan):
+                raise RuntimeError('Existing Flash header not recognized and no matching interrupted job; no erase attempted')
+            trace('Resuming recorded interrupted programming with the identical approved .bit image')
         jtag.wait_flash_ready(2, 'Initial Flash readiness')
         jtag.write_enable_checked()
         jtag.scan(32, 0x400080a5)
         jtag.wait_flash_ready(2, 'QE register write')
         trace('END background entry and QE setup')
+        arm_recovery(plan, job, existing)
         for sector in range(plan['sectors']):
             address = sector * 4096
             trace(f'BEGIN erase sector {sector + 1}/{plan["sectors"]} address=0x{address:06x}')
@@ -357,6 +436,7 @@ def update(path, job, remaining, expected_digest=None):
                    programmingFormat='bit', programmedBytes=len(data),
                    activationRequired=True, activationMethod='ACPowerCycle', autoRefresh=False)
     checkpoint(receipt)
+    clear_recovery()
     event('Completed', 100, receipt['detail'], flashVerified=True, verifiedPages=pages,
           activationRequired=True, activationMethod='ACPowerCycle', autoRefresh=False,
           programmingFormat='bit', programmedBytes=len(data))

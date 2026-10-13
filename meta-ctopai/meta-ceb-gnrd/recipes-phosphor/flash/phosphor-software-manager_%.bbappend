@@ -3,6 +3,8 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/${PN}:"
 SRC_URI:append:ceb-gnrd = " \
     file://0001-ceb-gnrd-bmc-update-partition-selection.patch \
     file://0002-ceb-gnrd-lock-bmc-staging-against-other-updaters.patch \
+    file://0003-ceb-gnrd-share-firmware-reboot-guard.patch \
+    file://10-ceb-gnrd-reboot-guard-cleanup.conf \
     file://bios-update.sh \
     file://bios-layout.txt \
     file://obmc-flash-host-bios@.service \
@@ -39,6 +41,8 @@ do_install:append:ceb-gnrd() {
     install -d ${D}${systemd_system_unitdir}
     install -m 0644 ${UNPACKDIR}/obmc-flash-host-bios@.service \
         ${D}${systemd_system_unitdir}/
+    install -Dm0644 ${UNPACKDIR}/10-ceb-gnrd-reboot-guard-cleanup.conf \
+        ${D}${systemd_system_unitdir}/xyz.openbmc_project.Software.BMC.Updater.service.d/10-ceb-gnrd-reboot-guard-cleanup.conf
 
     # AUTO_ENABLE above is disabled for the whole updater package, which includes
     # the BMC image updater daemon.  That daemon provides the BMC version object
@@ -53,4 +57,5 @@ do_install:append:ceb-gnrd() {
 FILES:${PN}-updater:append:ceb-gnrd = " \
     ${datadir}/ceb-gnrd/bios-layout.txt \
     ${systemd_system_unitdir}/multi-user.target.wants/xyz.openbmc_project.Software.BMC.Updater.service \
+    ${systemd_system_unitdir}/xyz.openbmc_project.Software.BMC.Updater.service.d/10-ceb-gnrd-reboot-guard-cleanup.conf \
     "

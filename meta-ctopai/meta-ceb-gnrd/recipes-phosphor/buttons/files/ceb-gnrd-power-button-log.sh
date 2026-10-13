@@ -21,15 +21,16 @@ record_press() {
         logger --journald 2>/dev/null || true
 
     # IPMI SEL record (also visible in the web event log).
+    # Table 42-3: Button/Switch 0x14, Power Button pressed offset 0x00.
+    # No SDR sensor exists for this notification; retain sensor number 0xff.
     attempt=0
     while [ "$attempt" -lt 3 ]
     do
         if busctl call xyz.openbmc_project.Logging.IPMI \
             /xyz/openbmc_project/Logging/IPMI \
-            xyz.openbmc_project.Logging.IPMI IpmiSelAdd ssaybq \
+            xyz.openbmc_project.Logging.IPMI IpmiSelAddPlatform syyyaybq \
             'Chassis Power Button Pressed' \
-            '/xyz/openbmc_project/state/chassis0' \
-            3 0x00 0xff 0xff true 0x0020 >/dev/null 2>&1
+            0x14 0xff 0x6f 3 0x00 0xff 0xff true 0x0020 >/dev/null 2>&1
         then
             log "power button pressed: SEL entry added"
             return 0

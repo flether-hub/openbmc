@@ -7,6 +7,7 @@ Requires=dbus.service
 Type=dbus
 BusName=com.ctopai.CebGnrd.CpldUpdate
 ExecStart=/usr/bin/python3 /usr/libexec/ceb-gnrd-cpld-update.py
+ExecStopPost=/usr/bin/obmc-flash-bmc rebootguarddisable
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure

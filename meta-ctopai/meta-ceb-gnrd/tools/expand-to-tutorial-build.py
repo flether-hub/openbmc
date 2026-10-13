@@ -7,8 +7,9 @@ and quick-start.md into <repo>/.tutorial-build/ceb-gnrd/, keeping the
 repository layout. The working-tree contents are copied, so uncommitted
 edits come along; untracked scratch files do not.
 
-.tutorial-build/ is git-ignored scratch space. The destination directory
-is replaced on every run; nothing else under .tutorial-build/ is touched.
+.tutorial-build/ is git-ignored scratch space. DEST must be a child of that
+directory. The default copy (or a marked custom copy previously created by
+this helper) is replaced on every run; other scratch projects are preserved.
 
 Layout of .tutorial-build/ (local only, not in git):
   ceb-gnrd/                 this script's copy of the layer
@@ -38,9 +39,18 @@ PATHS = (
 repo = Path(subprocess.check_output(
     ['git', 'rev-parse', '--show-toplevel'], cwd=Path(__file__).resolve().parent,
     text=True).strip())
-dest = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else repo / '.tutorial-build/ceb-gnrd'
-if dest == repo or repo in dest.parents and '.tutorial-build' not in dest.relative_to(repo).parts:
-    sys.exit(f'refusing to write inside the repository outside .tutorial-build: {dest}')
+dest = (Path(sys.argv[1]) if len(sys.argv) > 1 else repo / '.tutorial-build/ceb-gnrd').resolve()
+scratch = repo / '.tutorial-build'
+# This helper owns one layer copy, never the repository, its parent, or the
+# shared scratch root. An explicit DEST must be a child of scratch so a typo
+# cannot erase an unrelated checkout or a user's directory.
+if scratch.resolve() != scratch or dest == scratch or scratch not in dest.parents or dest == repo or dest in repo.parents:
+    sys.exit(f'refusing to replace a destination outside a child of {scratch}: {dest}')
+# Do not let a custom destination erase another known scratch project.
+if dest != scratch / 'ceb-gnrd' and dest.exists():
+    marker = dest / '.ceb-gnrd-layer-copy'
+    if not marker.is_file() or marker.read_text() != str(repo) + '\n':
+        sys.exit(f'refusing to replace an existing directory not created by this helper: {dest}')
 
 files = subprocess.check_output(['git', 'ls-files', '-z', '--', *PATHS], cwd=repo,
                                 text=True).split('\0')
@@ -55,4 +65,5 @@ for name in filter(None, files):
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     count += 1
+(dest / '.ceb-gnrd-layer-copy').write_text(str(repo) + '\n')
 print(f'{count} files -> {dest}')

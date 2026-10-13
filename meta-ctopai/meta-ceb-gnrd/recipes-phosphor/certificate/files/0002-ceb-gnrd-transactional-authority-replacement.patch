@@ -1,0 +1,553 @@
+Subject: [PATCH] certificates: stage and validate complete authority replacements
+
+Upstream-Status: Inappropriate [CEB-GNRD certificate preservation]
+
+Retain the old CA objects and storage through snapshotting, parsing, X509
+verification, and hash-link creation. Commit a complete directory, using
+rename exchange where supported and a recoverable directory rename on
+JFFS2. Roll back on reload submission failure. Reject bundles without CAs.
+
+--- a/certs_manager.cpp
++++ b/certs_manager.cpp
+@@ -14,6 +14,9 @@
+ #include <openssl/opensslv.h>
+ #include <openssl/pem.h>
+ #include <openssl/rsa.h>
++#include <fcntl.h>
++#include <linux/fs.h>
++#include <sys/syscall.h>
+ #include <unistd.h>
+ 
+ #include <phosphor-logging/elog-errors.hpp>
+@@ -37,6 +40,7 @@
+ #include <cstring>
+ #include <exception>
+ #include <fstream>
++#include <system_error>
+ #include <utility>
+ 
+ namespace phosphor::certs
+@@ -137,6 +141,86 @@
+     return certificatesList;
+ }
+ 
++// Durability is part of the transaction: no previous store is retired until
++// certificate payloads and the directory commit have reached the filesystem.
++void syncAuthorityPath(const fs::path& path, bool directory)
++{
++    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW |
++                        (directory ? O_DIRECTORY : 0));
++    if (fd < 0)
++    {
++        throw std::system_error(errno, std::generic_category(), "open CA storage");
++    }
++    const int result = fsync(fd);
++    const int error = errno;
++    close(fd);
++    if (result != 0)
++    {
++        throw std::system_error(error, std::generic_category(), "sync CA storage");
++    }
++}
++
++void syncAuthorityDirectory(const fs::path& directory)
++{
++    for (const auto& entry : fs::directory_iterator(directory))
++    {
++        if (!fs::is_symlink(entry) && fs::is_regular_file(entry))
++        {
++            syncAuthorityPath(entry, false);
++        }
++    }
++    syncAuthorityPath(directory, true);
++}
++
++void validateAuthorityDirectory(const fs::path& directory)
++{
++    const fs::path list = directory / defaultAuthoritiesListFileName;
++    if (fs::exists(list))
++    {
++        checkAuthorityListSize(list);
++        const auto authorities = splitCertificates(list);
++        if (authorities.empty() || authorities.size() > maxNumAuthorityCertificates)
++        {
++            elog<InvalidCertificate>(InvalidCertificateReason("Invalid CA bundle count"));
++        }
++        auto store = getX509Store(list);
++        for (const auto& pem : authorities)
++        {
++            if (pem.size() >= 32 * 1024)
++            {
++                elog<InvalidCertificate>(InvalidCertificateReason("CA exceeds size limit"));
++            }
++            auto certificate = parseCert(pem);
++            validateCertificateAgainstStore(*store, *certificate);
++            validateCertificateStartDate(*certificate);
++            validateCertificateInSSLContext(*certificate);
++        }
++        return;
++    }
++    size_t count = 0;
++    for (const auto& entry : fs::directory_iterator(directory))
++    {
++        if (fs::is_symlink(entry) || !fs::is_regular_file(entry))
++        {
++            continue;
++        }
++        if (++count > maxNumAuthorityCertificates ||
++            fs::file_size(entry) == 0 || fs::file_size(entry) > 32 * 1024)
++        {
++            elog<InvalidCertificate>(InvalidCertificateReason("Invalid CA storage size"));
++        }
++        auto store = getX509Store(entry.path());
++        auto certificate = loadCert(entry.path());
++        validateCertificateAgainstStore(*store, *certificate);
++        validateCertificateStartDate(*certificate);
++        validateCertificateInSSLContext(*certificate);
++    }
++    if (count == 0)
++    {
++        elog<InvalidCertificate>(InvalidCertificateReason("CA storage is empty"));
++    }
++}
++
+ } // namespace
+ 
+ Manager::Manager(sdbusplus::bus_t& bus, sdeventplus::Event& event,
+@@ -161,6 +245,56 @@
+             else
+             {
+                 certDirectory = certParentInstallPath;
++            }
++
++            if (certType == CertificateType::authority)
++            {
++                // Recover the directory-rename fallback if power was lost
++                // between its two renames. Retire a previous copy only after
++                // parsing and verifying the complete live trust store.
++                const fs::path previous = certInstallPath + ".previous";
++                const fs::path staging = certInstallPath + ".staging";
++                if (!fs::exists(certDirectory) && fs::exists(previous))
++                {
++                    fs::rename(previous, certDirectory);
++                    syncAuthorityPath(certParentInstallPath, true);
++                }
++                if (fs::exists(certDirectory) && fs::exists(previous))
++                {
++                    bool valid = false;
++                    try
++                    {
++                        validateAuthorityDirectory(certDirectory);
++                        valid = true;
++                    }
++                    catch (const std::exception& e)
++                    {
++                        lg2::error("Live CA storage failed validation; restoring previous copy: {ERROR}",
++                                   "ERROR", e);
++                    }
++                    if (!valid)
++                    {
++                        fs::remove_all(staging);
++                        fs::rename(certDirectory, staging);
++                        try
++                        {
++                            fs::rename(previous, certDirectory);
++                        }
++                        catch (...)
++                        {
++                            fs::rename(staging, certDirectory);
++                            throw;
++                        }
++                    }
++                    syncAuthorityDirectory(certDirectory);
++                    syncAuthorityPath(certParentInstallPath, true);
++                    fs::remove_all(previous);
++                }
++                fs::remove_all(staging);
++                if (fs::exists(certParentInstallPath))
++                {
++                    syncAuthorityPath(certParentInstallPath, true);
++                }
+             }
+ 
+             if (!fs::exists(certDirectory))
+@@ -293,119 +427,207 @@
+ std::vector<sdbusplus::object_path> Manager::installAll(
+     const std::string filePath)
+ {
++    if (!installedCerts.empty())
++    {
++        elog<NotAllowed>(NotAllowedReason(
++            "There are already root certificates; use ReplaceAll"));
++    }
++    return installAuthorities(filePath);
++}
++
++std::vector<sdbusplus::object_path> Manager::replaceAll(std::string filePath)
++{
++    return installAuthorities(filePath);
++}
++
++std::vector<sdbusplus::object_path> Manager::installAuthorities(
++    const std::string& filePath)
++{
+     if (certType != CertificateType::authority)
+     {
+         elog<NotAllowed>(NotAllowedReason(
+-            "The InstallAll interface is only allowed for "
+-            "Authority certificates"));
+-    }
+-
+-    if (!installedCerts.empty())
+-    {
+-        elog<NotAllowed>(NotAllowedReason(
+-            "There are already root certificates; Call DeleteAll then "
+-            "InstallAll, or use ReplaceAll"));
+-    }
+-
++            "Bulk installation is only allowed for Authority certificates"));
++    }
+     checkAuthorityListSize(filePath);
+-    fs::path sourceFile(filePath);
+-    if (!fs::exists(sourceFile))
+-    {
+-        lg2::error("File is Missing, FILE:{FILE}", "FILE", filePath);
+-        elog<InternalFailure>();
+-    }
+-    std::vector<std::string> authorities = splitCertificates(sourceFile);
+-    if (authorities.size() > maxNumAuthorityCertificates)
+-    {
+-        elog<NotAllowed>(NotAllowedReason("Certificates limit reached"));
+-    }
+-
+-    lg2::info("Starts authority list install");
+-
+-    fs::path authorityStore(certInstallPath);
+-
+-    // Atomically install all the certificates
+-    fs::path tempPath = Certificate::generateUniqueFilePath(authorityStore);
+-    fs::create_directory(tempPath);
+-    auto removeStaging = [](fs::path* path) {
++    const fs::path authorityStore(certInstallPath);
++    const fs::path tempPath = certInstallPath + ".staging";
++    const fs::path previousPath = certInstallPath + ".previous";
++    if (fs::exists(tempPath) || fs::exists(previousPath))
++    {
++        elog<InternalFailure>();
++    }
++    auto removeDirectory = [](fs::path* path) {
+         std::error_code ec;
+         fs::remove_all(*path, ec);
+         delete path;
+     };
+-    std::unique_ptr<fs::path, decltype(removeStaging)> stagingGuard(
+-        new fs::path(tempPath), removeStaging);
+-    // Copies the authorities list
+-    Certificate::copyCertificate(sourceFile,
+-                                 tempPath / defaultAuthoritiesListFileName);
++    std::unique_ptr<fs::path, decltype(removeDirectory)> stagingGuard(
++        new fs::path(tempPath), removeDirectory);
++    std::unique_ptr<fs::path, decltype(removeDirectory)> previousGuard(
++        new fs::path(previousPath), removeDirectory);
++    fs::create_directory(tempPath);
++    fs::permissions(tempPath, fs::perms::owner_all, fs::perm_options::replace);
++
++    // Work from one snapshot: parsing and validation must never observe a
++    // different upload from the one that is eventually committed.
++    const fs::path stagedList = tempPath / defaultAuthoritiesListFileName;
++    Certificate::copyCertificate(filePath, stagedList);
++    checkAuthorityListSize(stagedList);
++    const auto authorities = splitCertificates(stagedList);
++    if (authorities.empty() || authorities.size() > maxNumAuthorityCertificates ||
++        std::any_of(authorities.begin(), authorities.end(),
++                    [](const auto& pem) { return pem.size() >= 32 * 1024; }))
++    {
++        elog<InvalidCertificate>(InvalidCertificateReason(
++            "Authority list is empty or exceeds certificate count or size limit"));
++    }
++
++    // Keep all old D-Bus objects and files alive until every new X509
++    // certificate and hash link has been prepared successfully. Fresh IDs
++    // avoid registering a second interface on an existing object path.
+     std::vector<std::unique_ptr<Certificate>> tempCertificates;
+-    uint64_t tempCertIdCounter = certIdCounter;
+-    X509StorePtr x509Store = getX509Store(sourceFile);
++    uint64_t nextId = certIdCounter;
++    X509StorePtr x509Store = getX509Store(stagedList);
++    std::vector<sdbusplus::object_path> objects;
+     for (const auto& authority : authorities)
+     {
+-        std::string certObjectPath =
+-            objectPath + '/' + std::to_string(tempCertIdCounter);
++        const auto certObjectPath = objectPath + '/' + std::to_string(nextId++);
+         tempCertificates.emplace_back(std::make_unique<Certificate>(
+             bus, certObjectPath, certType, tempPath, *x509Store, authority,
+             certWatchPtr.get(), *this, /*restore=*/false));
+-        tempCertIdCounter++;
+-    }
+-
+-    // We are good now, issue swap
+-    installedCerts = std::move(tempCertificates);
+-    certIdCounter = tempCertIdCounter;
+-    // Rename all the certificates including the authorities list
+-    for (const fs::path& f : fs::directory_iterator(tempPath))
+-    {
+-        if (fs::is_symlink(f))
+-        {
+-            continue;
+-        }
+-        fs::rename(/*from=*/f, /*to=*/certInstallPath / f.filename());
+-    }
+-    // Update file locations and create symbol links
+-    for (const auto& cert : installedCerts)
+-    {
+-        cert->setCertInstallPath(certInstallPath);
+-        cert->setCertFilePath(
+-            certInstallPath / fs::path(cert->getCertFilePath()).filename());
+-        cert->storageUpdate();
+-    }
+-    // Remove the temporary folder
+-    fs::remove_all(tempPath);
+-
+-    std::vector<sdbusplus::object_path> objects;
+-    for (const auto& certificate : installedCerts)
+-    {
+-        objects.emplace_back(certificate->getObjectPath());
+-    }
+-
+-    lg2::info("Finishes authority list install; reload units starts");
+-    reloadOrReset(unitToRestart);
++        objects.emplace_back(certObjectPath);
++    }
++    for (const auto& entry : fs::directory_iterator(tempPath))
++    {
++        if (fs::is_symlink(entry))
++        {
++            // Relative links survive a complete directory exchange.
++            const auto target = fs::read_symlink(entry).filename();
++            fs::remove(entry);
++            fs::create_symlink(target, entry);
++        }
++    }
++    syncAuthorityDirectory(tempPath);
++    syncAuthorityPath(authorityStore.parent_path(), true);
++
++    using Location = std::pair<std::string, std::string>;
++    const auto locations = [](const auto& certificates, const fs::path& dir) {
++        std::vector<Location> result;
++        for (const auto& cert : certificates)
++        {
++            result.emplace_back(dir.string(),
++                (dir / fs::path(cert->getCertFilePath()).filename()).string());
++        }
++        return result;
++    };
++    const auto relocate = [](auto& certificates, auto& destinations) noexcept {
++        for (size_t i = 0; i < certificates.size(); ++i)
++        {
++            certificates[i]->relocateStorage(std::move(destinations[i].first),
++                                              std::move(destinations[i].second));
++        }
++    };
++    // Allocate every destination before touching the live store. Relocating
++    // after a rename uses noexcept string swaps rather than new allocations.
++    auto newLive = locations(tempCertificates, authorityStore);
++    auto newStaged = locations(tempCertificates, tempPath);
++    auto oldLive = locations(installedCerts, authorityStore);
++    auto oldStaged = locations(installedCerts, tempPath);
++    auto oldPrevious = locations(installedCerts, previousPath);
++    const auto oldId = certIdCounter;
++    bool exchanged = false;
++    if (syscall(SYS_renameat2, AT_FDCWD, authorityStore.c_str(),
++                AT_FDCWD, tempPath.c_str(), RENAME_EXCHANGE) == 0)
++    {
++        exchanged = true;
++    }
++    else
++    {
++        if (errno != ENOSYS && errno != EINVAL && errno != EOPNOTSUPP)
++        {
++            elog<InternalFailure>();
++        }
++        // JFFS2 may not implement exchange. Keep a recoverable old directory
++        // until the fully staged new directory has taken its place.
++        fs::rename(authorityStore, previousPath);
++        try
++        {
++            syncAuthorityPath(authorityStore.parent_path(), true);
++            fs::rename(tempPath, authorityStore);
++        }
++        catch (...)
++        {
++            std::error_code ec;
++            fs::rename(previousPath, authorityStore, ec);
++            if (ec)
++            {
++                previousGuard.release(); // Preserve old CAs for boot recovery.
++            }
++            throw;
++        }
++    }
++
++    relocate(tempCertificates, newLive);
++    relocate(installedCerts, exchanged ? oldStaged : oldPrevious);
++    installedCerts.swap(tempCertificates);
++    certIdCounter = nextId;
++    try
++    {
++        syncAuthorityPath(authorityStore.parent_path(), true);
++        reloadOrReset(unitToRestart);
++    }
++    catch (...)
++    {
++        bool restored = false;
++        if (exchanged)
++        {
++            restored = syscall(SYS_renameat2, AT_FDCWD, authorityStore.c_str(),
++                               AT_FDCWD, tempPath.c_str(), RENAME_EXCHANGE) == 0;
++        }
++        else
++        {
++            std::error_code ec;
++            fs::rename(authorityStore, tempPath, ec);
++            if (!ec)
++            {
++                fs::rename(previousPath, authorityStore, ec);
++            }
++            restored = !ec;
++        }
++        if (restored)
++        {
++            relocate(installedCerts, newStaged);
++            relocate(tempCertificates, oldLive);
++            installedCerts.swap(tempCertificates);
++            certIdCounter = oldId;
++            try
++            {
++                syncAuthorityPath(authorityStore.parent_path(), true);
++            }
++            catch (const std::exception& e)
++            {
++                stagingGuard.release();
++                previousGuard.release();
++                lg2::error("Failed to synchronize restored CA directory: {ERROR}", "ERROR", e);
++            }
++        }
++        else
++        {
++            // A second filesystem failure must not destroy the only old CA
++            // copy. Boot recovery handles an interrupted fallback rename.
++            stagingGuard.release();
++            previousGuard.release();
++            for (auto& cert : tempCertificates)
++            {
++                cert.release();
++            }
++            lg2::error("Authority rollback failed; preserving previous store");
++        }
++        throw;
++    }
++    // Old objects now point at the retired directory, so their destructors
++    // cannot remove any certificate in the newly installed store.
+     return objects;
+-}
+-
+-std::vector<sdbusplus::object_path> Manager::replaceAll(std::string filePath)
+-{
+-    // Validate the storage budget before removing the current authorities.
+-    if (certType != CertificateType::authority)
+-    {
+-        elog<NotAllowed>(NotAllowedReason(
+-            "ReplaceAll is only allowed for Authority certificates"));
+-    }
+-    checkAuthorityListSize(filePath);
+-    const auto authorities = splitCertificates(filePath);
+-    if (authorities.size() > maxNumAuthorityCertificates ||
+-        std::any_of(authorities.begin(), authorities.end(),
+-                    [](const auto& pem) { return pem.size() >= 32 * 1024; }))
+-    {
+-        elog<InvalidCertificate>(InvalidCertificateReason(
+-            "Authority list exceeds certificate count or size limit"));
+-    }
+-
+-    installedCerts.clear();
+-    certIdCounter = 1;
+-    storageUpdate();
+-    return installAll(std::move(filePath));
+ }
+ 
+ void Manager::deleteAll()
+@@ -998,14 +1220,8 @@
+                 fs::path(certInstallPath) / defaultAuthoritiesListFileName;
+             fs::exists(authoritiesListFilePath))
+         {
+-            // remove all other files and directories
+-            for (auto& path : fs::directory_iterator(certInstallPath))
+-            {
+-                if (path.path() != authoritiesListFilePath)
+-                {
+-                    fs::remove_all(path);
+-                }
+-            }
++            // The transactional installer validates the bundle before
++            // replacing storage. Preserve individual CAs if it is damaged.
+             installAll(authoritiesListFilePath);
+             return;
+         }
+@@ -1017,7 +1233,7 @@
+                 // Assume here any regular file located in certificate directory
+                 // contains certificates body. Do not want to use soft links
+                 // would add value.
+-                if (fs::is_regular_file(path))
++                if (!fs::is_symlink(path) && fs::is_regular_file(path))
+                 {
+                     installedCerts.emplace_back(std::make_unique<Certificate>(
+                         bus, certObjectPath + std::to_string(certIdCounter++),
+--- a/certs_manager.hpp
++++ b/certs_manager.hpp
+@@ -207,6 +207,9 @@
+     virtual void reloadOrReset(const std::string& unit);
+ 
+   private:
++    std::vector<sdbusplus::object_path> installAuthorities(
++        const std::string& filePath);
++
+     void generateCSRHelper(
+         std::vector<std::string> alternativeNames,
+         std::string challengePassword, std::string city, std::string commonName,
+--- a/certificate.hpp
++++ b/certificate.hpp
+@@ -216,6 +216,9 @@
+      */
+     void setCertInstallPath(const std::string& path);
+ 
++    /** Relocate already validated storage without allocating at commit. */
++    void relocateStorage(std::string directory, std::string file) noexcept;
++
+   private:
+     /**
+      * @brief Populate certificate properties by parsing given certificate
+--- a/certificate.cpp
++++ b/certificate.cpp
+@@ -293,7 +293,8 @@
+ 
+ Certificate::~Certificate()
+ {
+-    if (!fs::remove(certFilePath))
++    std::error_code ec;
++    if (!fs::remove(certFilePath, ec))
+     {
+         lg2::info("Certificate file not found! PATH:{PATH}", "PATH",
+                   certFilePath);
+@@ -724,4 +725,11 @@
+     certInstallPath = path;
+ }
+ 
++void Certificate::relocateStorage(std::string directory,
++                                  std::string file) noexcept
++{
++    certInstallPath.swap(directory);
++    certFilePath.swap(file);
++}
++
+ } // namespace phosphor::certs

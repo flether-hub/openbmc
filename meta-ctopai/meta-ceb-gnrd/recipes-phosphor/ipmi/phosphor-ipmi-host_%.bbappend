@@ -44,3 +44,6 @@ RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-sel-logger"
 
 # Board front-panel buttons cannot be masked by the BMC.
 SRC_URI:append:ceb-gnrd = " file://0007-ceb-gnrd-report-front-panel-masking-unsupported.patch"
+
+# Keep live UNR status and event masks consistent with the exposed thresholds.
+SRC_URI:append:ceb-gnrd = " file://0008-ceb-gnrd-report-live-non-recoverable-alarms.patch"

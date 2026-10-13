@@ -2,6 +2,7 @@
 Description=CEB-GNRD system alert LED policy
 
 [Service]
+SyslogLevelPrefix=yes
 Type=notify
 NotifyAccess=main
 # the main loop pings every 2 s and between sensor reads; a hang stops the pings

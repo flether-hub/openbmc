@@ -1,0 +1,44 @@
+Subject: [PATCH] dreport: select Chassis interface and collect board RAM console logs
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+--- a/tools/dreport.d/plugins.d/chassisstate
++++ b/tools/dreport.d/plugins.d/chassisstate
+@@ -9,7 +9,17 @@
+ 
+ services=$(busctl list | awk '{print $1}' | grep -E "xyz.openbmc_project.State.Chassis([0-9]*)?$")
+ for service in ${services}; do
+-    objpath=$(busctl tree --list "$service"  | tail -n 1)
++    # One service can own Host, Chassis and OS objects. Select an object
++    # that actually provides CurrentPowerState instead of the last tree row.
++    objpath=
++    while IFS= read -r candidate; do
++        if busctl --timeout=2s get-property "$service" "$candidate" \
++            xyz.openbmc_project.State.Chassis CurrentPowerState >/dev/null 2>&1; then
++            objpath=$candidate
++            break
++        fi
++    done < <(busctl tree --list "$service")
++    [ -n "$objpath" ] || continue
+     index=$(echo "$service" | grep -o '[0-9]*$')
+     if [ -z "$index" ]; then
+         file_name="chassis-state.log"
+--- a/tools/dreport.d/plugins.d/obmcconsole
++++ b/tools/dreport.d/plugins.d/obmcconsole
+@@ -8,10 +8,14 @@
+ . "$DREPORT_INCLUDE"/functions
+ 
+ default_desc="OBMC console log"
+-for file_name in /var/log/obmc-console*; do
++# This board keeps SOL payloads in RAM rather than wearing the rwfs flash.
++for file_name in /var/log/obmc-console* /run/obmc-console-physical.log \
++                 /run/obmc-console-vuart.log; do
++    [ -f "$file_name" ] || continue
+     desc=${default_desc}
+     if [ "$file_name" != "/var/log/obmc-console.log" ]; then
+-        name=${file_name/\/var\/log\/obmc-console-/}
++        name=${file_name##*/}
++        name=${name#obmc-console-}
+         name=${name/.log/}
+         desc="OBMC Console $name log"
+     fi

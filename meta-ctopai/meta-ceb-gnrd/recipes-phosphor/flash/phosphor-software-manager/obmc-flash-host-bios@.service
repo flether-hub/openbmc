@@ -7,6 +7,7 @@ Type=oneshot
 RemainAfterExit=no
 TimeoutStartSec=1h
 ExecStart=/usr/sbin/bios-update.sh /tmp/images/%i
+ExecStopPost=/usr/bin/obmc-flash-bmc rebootguarddisable
 
 [Install]
 WantedBy=multi-user.target

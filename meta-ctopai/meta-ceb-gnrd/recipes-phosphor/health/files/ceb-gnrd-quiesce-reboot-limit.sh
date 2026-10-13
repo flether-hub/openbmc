@@ -18,9 +18,11 @@ FILE=$STATE/quiesce-reboots
 LIMIT=1
 
 sel_add() {
+    # Management Subsystem Health: controller access degraded (42-3, 0x28/1).
+    # No SDR object is claimed for this software health event (sensor 0xff).
     busctl --system call xyz.openbmc_project.Logging.IPMI /xyz/openbmc_project/Logging/IPMI \
-        xyz.openbmc_project.Logging.IPMI IpmiSelAdd ssaybq "$1" /xyz/openbmc_project/state/bmc0 \
-        3 0x00 0xFF 0xFF true 0x0020 >/dev/null 2>&1 || true
+        xyz.openbmc_project.Logging.IPMI IpmiSelAddPlatform syyyaybq \
+        "$1" 0x28 0xff 0x6f 3 0x01 0xFF 0xFF true 0x0020 >/dev/null 2>&1 || true
 }
 
 case "$1" in

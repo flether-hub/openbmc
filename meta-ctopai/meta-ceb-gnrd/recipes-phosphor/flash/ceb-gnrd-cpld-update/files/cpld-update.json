@@ -1,6 +1,8 @@
 {
   "running_persist_bit_confirmed": true,
   "confirmation_reference": "2026-10-12: board owner confirmed persist_bit=1 for INS_ZQ6_CPLD_V3",
+  "golden_persist_bit_confirmed": true,
+  "golden_confirmation_reference": "2026-10-13: board owner confirmed persist_bit=1 for the Golden design",
   "approved_feature_codes": [
     "FFDD66BB22FFFFFFA2FFFFFFFFFFFFFF9368"
   ]

@@ -16,7 +16,7 @@ S = "${UNPACKDIR}"
 SYSTEMD_SERVICE:${PN} = "ceb-gnrd-power-button-log.service"
 SYSTEMD_AUTO_ENABLE = "enable"
 
-RDEPENDS:${PN} = "libgpiod-tools util-linux systemd"
+RDEPENDS:${PN} = "libgpiod-tools util-linux systemd phosphor-sel-logger"
 
 do_install() {
     install -d ${D}${systemd_system_unitdir} ${D}${libexecdir}

@@ -8,4 +8,7 @@
 PACKAGECONFIG:append:ceb-gnrd = " auto-reboot-on-bmc-quiesce"
 
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
-SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-recognize-clean-watchdog-reboots.patch"
+SRC_URI:append:ceb-gnrd = " \
+    file://0001-ceb-gnrd-recognize-clean-watchdog-reboots.patch \
+    file://0002-ceb-gnrd-block-bmc-reboot-during-host-flash.patch \
+    "

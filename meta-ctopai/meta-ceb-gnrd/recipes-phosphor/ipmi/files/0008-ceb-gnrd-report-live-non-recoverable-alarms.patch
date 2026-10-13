@@ -1,0 +1,201 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] ipmi: report live UNR alarm, event support and recovery
+
+Read the board NonRecoverable alarm in Get Sensor Reading and Event
+Status, subscribe to its assertion/deassertion signals, and advertise
+the same event offset in Event Enable and SDR support masks.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+--- a/dbus-sdr/sensorcommands.cpp
++++ b/dbus-sdr/sensorcommands.cpp
+@@ -207,48 +207,43 @@
+     std::string, boost::container::flat_map<std::string, std::optional<bool>>>
+     thresholdDeassertMap;
+ 
++static constexpr const char* nonRecoverableThresholdInterface =
++    "com.ctopai.CebGnrd.Threshold.NonRecoverable";
++
++static void recordThresholdChange(sdbusplus::message_t& message)
++{
++    boost::container::flat_map<std::string, std::variant<bool, double>> values;
++    message.read(std::string(), values);
++    for (const auto& [name, data] : values)
++    {
++        if (name.find("Alarm") == std::string::npos)
++        {
++            continue;
++        }
++        const auto* asserted = std::get_if<bool>(&data);
++        if (asserted == nullptr)
++        {
++            continue;
++        }
++        auto& previous = thresholdDeassertMap[message.get_path()][name];
++        // Deassertion is latched only after this process saw an assertion.
++        if (*asserted || previous.has_value())
++        {
++            previous = *asserted;
++        }
++    }
++}
++
+ static sdbusplus::match thresholdChanged(
+     *getSdBus(),
+     "type='signal',member='PropertiesChanged',interface='org.freedesktop.DBus."
+     "Properties',arg0namespace='xyz.openbmc_project.Sensor.Threshold'",
+-    [](sdbusplus::message_t& m) {
+-        boost::container::flat_map<std::string, std::variant<bool, double>>
+-            values;
+-        m.read(std::string(), values);
+-
+-        auto findAssert =
+-            std::find_if(values.begin(), values.end(), [](const auto& pair) {
+-                return pair.first.find("Alarm") != std::string::npos;
+-            });
+-        if (findAssert != values.end())
+-        {
+-            auto ptr = std::get_if<bool>(&(findAssert->second));
+-            if (ptr == nullptr)
+-            {
+-                lg2::error("thresholdChanged: Assert non bool");
+-                return;
+-            }
+-            if (*ptr)
+-            {
+-                lg2::info(
+-                    "thresholdChanged: Assert, sensor path: {SENSOR_PATH}",
+-                    "SENSOR_PATH", m.get_path());
+-                thresholdDeassertMap[m.get_path()][findAssert->first] = *ptr;
+-            }
+-            else
+-            {
+-                auto& value =
+-                    thresholdDeassertMap[m.get_path()][findAssert->first];
+-                if (value)
+-                {
+-                    lg2::info(
+-                        "thresholdChanged: deassert, sensor path: {SENSOR_PATH}",
+-                        "SENSOR_PATH", m.get_path());
+-                    value = *ptr;
+-                }
+-            }
+-        }
+-    });
++    recordThresholdChange);
++static sdbusplus::match nonRecoverableChanged(
++    *getSdBus(),
++    "type='signal',member='PropertiesChanged',interface='org.freedesktop.DBus."
++    "Properties',arg0='com.ctopai.CebGnrd.Threshold.NonRecoverable'",
++    recordThresholdChange);
+ 
+ namespace sensor
+ {
+@@ -1051,6 +1046,18 @@
+                 thresholds |=
+                     static_cast<uint8_t>(IPMISensorReadingByte3::lowerCritical);
+             }
++        }
++    }
++
++    auto nonRecoverable = sensorMap.find(nonRecoverableThresholdInterface);
++    if (nonRecoverable != sensorMap.end())
++    {
++        const auto alarm = nonRecoverable->second.find("NonRecoverableAlarmHigh");
++        if (alarm != nonRecoverable->second.end() && std::get<bool>(alarm->second))
++        {
++            thresholds |= static_cast<uint8_t>(
++                IPMISensorReadingByte3::upperNonRecoverable);
++            thresholdDeassertMap[path]["NonRecoverableAlarmHigh"] = true;
+         }
+     }
+ 
+@@ -1492,11 +1499,15 @@
+ 
+     auto warningInterface = sensorMap.find(SensorThresholdWarning::interface);
+     auto criticalInterface = sensorMap.find(SensorThresholdCritical::interface);
++    auto nonRecoverable = sensorMap.find(nonRecoverableThresholdInterface);
+     if ((warningInterface != sensorMap.end()) ||
+-        (criticalInterface != sensorMap.end()))
++        (criticalInterface != sensorMap.end()) ||
++        (nonRecoverable != sensorMap.end()))
+     {
+         enabled = static_cast<uint8_t>(
+             IPMISensorEventEnableByte2::sensorScanningEnable);
++        enabled |= static_cast<uint8_t>(
++            IPMISensorEventEnableByte2::eventMessagesEnable);
+         if (warningInterface != sensorMap.end())
+         {
+             auto& warningMap = warningInterface->second;
+@@ -1569,6 +1580,20 @@
+                             lowerCriticalGoingHigh);
+                 }
+             }
++        }
++    }
++
++    if (nonRecoverable != sensorMap.end())
++    {
++        const auto high = nonRecoverable->second.find("NonRecoverableHigh");
++        if (high != nonRecoverable->second.end() &&
++            std::isfinite(std::visit(VariantToDoubleVisitor(), high->second)))
++        {
++            assertionEnabledMsb |= static_cast<uint8_t>(
++                IPMISensorEventEnableThresholds::upperNonRecoverableGoingHigh);
++            // SEL uses offset 0x0b for both directions, with its deassert bit.
++            deassertionEnabledMsb |= static_cast<uint8_t>(
++                IPMISensorEventEnableThresholds::upperNonRecoverableGoingHigh);
+         }
+     }
+ 
+@@ -1773,6 +1798,26 @@
+         }
+     }
+ 
++    auto nonRecoverable = sensorMap.find(nonRecoverableThresholdInterface);
++    if (nonRecoverable != sensorMap.end())
++    {
++        sensorEventStatus |= static_cast<uint8_t>(
++            IPMISensorEventEnableByte2::eventMessagesEnable);
++        const auto high = nonRecoverable->second.find("NonRecoverableAlarmHigh");
++        if (high != nonRecoverable->second.end() && std::get<bool>(high->second))
++        {
++            assertions.set(static_cast<size_t>(
++                IPMIGetSensorEventEnableThresholds::upperNonRecoverableGoingHigh));
++            thresholdDeassertMap[path]["NonRecoverableAlarmHigh"] = true;
++        }
++        const auto previous = thresholdDeassertMap[path]["NonRecoverableAlarmHigh"];
++        if (previous.has_value() && !*previous)
++        {
++            deassertions.set(static_cast<size_t>(
++                IPMIGetSensorEventEnableThresholds::upperNonRecoverableGoingHigh));
++        }
++    }
++
+     return ipmi::responseSuccess(sensorEventStatus, assertions, deassertions);
+ }
+ 
+@@ -1955,6 +2000,12 @@
+     {
+         record.body.upperNonrecoverableThreshold =
+             *thresholdData.nonRecoverableHigh;
++        record.body.supportedAssertions[1] |= static_cast<uint8_t>(
++            IPMISensorEventEnableThresholds::upperNonRecoverableGoingHigh);
++        record.body.supportedDeassertions[1] |= static_cast<uint8_t>(
++            IPMISensorEventEnableThresholds::upperNonRecoverableGoingHigh);
++        record.body.supportedDeassertions[1] |= static_cast<uint8_t>(
++            IPMISensorEventEnableThresholds::nonRecoverableThreshold);
+         record.body.discreteReadingSettingMask[0] |= static_cast<uint8_t>(
+             IPMISensorReadingByte3::upperNonRecoverable);
+     }
+@@ -1998,6 +2049,10 @@
+     // everything that is readable is settable
+     record.body.discreteReadingSettingMask[1] =
+         record.body.discreteReadingSettingMask[0];
++    // The board's private UNR property is read-only; never advertise it as
++    // writable through Set Sensor Thresholds, which cannot change it.
++    record.body.discreteReadingSettingMask[1] &= ~static_cast<uint8_t>(
++        IPMISensorReadingByte3::upperNonRecoverable);
+     return true;
+ }
+ 

@@ -5,6 +5,7 @@ Wants=xyz.openbmc_project.EntityManager.service
 Before=phosphor-pid-control.service
 
 [Service]
+SyslogLevelPrefix=yes
 Type=notify
 NotifyAccess=main
 WatchdogSec=60

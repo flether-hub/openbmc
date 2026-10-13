@@ -1,0 +1,171 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] update: share reboot protection across activations and programmers
+
+Keep one shared flock reference per activation and programmer. Only a final
+release may remove the global reboot guard. This also protects BIOS shells
+that outlive a software updater restart. Reconcile serialized drop-ins with
+systemd immediately, and make repeated guard enable operations idempotent.
+
+Upstream-Status: Inappropriate [CEB-GNRD update policy]
+
+diff --git a/bmc/activation.hpp b/bmc/activation.hpp
+--- a/bmc/activation.hpp
++++ b/bmc/activation.hpp
+@@ -131,18 +131,9 @@
+      *  @param[in] bus    - The Dbus bus object
+      *  @param[in] path   - The Dbus object path
+      */
+-    ActivationBlocksTransition(sdbusplus::bus_t& bus, const std::string& path) :
+-        ActivationBlocksTransitionInherit(bus, path.c_str(),
+-                                          action::emit_interface_added),
+-        bus(bus)
+-    {
+-        enableRebootGuard();
+-    }
+-
+-    ~ActivationBlocksTransition() override
+-    {
+-        disableRebootGuard();
+-    }
++    ActivationBlocksTransition(sdbusplus::bus_t& bus, const std::string& path);
++
++    ~ActivationBlocksTransition() override;
+ 
+     ActivationBlocksTransition(const ActivationBlocksTransition&) = delete;
+     ActivationBlocksTransition& operator=(const ActivationBlocksTransition&) =
+@@ -153,6 +144,7 @@
+ 
+   private:
+     sdbusplus::bus_t& bus;
++    int rebootGuardFd = -1;
+ 
+     /** @brief Enables a Guard that blocks any BMC reboot commands */
+     void enableRebootGuard();
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -11,6 +11,10 @@
+ #include <phosphor-logging/elog.hpp>
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/exception.hpp>
++#include <fcntl.h>
++#include <sys/file.h>
++#include <unistd.h>
++#include <stdexcept>
+ #include <xyz/openbmc_project/Common/error.hpp>
+ #include <xyz/openbmc_project/Software/Version/error.hpp>
+ 
+@@ -344,6 +348,57 @@
+ }
+ #endif
+ 
++// Shared descriptors are cross-process references. A failed second
++// activation releases only its reference; the final release removes the guard.
++ActivationBlocksTransition::ActivationBlocksTransition(
++    sdbusplus::bus_t& bus, const std::string& path) :
++    ActivationBlocksTransitionInherit(bus, path.c_str(),
++                                      action::emit_interface_added),
++    bus(bus)
++{
++    rebootGuardFd = open("/run/lock/ceb-gnrd-reboot-guard.lock",
++                         O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
++    if (rebootGuardFd < 0)
++    {
++        throw std::runtime_error("Cannot open the firmware reboot guard");
++    }
++    if (flock(rebootGuardFd, LOCK_SH) != 0)
++    {
++        close(rebootGuardFd);
++        rebootGuardFd = -1;
++        throw std::runtime_error("Cannot acquire the firmware reboot guard");
++    }
++    try
++    {
++        enableRebootGuard();
++    }
++    catch (...)
++    {
++        close(rebootGuardFd);
++        rebootGuardFd = -1;
++        throw;
++    }
++}
++
++ActivationBlocksTransition::~ActivationBlocksTransition()
++{
++    // Never explicitly unlock a descriptor shared with another process.
++    // Closing releases this object's reference only.
++    if (rebootGuardFd >= 0)
++    {
++        close(rebootGuardFd);
++        rebootGuardFd = -1;
++    }
++    try
++    {
++        disableRebootGuard();
++    }
++    catch (const std::exception& e)
++    {
++        error("Unable to reconcile firmware reboot guard: {ERROR}", "ERROR", e.what());
++    }
++}
++
+ void ActivationBlocksTransition::enableRebootGuard()
+ {
+     info("BMC image activating - BMC reboots are disabled.");
+@@ -356,7 +411,7 @@
+ 
+ void ActivationBlocksTransition::disableRebootGuard()
+ {
+-    info("BMC activation has ended - BMC reboots are re-enabled.");
++    info("Firmware reboot guard reference released; reconciling protection.");
+ 
+     auto method = bus.new_method_call(SYSTEMD_BUSNAME, SYSTEMD_PATH,
+                                       SYSTEMD_INTERFACE, "StartUnit");
+diff --git a/bmc/obmc-flash-bmc b/bmc/obmc-flash-bmc
+--- a/bmc/obmc-flash-bmc
++++ b/bmc/obmc-flash-bmc
+@@ -431,10 +431,16 @@
+     file="reboot-guard.conf"
+     units=("reboot" "poweroff" "halt")
+ 
++    # Serialize drop-in publication/removal independently of the owner lock.
++    # Owners already hold a shared reference before requesting this operation.
++    mkdir -p /run/lock
++    exec 200>/run/lock/ceb-gnrd-reboot-guard-mutation.lock
++    flock 200
+     for unit in "${units[@]}"; do
+         mkdir -p ${dir}"${unit}".target.d
+-        echo -e "[Unit]\nRefuseManualStart=yes" >> ${dir}"${unit}".target.d/${file}
++        printf '[Unit]\nRefuseManualStart=yes\n' > ${dir}"${unit}".target.d/${file}
+     done
++    systemctl daemon-reload
+ }
+ 
+ #TODO: Replace the implementation with systemd-inhibitors lock
+@@ -444,9 +450,24 @@
+     file="reboot-guard.conf"
+     units=("reboot" "poweroff" "halt")
+ 
++    mkdir -p /run/lock
++    exec 200>/run/lock/ceb-gnrd-reboot-guard-mutation.lock
++    flock 200
++    exec 201>/run/lock/ceb-gnrd-reboot-guard.lock
++    # Another activation, BIOS shell or CPLD job still owns a reference.
++    # A rejected activation must never remove that owner's reboot guard.
++    flock -n 201 || return 0
+     for unit in "${units[@]}"; do
+-        rm -rf ${dir}"${unit}".target.d/${file}
++        rm -f ${dir}"${unit}".target.d/${file}
+     done
++    if ! systemctl daemon-reload 2>/dev/null; then
++        # ExecStopPost also runs during a normal whole-BMC shutdown, where
++        # systemd may refuse reloads. All drop-ins are already removed.
++        if [ "$(systemctl is-system-running 2>/dev/null || true)" != stopping ]; then
++            echo "Unable to reload systemd after removing the firmware reboot guard" >&2
++            return 1
++        fi
++    fi
+ }
+ 
+ # Create a copy in the alt mtd

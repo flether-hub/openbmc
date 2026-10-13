@@ -11,6 +11,7 @@ readonly HOST_OFF_STABLE_S=3
 readonly FORCE_OFF_PULSE_S=9
 FLASH_SELECT_PID=""
 FLASH_OWNERSHIP_SELECTED=0
+REBOOT_GUARD_HELD=0
 BIOS_SPI_DEVICE=""
 readonly BIOS_SPI_COMPATIBLE="ctopai,ceb-gnrd-host-bios"
 
@@ -335,11 +336,25 @@ cleanup() {
         kill "$FLASH_SELECT_PID" 2>/dev/null || true
         wait "$FLASH_SELECT_PID" 2>/dev/null || true
     fi
+    if (( REBOOT_GUARD_HELD )); then
+        # The GPIO child inherited this reference, so release after it exits.
+        # Close only our own descriptor; another activation may still own one.
+        exec 6>&-
+        REBOOT_GUARD_HELD=0
+        /usr/bin/obmc-flash-bmc rebootguarddisable || result=1
+    fi
     exit "$result"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# This reference outlives a restart of the software updater daemon. The
+# service's ExecStopPost reconciles the guard after unexpected shell exits.
+exec 6>/run/lock/ceb-gnrd-reboot-guard.lock
+flock -s 6
+REBOOT_GUARD_HELD=1
+/usr/bin/obmc-flash-bmc rebootguardenable
 
 echo "BIOS update started at $(date); host is confirmed off."
 echo "Selecting BMC ownership of BIOS flash via $FLASH_SELECT_GPIO"

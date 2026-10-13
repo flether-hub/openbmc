@@ -49,6 +49,16 @@ from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, m
 
 LOG = logging.getLogger("ceb-gnrd-fan-settings")
 
+
+class JournalFormatter(logging.Formatter):
+    """Keep each Python record's actual priority in the systemd journal."""
+    def format(self, record):
+        priority = (2 if record.levelno >= logging.CRITICAL else
+                    3 if record.levelno >= logging.ERROR else
+                    4 if record.levelno >= logging.WARNING else
+                    6 if record.levelno >= logging.INFO else 7)
+        return "<%d>%s" % (priority, super().format(record))
+
 BUS_NAME = "com.ctopai.CebGnrd.FanSettings"
 # The object path stays under /xyz: the bmcweb D-Bus REST API (used by the web page)
 # only serves object paths that start with /xyz or /org.
@@ -543,6 +553,8 @@ async def watchdog_task(interval=15):
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                         format="%(levelname)s %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(JournalFormatter("%(levelname)s %(message)s"))
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     iface = FanSettings(bus)
     bus.export(OBJ_PATH, iface)

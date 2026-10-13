@@ -22,6 +22,8 @@ S = "${UNPACKDIR}"
 SYSTEMD_SERVICE:${PN} = "ceb-gnrd-wdt-reset-log.service ceb-gnrd-quiesce-reboot-clear.timer"
 SYSTEMD_AUTO_ENABLE = "enable"
 
+RDEPENDS:${PN} = "systemd phosphor-sel-logger"
+
 # Units that get the restart / quiesce drop-in.  The first four are upstream
 # services (none of them pings the systemd watchdog, so WatchdogSec= cannot be
 # used for them); OWN_UNITS are this layer's own services, which send

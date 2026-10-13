@@ -1,0 +1,154 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] pid: distinguish actual chassis power-off from host reset states
+
+Keep Host state changes for diagnostic settling only. Fan control and
+thermal input gating require Chassis DC power-off; a pending force-off
+or warm reset must retain the current cooling demand.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+--- a/hoststatemonitor.hpp
++++ b/hoststatemonitor.hpp
+@@ -11,12 +11,15 @@
+ #include <iostream>
+ #include <memory>
+ #include <string>
++#include <cstdint>
+ #include <variant>
+ 
+ using HostState = sdbusplus::common::xyz::openbmc_project::state::Host;
+ 
+ constexpr const char* PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties";
+ constexpr const char* HOST_STATE_PATH = "/xyz/openbmc_project/state/host0";
++constexpr const char* CHASSIS_STATE_PATH = "/xyz/openbmc_project/state/chassis0";
++constexpr const char* CHASSIS_STATE_INTERFACE = "xyz.openbmc_project.State.Chassis";
+ 
+ class HostStateMonitor
+ {
+@@ -41,7 +44,8 @@
+         return powerStatusOn;
+     }
+ 
+-    // Unknown and transitional states must retain failure checks.
++    // Only confirmed DC power-off can suppress control inputs. Host.Off is
++    // also reported during warm reset and while force-off is still pending.
+     bool isPowerOff() const
+     {
+         return powerStatusOff;
+@@ -64,7 +68,6 @@
+                                 std::chrono::seconds(60);
+         }
+         powerStatusOn = stateValue.ends_with(".Running");
+-        powerStatusOff = stateValue.ends_with(".Off");
+     }
+ 
+     std::string lastHostState;
+@@ -74,11 +77,15 @@
+ 
+     void handleStateChange(sdbusplus::message_t& message);
+     void getInitialState();
++    void getInitialChassisState();
++    void handleChassisStateChange(sdbusplus::message_t& message);
+ 
+     sdbusplus::bus_t& bus;
+     bool powerStatusOn;
+     bool powerStatusOff = false;
+     std::unique_ptr<sdbusplus::match> hostStateMatch;
++    std::unique_ptr<sdbusplus::match> chassisStateMatch;
++    std::unique_ptr<sdbusplus::match> chassisOwnerMatch;
+ };
+ 
+ // Implementation
+@@ -98,6 +105,7 @@
+     bus(bus), powerStatusOn(false), hostStateMatch(nullptr)
+ {
+     getInitialState();
++    getInitialChassisState();
+ }
+ 
+ inline void HostStateMonitor::startMonitoring()
+@@ -112,15 +120,39 @@
+             [this](sdbusplus::message_t& message) {
+                 handleStateChange(message);
+             });
++        chassisStateMatch = std::make_unique<sdbusplus::match>(
++            bus,
++            propertiesChangedNamespace(CHASSIS_STATE_PATH,
++                                       CHASSIS_STATE_INTERFACE),
++            [this](sdbusplus::message_t& message) {
++                handleChassisStateChange(message);
++            });
++        chassisOwnerMatch = std::make_unique<sdbusplus::match>(
++            bus,
++            "type='signal',sender='org.freedesktop.DBus',"
++            "interface='org.freedesktop.DBus',member='NameOwnerChanged',"
++            "arg0='xyz.openbmc_project.State.Chassis0'",
++            [this](sdbusplus::message_t& message) {
++                std::string name, oldOwner, newOwner;
++                message.read(name, oldOwner, newOwner);
++                powerStatusOff = false;
++                if (!newOwner.empty())
++                {
++                    getInitialChassisState();
++                }
++            });
+         // Subscribe before refreshing the initial state so a power
+         // change during initialization cannot be missed.
+         getInitialState();
++        getInitialChassisState();
+     }
+ }
+ 
+ inline void HostStateMonitor::stopMonitoring()
+ {
+     hostStateMatch.reset();
++    chassisStateMatch.reset();
++    chassisOwnerMatch.reset();
+ }
+ 
+ inline void HostStateMonitor::handleStateChange(sdbusplus::message_t& message)
+@@ -167,6 +199,44 @@
+     catch (const std::exception& e)
+     {
+         powerStatusOn = false;
++    }
++}
++
++inline void HostStateMonitor::handleChassisStateChange(sdbusplus::message_t& message)
++{
++    std::string interface;
++    boost::container::flat_map<std::string,
++        std::variant<std::string, bool, uint64_t>> values;
++    try
++    {
++        message.read(interface, values);
++        auto state = values.find("CurrentPowerState");
++        if (state != values.end())
++        {
++            const auto* value = std::get_if<std::string>(&state->second);
++            powerStatusOff = value != nullptr && value->ends_with(".Off");
++        }
++    }
++    catch (const std::exception&)
++    {
++        // A malformed power-state notification is not evidence of power-off.
+         powerStatusOff = false;
+     }
+ }
++
++inline void HostStateMonitor::getInitialChassisState()
++{
++    try
++    {
++        auto method = bus.new_method_call("xyz.openbmc_project.State.Chassis0",
++            CHASSIS_STATE_PATH, PROPERTIES_INTERFACE, "Get");
++        method.append(CHASSIS_STATE_INTERFACE, "CurrentPowerState");
++        auto state = bus.call(method).unpack<std::variant<std::string>>();
++        powerStatusOff = std::get<std::string>(state).ends_with(".Off");
++    }
++    catch (const std::exception&)
++    {
++        // Unknown state retains thermal input and protection checks.
++        powerStatusOff = false;
++    }
++}

@@ -1,0 +1,39 @@
+Subject: [PATCH] webui: encode event JSON arrays and clear recovered fan load errors
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+--- a/src/views/Logs/EventLogs/EventLogs.vue
++++ b/src/views/Logs/EventLogs/EventLogs.vue
+@@ -401,7 +401,7 @@
+   },
+   computed: {
+     href() {
+-      return `data:text/json;charset=utf-8,${this.exportAllLogs()}`;
++      return `data:application/json;charset=utf-8,${encodeURIComponent(this.exportAllLogs())}`;
+     },
+     filteredRows() {
+       return this.searchFilter
+@@ -503,12 +503,7 @@
+         });
+     },
+     exportAllLogs() {
+-      {
+-        return this.$store.getters['eventLog/allEvents'].map((eventLogs) => {
+-          const allEventLogsString = JSON.stringify(eventLogs);
+-          return allEventLogsString;
+-        });
+-      }
++      return JSON.stringify(this.$store.getters['eventLog/allEvents']);
+     },
+     onFilterChange({ activeFilters }) {
+       this.activeFilters = activeFilters;
+--- a/src/views/Settings/FanControl/FanControl.vue
++++ b/src/views/Settings/FanControl/FanControl.vue
+@@ -169,6 +169,7 @@
+         // [keep after reboot, then mode, duty, rpm low, rpm high for each fan]
+         const bytes = await this.callService('GetFans');
+         if (!Array.isArray(bytes) || bytes.length < 1 + 4 * fanCount) return;
++        this.loadError = false;
+         this.hasControl = true;
+         if (updateForm) this.persist = bytes[0] === 1;
+         this.fanStatus = Array.from({ length: fanCount }, (_, index) => ({

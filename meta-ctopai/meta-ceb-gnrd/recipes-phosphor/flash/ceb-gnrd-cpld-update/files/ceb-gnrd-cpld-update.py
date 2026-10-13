@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import subprocess
 import time
 
 from dbus_fast import DBusError, Message
@@ -24,6 +25,11 @@ OBJECT = '/xyz/openbmc_project/software/cpld_update'
 INTERFACE = 'com.ctopai.CebGnrd.CpldUpdate'
 RUN = Path('/run/ceb-gnrd-cpld-update')
 ACTIVE = {'WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying'}
+REBOOT_GUARD_HELPER = '/usr/bin/obmc-flash-bmc'
+
+
+def reconcile_reboot_guard(operation):
+    subprocess.run([REBOOT_GUARD_HELPER, operation], check=True, timeout=10)
 
 
 class Update(ServiceInterface):
@@ -33,6 +39,7 @@ class Update(ServiceInterface):
         self.task = None
         self.cancel_requested = False
         self.locks = []
+        self.reboot_guard_fd = None
         self.deadline = 0.0
         self.state = dict(phase='Idle', progress=0, detail='Ready', job='', bootId=boot_id())
         # Jobs belong to this service session. A restart opens a fresh upload
@@ -166,6 +173,13 @@ class Update(ServiceInterface):
         process = None
         deadline = self.deadline
         try:
+            # One shared reference per job. The helper cannot remove another
+            # BIOS/BMC owner's guard when this job finishes or is rejected.
+            self.reboot_guard_fd = os.open('/run/lock/ceb-gnrd-reboot-guard.lock',
+                                          os.O_CREAT | os.O_RDWR | os.O_CLOEXEC |
+                                          os.O_NOFOLLOW, 0o600)
+            fcntl.flock(self.reboot_guard_fd, fcntl.LOCK_SH)
+            await asyncio.to_thread(reconcile_reboot_guard, 'rebootguardenable')
             if self.cancel_requested:
                 raise asyncio.CancelledError
             if await self.updater_busy():
@@ -230,11 +244,21 @@ class Update(ServiceInterface):
             try:
                 image.unlink(missing_ok=True)
             finally:
+                if self.reboot_guard_fd is not None:
+                    os.close(self.reboot_guard_fd)
+                    self.reboot_guard_fd = None
+                    try:
+                        await asyncio.to_thread(reconcile_reboot_guard, 'rebootguarddisable')
+                    except Exception as exc:
+                        LOG.warning('Cannot reconcile CPLD reboot guard: %s', exc)
                 self.unlock()
 
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    # Recover a stale drop-in after a killed job. Active BIOS/BMC shared
+    # references make this a no-op and retain their protection.
+    await asyncio.to_thread(reconcile_reboot_guard, 'rebootguarddisable')
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     updater = Update(bus)
     bus.export(OBJECT, updater)
