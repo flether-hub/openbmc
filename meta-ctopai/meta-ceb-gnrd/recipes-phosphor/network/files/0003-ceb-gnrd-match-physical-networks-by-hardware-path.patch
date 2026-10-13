@@ -1,0 +1,34 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] network: match board physical NICs by verified hardware path
+
+Keep generated configs consistent with the boot templates and migration.
+Preserve name matches for VLAN/virtual links and retain NC-SI activation gating.
+
+Upstream-Status: Inappropriate [CEB-GNRD board integration]
+
+--- a/src/ethernet_interface.cpp
++++ b/src/ethernet_interface.cpp
+@@ -934,7 +934,22 @@
+ void EthernetInterface::writeConfigurationFile()
+ {
+     config::Parser config;
+-    config.map["Match"].emplace_back()["Name"].emplace_back(interfaceName());
++    auto& match = config.map["Match"].emplace_back();
++    // These udev ID_PATH values were verified on CEB-GNRD. Match physical
++    // controllers without depending on kernel-assigned names or boot MACs.
++    // VLANs and other virtual links still require their interface names.
++    if (!vlan && interfaceName() == "eth0")
++    {
++        match["Path"].emplace_back("platform-1e680000.ethernet");
++    }
++    else if (!vlan && interfaceName() == "eth1")
++    {
++        match["Path"].emplace_back("platform-1e670000.ethernet");
++    }
++    else
++    {
++        match["Name"].emplace_back(interfaceName());
++    }
+     {
+         auto& link = config.map["Link"].emplace_back();
+ #if PERSIST_MAC

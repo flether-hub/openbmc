@@ -1,5 +1,5 @@
 [Match]
-Name=eth1
+Path=platform-1e670000.ethernet
 
 [Link]
 # NC-SI is host-powered. Only the power/POST monitor may raise it after POST.

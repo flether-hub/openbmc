@@ -5,12 +5,8 @@
  * CEB_GNRD_ENV is concatenated into CONFIG_EXTRA_ENV_SETTINGS by
  * 0001-ceb-gnrd-board-device-tree-network-and-environment.patch.
  *
- * ethaddr / eth1addr: stable locally administered bring-up defaults for
- * ethernet0 (MAC2/RGMII) and ethernet1 (MAC3/NC-SI). Provision unique MACs
- * per physical board or concurrent simulator instance in the saved
- * environment. A valid saved environment takes precedence over defaults;
- * board_late_init fills missing MAC variables in an existing environment and
- * saves the migration once. Existing nonempty variables are preserved.
+ * ethaddr / eth1addr have no compiled board defaults and are not filled by
+ * board_late_init. Provision unique MACs in the saved environment as needed.
  * Legacy factory ipaddr/gatewayip/serverip on 192.168.0.x are migrated to
  * the compiled board defaults; custom network addresses remain unchanged.
  *
@@ -35,8 +31,6 @@
  * The files are taken from ${serverip}; names are in netupdate_kernel and
  * netupdate_rofs.
  */
-#define CEB_GNRD_DEFAULT_MAC0 "02:26:00:00:00:01"
-#define CEB_GNRD_DEFAULT_MAC1 "02:26:00:00:00:02"
 #define CEB_GNRD_NETBOOT_KERNEL "image-kernel"
 #define CEB_GNRD_NETBOOT_ROFS "image-rofs"
 #define CEB_GNRD_NETBOOT_ADDR "0x90000000"
@@ -51,8 +45,6 @@
 	"setenv ceb_netboot_saved_bootargs; fi; fi"
 
 #define CEB_GNRD_ENV	\
-	"ethaddr=" CEB_GNRD_DEFAULT_MAC0 "\0"	\
-	"eth1addr=" CEB_GNRD_DEFAULT_MAC1 "\0"	\
 	"netboot_kernel=" CEB_GNRD_NETBOOT_KERNEL "\0" \
 	"netboot_rofs=" CEB_GNRD_NETBOOT_ROFS "\0" \
 	"netboot_addr=" CEB_GNRD_NETBOOT_ADDR "\0" \

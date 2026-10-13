@@ -176,27 +176,18 @@ scp -P 2222 root@127.0.0.1:/tmp/ceb-gnrd-check.tar.gz .
 management.pcap 可比较发送给 BMC 的目标 MAC 与重启前后地址，以及 ARP/TCP 顺序。
 抓包仅用于诊断，不自动发送 ping、不修改 BMC 网络配置，也未宣称修复故障。
 
-### 固定 U-Boot 默认 MAC
+### U-Boot MAC 配置
 
-板级 `recipes-bsp/u-boot/files/ceb-gnrd-env.h` 已加入本地管理地址：
+板级 `recipes-bsp/u-boot/files/ceb-gnrd-env.h` 不再设置固定默认 MAC：
 
 | 环境变量 | 默认值 | 设备树别名 / 接口 |
 |---|---|---|
-| ethaddr | 02:26:00:00:00:01 | ethernet0 → mac1，物理 MAC2 / RGMII，Linux eth0 |
-| eth1addr | 02:26:00:00:00:02 | ethernet1 → mac2，物理 MAC3 / NC-SI，Linux eth1 |
+| ethaddr | 无编译默认值 | ethernet0 → mac1，物理 MAC2 / RGMII，Linux eth0 |
+| eth1addr | 无编译默认值 | ethernet1 → mac2，物理 MAC3 / NC-SI，Linux eth1 |
 
-用户已观察到 eth0 在 BMC reboot 后改变地址，且只需 ping 网关即可恢复 Web；
-Linux 日志显示地址从网卡寄存器读取，`fw_printenv` 显示两项变量未配置。
-这与 QEMU 网络后端保留旧 IP→MAC 映射、出站 ARP 更新映射后恢复一致。
-固定地址针对该变化来源；未修改 bmcweb，也未添加自动 ping。
-
-重新构建 U-Boot/固件后，默认值只在使用默认环境时生效。
-已有有效 Flash 环境不会自动合并新默认值；常规 BMC 更新还会保留 U-Boot。
-CEB-GNRD 的 `board_late_init()` 会在环境加载后、网卡初始化前补齐缺失的
-`ethaddr`/`eth1addr`，分别使用 `02:26:00:00:00:01` 和 `02:26:00:00:00:02`。
-只在确实补齐变量时保存环境，已有非空 MAC 和其他变量不变；保存失败会打印提示，
-本次启动仍使用补齐后的地址。此迁移需更新 U-Boot；旧启动程序可在 BMC 串口用
-`fw_setenv` 补齐这两个已确认缺失的变量后重启，不必清空整个环境。
+`board_late_init()` 不再补齐 `ethaddr` / `eth1addr`。为每块实体板卡或并行
+模拟实例配置唯一 MAC，并保存到 U-Boot 环境。已有保存值仍由 U-Boot 读取；
+移除固件默认值不会删除 Flash 中已保存的值。此修改需更新包含 U-Boot 的固件。
 
 ### MAC 地址的持久化来源
 
@@ -208,7 +199,7 @@ CEB-GNRD 使用 U-Boot 的 `ethaddr` / `eth1addr` 配置启动 MAC。
 `systemd-networkd` 启动前会清理板级 `00-bmc-eth0.network`、
 `00-bmc-eth1.network` 和 `10-bmc-eth1-ncsi.network` 中已有的 `[Link] MACAddress`。
 IP、DHCP、DNS 和静态邻居的 MAC 设置保留。升级保留 RWFS 时也执行此迁移，
-避免旧 Linux 配置覆盖清空 U-Boot 环境后恢复的默认 MAC。
+避免旧 Linux 配置覆盖 U-Boot 提供的 MAC。
 此规则只消除 Linux 配置覆盖；NC-SI 网卡自身提供的地址仍需单独核对。
 
 ### BMC Web 固件更新的分区选择
@@ -301,14 +292,10 @@ DDR 初始化变化必须更新 U-Boot/SPL，仅更新 kernel/rofs 不会修改�
 [ASPEED AST2600 DDR4-1600 x16 能力](https://www.aspeedtech.com/server_ast2600/)、
 [SK hynix 8Gb DDR4 NDJR Rev.1.4 数据手册（镜像）](https://14469692.s21i.faiusr.com/61/ABUIABA9GAAgnvPMqgYo5Pm33AY.pdf)。
 
-在当前模拟 BMC 中可直接补齐缺失变量，无需重刷整个 Flash：
+为当前模拟实例分配唯一 MAC 后，可用 `fw_setenv` 写入两项变量，并查询确认：
 
 ```sh
-# 仅用于当前已确认两项变量均未配置的模拟实例。
-fw_setenv ethaddr 02:26:00:00:00:01
-fw_setenv eth1addr 02:26:00:00:00:02
 fw_printenv ethaddr eth1addr
-reboot
 ```
 
 重启后先记录 `ip link show eth0`、`ip link show eth1`，不要先 ping，

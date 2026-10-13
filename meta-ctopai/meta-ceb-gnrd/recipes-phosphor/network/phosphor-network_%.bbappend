@@ -7,4 +7,5 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI:append:ceb-gnrd = " \
     file://0001-ceb-gnrd-preserve-ncsi-manual-activation.patch \
     file://0002-ceb-gnrd-skip-timesyncd-query-when-ntp-disabled.patch \
+    file://0003-ceb-gnrd-match-physical-networks-by-hardware-path.patch \
     "

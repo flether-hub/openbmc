@@ -1,4 +1,4 @@
-Subject: [PATCH] ceb-gnrd: migrate missing MAC defaults before NIC probe
+Subject: [PATCH] ceb-gnrd: migrate network boot defaults before NIC probe
 
 Upstream-Status: Inappropriate [CEB-GNRD environment migration]
 
@@ -12,14 +12,14 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
  #include <asm/io.h>
  #include <asm/arch/aspeed_scu_info.h>
  #include <fdt_support.h>
-@@ -165,3 +166,61 @@
+@@ -165,3 +166,59 @@
  	return ret;
  }
  #endif
 +
 +#if defined(CEB_GNRD_ENV) && !defined(CONFIG_SPL_BUILD)
 +/* A valid saved environment replaces the whole compiled default environment.
-+ * Migrate missing MAC and network boot defaults before NIC initialization.
++ * Migrate network boot defaults before NIC initialization.
 + * Replace only legacy factory network addresses; preserve custom addresses,
 + * bootcmd and other existing nonempty variables.
 + */
@@ -29,8 +29,6 @@ Upstream-Status: Inappropriate [CEB-GNRD environment migration]
 +		const char *name;
 +		const char *address;
 +	} defaults[] = {
-+		{ "ethaddr", CEB_GNRD_DEFAULT_MAC0 },
-+		{ "eth1addr", CEB_GNRD_DEFAULT_MAC1 },
 +		{ "ipaddr", __stringify(CONFIG_IPADDR) },
 +		{ "gatewayip", __stringify(CONFIG_GATEWAYIP) },
 +		{ "serverip", __stringify(CONFIG_SERVERIP) },

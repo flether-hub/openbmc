@@ -1,5 +1,5 @@
 [Match]
-Name=eth0
+Path=platform-1e680000.ethernet
 
 [Network]
 DHCP=ipv4
