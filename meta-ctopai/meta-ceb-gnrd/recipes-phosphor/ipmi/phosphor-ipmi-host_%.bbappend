@@ -28,10 +28,12 @@ LDFLAGS:append = " -lgpiod"
 PACKAGECONFIG:append = " dynamic-sensors hybrid-sensors"
 
 # Delay ipmid until the first D-Bus sensor exists (see the drop-in).
-SRC_URI:append:ceb-gnrd = " file://10-ceb-gnrd-wait-sensors.conf"
+SRC_URI:append:ceb-gnrd = " file://10-ceb-gnrd-wait-sensors.conf file://ceb-gnrd-wait-sensors.sh"
 do_install:append:ceb-gnrd() {
     install -d ${D}${systemd_system_unitdir}/phosphor-ipmi-host.service.d
     install -m 0644 ${UNPACKDIR}/10-ceb-gnrd-wait-sensors.conf \
         ${D}${systemd_system_unitdir}/phosphor-ipmi-host.service.d/10-ceb-gnrd-wait-sensors.conf
+    install -D -m 0755 ${UNPACKDIR}/ceb-gnrd-wait-sensors.sh \
+        ${D}${libexecdir}/ceb-gnrd-wait-sensors.sh
 }
-FILES:${PN}:append:ceb-gnrd = " ${systemd_system_unitdir}/phosphor-ipmi-host.service.d"
+FILES:${PN}:append:ceb-gnrd = " ${systemd_system_unitdir}/phosphor-ipmi-host.service.d ${libexecdir}/ceb-gnrd-wait-sensors.sh"

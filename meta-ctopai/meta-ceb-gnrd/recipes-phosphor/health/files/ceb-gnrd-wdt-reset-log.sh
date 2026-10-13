@@ -37,6 +37,13 @@ case "$1" in
         sync
         ;;
     start)
+        if [ -r "$BOOT_CLEAN" ]; then
+            # A service restart is not another BMC boot. Keep the original
+            # decision and consume any marker written by its preceding stop.
+            rm -f "$MARK"
+            echo "BMC reset cause already recorded for this boot; keeping the original decision"
+            exit 0
+        fi
         status=0
         [ -r "$STATUS" ] && status=$(cat "$STATUS")
         clean=0

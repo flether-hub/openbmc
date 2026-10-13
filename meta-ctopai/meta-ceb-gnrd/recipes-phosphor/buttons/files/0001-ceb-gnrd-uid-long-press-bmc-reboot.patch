@@ -1,0 +1,181 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] buttons: reboot BMC after a physical UID hold of five seconds
+
+Use the existing UID GPIO owner and its monotonic sd-event loop. A short
+press retains the standard Released signal and identify-LED handler. A
+continuous five-second hold requests an orderly BMC reboot once, consumes
+the long release, and does not drive the host power/reset outputs. Recheck
+the input before reboot and ignore a release already held at daemon startup.
+Base: phosphor-buttons 9827866ef17c13bb9de5f492639a02d4a8e58f88.
+
+Upstream-Status: Inappropriate [CEB-GNRD UID button policy]
+
+diff --git a/inc/id_button.hpp b/inc/id_button.hpp
+--- a/inc/id_button.hpp
++++ b/inc/id_button.hpp
+@@ -25,6 +25,8 @@
+ 
+ #include <unistd.h>
+ 
++#include <cstdint>
++
+ #include <phosphor-logging/elog-errors.hpp>
+ 
+ static constexpr auto ID_BUTTON = "ID_BTN";
+@@ -47,6 +49,7 @@
+ 
+     ~IDButton()
+     {
++        cancelLongPressTimer();
+         deInit();
+     }
+ 
+@@ -62,4 +65,16 @@
+     }
+ 
+     void handleEvent(sd_event_source* es, int fd, uint32_t revents) override;
++
++  private:
++    static constexpr uint64_t longPressUsec = 5ULL * 1000000;
++    sd_event_source* longPressTimer = nullptr;
++    int pressedFd = -1;
++    bool buttonPressed = false;
++    bool rebootRequested = false;
++
++    void startLongPressTimer(int fd);
++    void cancelLongPressTimer();
++    static int longPressExpired(sd_event_source* source, uint64_t usec,
++                                void* userdata);
+ };
+diff --git a/src/id_button.cpp b/src/id_button.cpp
+--- a/src/id_button.cpp
++++ b/src/id_button.cpp
+@@ -15,6 +15,11 @@
+ */
+ 
+ #include "id_button.hpp"
++
++#include <phosphor-logging/lg2.hpp>
++
++#include <exception>
++#include <variant>
+ 
+ // add the button iface class to registry
+ static ButtonIFRegister<IDButton> buttonRegister;
+@@ -39,7 +44,7 @@
+     }
+ 
+     n = ::read(fd, &buf, sizeof(buf));
+-    if (n < 0)
++    if (n != 1)
+     {
+         phosphor::logging::log<phosphor::logging::level::ERR>(
+             (getFormFactorType() + " : read error!").c_str());
+@@ -50,14 +55,104 @@
+     {
+         phosphor::logging::log<phosphor::logging::level::DEBUG>(
+             (getFormFactorType() + " : pressed").c_str());
+-        // emit pressed signal
++        if (buttonPressed)
++        {
++            return;
++        }
++        buttonPressed = true;
++        rebootRequested = false;
++        startLongPressTimer(fd);
++        // Keep the standard Pressed signal and short-release behavior.
+         pressed();
+     }
+     else
+     {
+         phosphor::logging::log<phosphor::logging::level::DEBUG>(
+             (getFormFactorType() + " : released").c_str());
+-        // released
+-        released();
++        const bool wasPressed = buttonPressed;
++        buttonPressed = false;
++        pressedFd = -1;
++        cancelLongPressTimer();
++        // A long press is consumed by BMC reset, not chassis identify.
++        // Ignore a release of a button already held when this daemon started.
++        if (wasPressed && !rebootRequested)
++        {
++            released();
++        }
++        rebootRequested = false;
+     }
+ }
++
++void IDButton::cancelLongPressTimer()
++{
++    longPressTimer = sd_event_source_unref(longPressTimer);
++}
++
++void IDButton::startLongPressTimer(int fd)
++{
++    cancelLongPressTimer();
++    pressedFd = fd;
++    uint64_t now = 0;
++    int rc = sd_event_now(event.get(), CLOCK_MONOTONIC, &now);
++    if (rc >= 0)
++    {
++        rc = sd_event_add_time(event.get(), &longPressTimer, CLOCK_MONOTONIC,
++                               now + longPressUsec, 1000, longPressExpired, this);
++    }
++    if (rc >= 0)
++    {
++        rc = sd_event_source_set_enabled(longPressTimer, SD_EVENT_ONESHOT);
++    }
++    if (rc < 0)
++    {
++        cancelLongPressTimer();
++        lg2::error("UID long-press timer could not be armed: {ERRNO}", "ERRNO",
++                   -rc);
++    }
++}
++
++int IDButton::longPressExpired(sd_event_source* /* source */,
++                               uint64_t /* usec */, void* userdata)
++{
++    auto* button = static_cast<IDButton*>(userdata);
++    if (!button->buttonPressed || button->rebootRequested)
++    {
++        return 0;
++    }
++    // Recheck the already-owned GPIO value; a queued release must not reset
++    // the BMC. No second GPIO request or change to the host power lines.
++    char level = '1';
++    if (::pread(button->pressedFd, &level, sizeof(level), 0) != 1)
++    {
++        lg2::error("UID long-press GPIO recheck failed; BMC reboot skipped");
++        return 0;
++    }
++    if (level != '0')
++    {
++        // Reading sysfs can acknowledge a queued release edge. Preserve its
++        // normal identify action here; handleEvent ignores duplicate releases.
++        button->buttonPressed = false;
++        button->pressedFd = -1;
++        button->released();
++        return 0;
++    }
++    button->rebootRequested = true;
++    lg2::info("UID button held for 5 seconds; requesting BMC reboot");
++    try
++    {
++        auto request = button->bus.new_method_call(
++            "xyz.openbmc_project.State.BMC", "/xyz/openbmc_project/state/bmc0",
++            "org.freedesktop.DBus.Properties", "Set");
++        request.append("xyz.openbmc_project.State.BMC", "RequestedBMCTransition",
++                       std::variant<std::string>{
++                           "xyz.openbmc_project.State.BMC.Transition.Reboot"});
++        auto reply = button->bus.call(request);
++        (void)reply;
++    }
++    catch (const std::exception& e)
++    {
++        lg2::error("UID long press could not request BMC reboot: {ERROR}",
++                   "ERROR", e);
++    }
++    return 0;
++}

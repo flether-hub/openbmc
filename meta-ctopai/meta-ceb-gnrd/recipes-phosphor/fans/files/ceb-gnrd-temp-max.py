@@ -579,7 +579,7 @@ async def main():
     default_assoc = []
     was_on = False
     last_rescan = -PECI_RESCAN_SECONDS
-    missing_groups = None
+    missing_groups = set()
     while True:
         on = await host_is_on(bus)
         now = time.monotonic()
@@ -605,16 +605,28 @@ async def main():
         # return an unready GetTemp offset, or hwmon may still hold a cached
         # sample. Neither is a new live host temperature while chassis is off.
         readings = await asyncio.to_thread(read_values, list(sources)) if on else {}
+        # Sampling can overlap a shutdown. Confirm power again before
+        # reporting missing sources or publishing a protection substitute.
+        if on:
+            on = await host_is_on(bus)
+            if not on:
+                readings = {}
 
-        missing = tuple(group for group in sensors if on and not any(
+        missing = set(group for group in sensors if on and not any(
             g == group and path in readings and math.isfinite(readings[path])
             for path, (g, _) in sources.items()))
-        if missing != missing_groups:
-            if missing:
+        if not on:
+            # Power-off is expected, not a temperature recovery/failure.
+            missing_groups.clear()
+        else:
+            newly_missing = missing - missing_groups
+            recovered = missing_groups - missing
+            if newly_missing:
                 LOG.warning("No readable PECI temperature for %s; using %.1f C fan failsafe",
-                            ", ".join(missing), FAILSAFE_TEMP)
-            elif missing_groups:
-                LOG.info("PECI temperature sources recovered or host powered off")
+                            ", ".join(sorted(newly_missing)), FAILSAFE_TEMP)
+            if recovered:
+                LOG.info("PECI temperature sources recovered for %s",
+                         ", ".join(sorted(recovered)))
             missing_groups = missing
         for group, sensor in sensors.items():
             values = [readings[path] for path, (g, _) in sources.items()

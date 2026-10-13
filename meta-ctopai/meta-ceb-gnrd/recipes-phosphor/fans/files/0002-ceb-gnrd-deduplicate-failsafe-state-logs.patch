@@ -1,0 +1,196 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] pid: separate sensor diagnostics from zone failsafe transitions
+
+A healthy CPU sensor must not reset the zone logger while DIMM is still
+unavailable. Deduplicate sensor failure reasons independently and let the
+zone's actual failed-input set drive the aggregate recovery message.
+Confirmed Host Off skips thermal and tach failure checks and clears cached
+failure diagnostics. Running, transitional and unknown states retain checks.
+Base: phosphor-pid-control f6d4cb9e5ddaeb14fbd14f9d5730fd71afe8efe2 plus board patch 0001.
+
+Upstream-Status: Inappropriate [CEB-GNRD host-powered fan policy]
+
+diff --git a/failsafeloggers/failsafe_logger.hpp b/failsafeloggers/failsafe_logger.hpp
+--- a/failsafeloggers/failsafe_logger.hpp
++++ b/failsafeloggers/failsafe_logger.hpp
+@@ -4,6 +4,7 @@
+ #include <cstdint>
+ #include <deque>
+ #include <string>
++#include <unordered_map>
+ #include <unordered_set>
+ 
+ namespace pid_control
+@@ -42,6 +43,18 @@
+                            const std::string& location,
+                            const std::string& reason);
+ 
++    // Sensor diagnostics do not change the aggregate zone state.
++    void outputSensorLog(int64_t zoneId, bool failed,
++                         const std::string& location, const std::string& reason);
++
++    void clearLogs()
++    {
++        _currentFailsafeState = false;
++        _logsInCurrentState.clear();
++        _sensorReasons.clear();
++        _logTimestamps.clear();
++    }
++
+   private:
+     // The maximum number of log entries to be output within 1 second.
+     size_t _logMaxCountPerSecond;
+@@ -51,6 +64,7 @@
+     std::deque<size_t> _logTimestamps;
+     // The logs already encountered in the current state.
+     std::unordered_set<std::string> _logsInCurrentState;
++    std::unordered_map<std::string, std::string> _sensorReasons;
+ };
+ 
+ } // namespace pid_control
+diff --git a/failsafeloggers/failsafe_logger.cpp b/failsafeloggers/failsafe_logger.cpp
+--- a/failsafeloggers/failsafe_logger.cpp
++++ b/failsafeloggers/failsafe_logger.cpp
+@@ -60,4 +60,37 @@
+     _logTimestamps.push_back(nowMs);
+ }
+ 
++void FailsafeLogger::outputSensorLog(
++    const int64_t zoneId, const bool failed, const std::string& location,
++    const std::string& reason)
++{
++    if (!failed)
++    {
++        // Only processSensorInputs knows when all zone inputs have recovered.
++        _sensorReasons.erase(location);
++        return;
++    }
++    auto previous = _sensorReasons.find(location);
++    if (previous != _sensorReasons.end() && previous->second == reason)
++    {
++        return;
++    }
++    const auto now = std::chrono::high_resolution_clock::now();
++    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
++                           now.time_since_epoch()).count();
++    while (!_logTimestamps.empty() &&
++           static_cast<uint64_t>(nowMs) - _logTimestamps.front() >= 1000)
++    {
++        _logTimestamps.pop_front();
++    }
++    if (_logTimestamps.size() >= _logMaxCountPerSecond)
++    {
++        return;
++    }
++    _sensorReasons[location] = reason;
++    std::cerr << "Zone `" << zoneId << "` sensor `" << location << "`: "
++              << reason << "\n";
++    _logTimestamps.push_back(nowMs);
++}
++
+ } // namespace pid_control
+diff --git a/failsafeloggers/failsafe_logger_utility.hpp b/failsafeloggers/failsafe_logger_utility.hpp
+--- a/failsafeloggers/failsafe_logger_utility.hpp
++++ b/failsafeloggers/failsafe_logger_utility.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "failsafeloggers/failsafe_logger.hpp"
++#include "hoststatemonitor.hpp"
+ 
+ #include <cstdint>
+ #include <memory>
+@@ -31,8 +32,13 @@
+     {
+         if (zoneIdToFailsafeLogger.count(zoneId))
+         {
+-            zoneIdToFailsafeLogger[zoneId]->outputFailsafeLog(
+-                zoneId, newFailsafeState, location, reason);
++            auto& logger = zoneIdToFailsafeLogger[zoneId];
++            if (HostStateMonitor::getInstance().isPowerOff())
++            {
++                logger->clearLogs();
++                continue;
++            }
++            logger->outputSensorLog(zoneId, newFailsafeState, location, reason);
+         }
+     }
+ }
+@@ -46,8 +52,13 @@
+ {
+     if (zoneIdToFailsafeLogger.count(zoneId))
+     {
+-        zoneIdToFailsafeLogger[zoneId]->outputFailsafeLog(
+-            zoneId, newFailsafeState, location, reason);
++        auto& logger = zoneIdToFailsafeLogger[zoneId];
++        if (HostStateMonitor::getInstance().isPowerOff())
++        {
++            logger->clearLogs();
++            return;
++        }
++        logger->outputFailsafeLog(zoneId, newFailsafeState, location, reason);
+     }
+ }
+ } // namespace pid_control
+diff --git a/pid/zone.hpp b/pid/zone.hpp
+--- a/pid/zone.hpp
++++ b/pid/zone.hpp
+@@ -148,6 +148,18 @@
+     {
+         for (const auto& sensorInput : sensorInputs)
+         {
++            if (HostStateMonitor::getInstance().isPowerOff())
++            {
++                // Confirmed power-off is not a failed thermal/tach input.
++                _failSafeSensors.erase(sensorInput);
++                if constexpr (!fanSensorLogging)
++                {
++                    _cachedValuesByName[sensorInput] = {0.0, 0.0};
++                }
++                outputFailsafeLogWithZone(_zoneId, this->getFailSafeMode(),
++                                          sensorInput, "Host power is off.");
++                continue;
++            }
+             auto sensor = _mgr.getSensor(sensorInput);
+             ReadReturn r = sensor->read();
+             _cachedValuesByName[sensorInput] = {r.value, r.unscaled};
+@@ -178,18 +190,6 @@
+             {
+                 std::cerr << sensorInput << " sensor reading: " << r.value
+                           << "\n";
+-            }
+-
+-            if constexpr (fanSensorLogging)
+-            {
+-                if (HostStateMonitor::getInstance().isPowerOff())
+-                {
+-                    // Tach inputs are unavailable while host power is
+-                    // off. Skip reader failure logs and timeout checks.
+-                    // Retain cached readings and normal PWM control.
+-                    _failSafeSensors.erase(sensorInput);
+-                    continue;
+-                }
+             }
+ 
+             // check if fan fail.
+diff --git a/pid/zone.cpp b/pid/zone.cpp
+--- a/pid/zone.cpp
++++ b/pid/zone.cpp
+@@ -97,13 +97,12 @@
+ void DbusPidZone::markSensorMissing(const std::string& name,
+                                     const std::string& failReason)
+ {
+-    // Also cover initializeCache(), which marks inputs missing before
+-    // the first telemetry update. Only confirmed Off suppresses fans.
+-    if (HostStateMonitor::getInstance().isPowerOff() &&
+-        std::find(_fanInputs.begin(), _fanInputs.end(), name) !=
+-            _fanInputs.end())
++    // CPU/DIMM and chassis tach readings are host-powered on CEB-GNRD.
++    if (HostStateMonitor::getInstance().isPowerOff())
+     {
+         _failSafeSensors.erase(name);
++        outputFailsafeLogWithZone(_zoneId, this->getFailSafeMode(), name,
++                                  "Host power is off.");
+         return;
+     }
+ 

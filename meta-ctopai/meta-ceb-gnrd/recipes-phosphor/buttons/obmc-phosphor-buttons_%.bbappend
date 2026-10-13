@@ -3,6 +3,7 @@ SRC_URI:append = " \
     file://gpio_defs.json \
     file://ceb-gnrd-wait-buttons.sh \
     file://10-ceb-gnrd-wait-buttons.conf \
+    file://0001-ceb-gnrd-uid-long-press-bmc-reboot.patch \
     "
 
 # The recipe installs gpio_defs.json into /etc/default/obmc/gpio but lists it in no
