@@ -17,3 +17,5 @@ SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-log-non-recoverable-threshold-e
 # Required for IPMI Watchdog 2 expiration records, including BIOS FRB2 and
 # OS-load diagnostics.
 RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-watchdog "
+
+SRC_URI:append:ceb-gnrd = " file://0003-ceb-gnrd-preserve-platform-event-metadata.patch"

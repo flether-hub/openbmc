@@ -1,0 +1,374 @@
+Subject: [PATCH] ipmi: parse platform events by channel and retain raw SEL metadata
+
+Upstream-Status: Inappropriate [CEB-GNRD IPMI event integration]
+
+Share legacy/dynamic handling, accept proper local D-Bus and LAN framing,
+validate optional event-data lengths and preserve assertion direction and
+all supplied bytes. Read optional SEL metadata without remapping it onto
+BMC sensors. Existing path-based and OEM records remain readable.
+
+---
+--- a/sensorhandler.cpp
++++ b/sensorhandler.cpp
+@@ -1,6 +1,7 @@
+ #include "config.h"
+ 
+ #include "sensorhandler.hpp"
++#include "platform_event.hpp"
+ 
+ #include "fruread.hpp"
+ 
+@@ -1519,83 +1520,10 @@
+         t.upperNonRecoverable, 0, 0, 0, 0);
+ }
+ 
+-static bool isFromSystemChannel()
+-{
+-    // TODO we could not figure out where the request is from based on IPMI
+-    // command handler parameters. because of it, we can not differentiate
+-    // request from SMS/SMM or IPMB channel
+-    return true;
+-}
+-
+ ipmi::RspType<> ipmicmdPlatformEvent(ipmi::Context::ptr& ctx,
+                                      const std::vector<uint8_t>& data)
+ {
+-    size_t paraLen = data.size();
+-    if (paraLen < selSystemEventSizeWith1Bytes ||
+-        paraLen > selSystemEventSizeWith3Bytes)
+-    {
+-        return ipmi::responseReqDataLenInvalid();
+-    }
+-
+-    uint16_t generatorID = 0xff;
+-    std::string sensorPath = "IPMB";
+-    const uint8_t* raw = data.data();
+-    const PlatformEventRequest* req = nullptr;
+-    if (isFromSystemChannel())
+-    {
+-        // first byte for SYSTEM Interface is Generator ID +1 to get common
+-        // struct
+-        req = reinterpret_cast<const PlatformEventRequest*>(raw + 1);
+-        // Capture the generator ID
+-        generatorID = *raw;
+-        // Platform Event usually comes from other firmware, like BIOS.
+-        // Unlike BMC sensor, it does not have BMC DBUS sensor path.
+-        sensorPath = "System";
+-    }
+-    else
+-    {
+-        req = reinterpret_cast<const PlatformEventRequest*>(raw);
+-        // TODO GenratorID for IPMB is combination of RqSA and RqLUN
+-    }
+-
+-    // Content of event data field depends on sensor class.
+-    // When data0 bit[5:4] is non-zero, valid data counts is 3.
+-    // When data0 bit[7:6] is non-zero, valid data counts is 2.
+-    if (((req->data[0] & byte3EnableMask) != 0 &&
+-         paraLen < selSystemEventSizeWith3Bytes) ||
+-        ((req->data[0] & byte2EnableMask) != 0 &&
+-         paraLen < selSystemEventSizeWith2Bytes))
+-    {
+-        return ipmi::responseReqDataLenInvalid();
+-    }
+-
+-    // Count bytes of Event Data
+-    size_t count;
+-    if ((req->data[0] & byte3EnableMask) != 0)
+-    {
+-        count = 3;
+-    }
+-    else if ((req->data[0] & byte2EnableMask) != 0)
+-    {
+-        count = 2;
+-    }
+-    else
+-    {
+-        count = 1;
+-    }
+-    bool assert = req->eventDirectionType & directionMask ? false : true;
+-    std::vector<uint8_t> eventData(req->data, req->data + count);
+-
+-    auto ec = ipmi::callDbusMethod(
+-        ctx, ipmiSELObject, ipmiSELPath, ipmiSELAddInterface, "IpmiSelAdd",
+-        ipmiSELAddMessage, sensorPath, eventData, assert, generatorID);
+-    if (ec)
+-    {
+-        lg2::error("IpmiSelAdd call failed: {ERROR}", "ERROR", ec.message());
+-        return ipmi::responseUnspecifiedError();
+-    }
+-
+-    return ipmi::responseSuccess();
++    return ipmi::platform_event::handle(ctx, data);
+ }
+ 
+ void registerNetFnSenFunctions()
+--- a/dbus-sdr/sensorcommands.cpp
++++ b/dbus-sdr/sensorcommands.cpp
+@@ -21,6 +21,7 @@
+ #include "dbus-sdr/sdrutils.hpp"
+ #include "dbus-sdr/sensorutils.hpp"
+ #include "dbus-sdr/storagecommands.hpp"
++#include "platform_event.hpp"
+ 
+ #include <boost/algorithm/string.hpp>
+ #include <boost/container/flat_map.hpp>
+@@ -724,71 +725,12 @@
+ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
+                                      ipmi::message::Payload& p)
+ {
+-    constexpr const uint8_t validEnvmRev = 0x04;
+-    constexpr const uint8_t lastSensorType = 0x2C;
+-    constexpr const uint8_t oemReserved = 0xC0;
+-
+-    uint8_t sysgeneratorID = 0;
+-    uint8_t evmRev = 0;
+-    uint8_t sensorType = 0;
+-    uint8_t sensorNum = 0;
+-    uint8_t eventType = 0;
+-    uint8_t eventData1 = 0;
+-    std::optional<uint8_t> eventData2 = 0;
+-    std::optional<uint8_t> eventData3 = 0;
+-    [[maybe_unused]] uint16_t generatorID = 0;
+-    ipmi::ChannelInfo chInfo;
+-
+-    if (ipmi::getChannelInfo(ctx->channel, chInfo) != ipmi::ccSuccess)
+-    {
+-        lg2::error("Failed to get Channel Info, channel: {CHANNEL}", "CHANNEL",
+-                   ctx->channel);
+-        return ipmi::responseUnspecifiedError();
+-    }
+-
+-    if (static_cast<ipmi::EChannelMediumType>(chInfo.mediumType) ==
+-        ipmi::EChannelMediumType::systemInterface)
+-    {
+-        p.unpack(sysgeneratorID, evmRev, sensorType, sensorNum, eventType,
+-                 eventData1, eventData2, eventData3);
+-        constexpr const uint8_t isSoftwareID = 0x01;
+-        if (!(sysgeneratorID & isSoftwareID))
+-        {
+-            return ipmi::responseInvalidFieldRequest();
+-        }
+-        // Refer to IPMI Spec Table 32: SEL Event Records
+-        generatorID = (ctx->channel << 12) // Channel
+-                      | (0x0 << 10)        // Reserved
+-                      | (0x0 << 8)         // 0x0 for sys-soft ID
+-                      | sysgeneratorID;
+-    }
+-    else
+-    {
+-        p.unpack(evmRev, sensorType, sensorNum, eventType, eventData1,
+-                 eventData2, eventData3);
+-        // Refer to IPMI Spec Table 32: SEL Event Records
+-        generatorID = (ctx->channel << 12)      // Channel
+-                      | (0x0 << 10)             // Reserved
+-                      | ((ctx->lun & 0x3) << 8) // Lun
+-                      | (ctx->rqSA << 1);
+-    }
+-
+-    if (!p.fullyUnpacked())
++    std::vector<uint8_t> data;
++    if (p.unpack(data) != 0 || !p.fullyUnpacked())
+     {
+         return ipmi::responseReqDataLenInvalid();
+     }
+-
+-    // Check for valid evmRev and Sensor Type(per Table 42 of spec)
+-    if (evmRev != validEnvmRev)
+-    {
+-        return ipmi::responseInvalidFieldRequest();
+-    }
+-    if ((sensorType > lastSensorType) && (sensorType < oemReserved))
+-    {
+-        return ipmi::responseInvalidFieldRequest();
+-    }
+-
+-    return ipmi::responseSuccess();
++    return ipmi::platform_event::handle(ctx, data);
+ }
+ 
+ ipmi::RspType<> ipmiSetSensorReading(
+--- a/dbus-sdr/storagecommands.cpp
++++ b/dbus-sdr/storagecommands.cpp
+@@ -32,6 +32,7 @@
+ #include <xyz/openbmc_project/ObjectMapper/common.hpp>
+ 
+ #include <array>
++#include <charconv>
+ #include <cstdio>
+ #include <filesystem>
+ #include <fstream>
+@@ -1010,7 +1011,7 @@
+     // Use split to separate the entry into its fields
+     std::vector<std::string> targetEntryFields;
+     boost::split(targetEntryFields, entry, boost::is_any_of(","),
+-                 boost::token_compress_on);
++                 boost::token_compress_off);
+     if (targetEntryFields.size() < 3)
+     {
+         return ipmi::responseUnspecifiedError();
+@@ -1076,21 +1077,55 @@
+                 lg2::error("Invalid Generator ID");
+             }
+ 
+-            // Get the sensor type, sensor number, and event type for the sensor
+-            sensorType = getSensorTypeFromPath(sensorPath);
+-            sensorAndLun = getSensorNumberFromPath(sensorPath);
+-            sensorNum = static_cast<uint8_t>(sensorAndLun);
+-            if ((generatorID & 0x0001) == 0)
+-            {
+-                // IPMB Address
+-                generatorID |= sensorAndLun & 0x0300;
++            // New platform events retain the sender's raw metadata. Old
++            // records and BMC-generated sensor events still use path lookup.
++            const bool rawMetadata = targetEntryFields.size() >= 9 &&
++                (!targetEntryFields[6].empty() || !targetEntryFields[7].empty() ||
++                 !targetEntryFields[8].empty());
++            if (rawMetadata)
++            {
++                const auto parseByte = [](const std::string& field, uint8_t& value) {
++                    unsigned int parsed = 0;
++                    const auto result = std::from_chars(
++                        field.data(), field.data() + field.size(), parsed, 16);
++                    if (result.ec != std::errc{} ||
++                        result.ptr != field.data() + field.size() || parsed > 0xff)
++                    {
++                        return false;
++                    }
++                    value = static_cast<uint8_t>(parsed);
++                    return true;
++                };
++                uint8_t rawEventType = 0;
++                if (!parseByte(targetEntryFields[6], sensorType) ||
++                    !parseByte(targetEntryFields[7], sensorNum) ||
++                    !parseByte(targetEntryFields[8], rawEventType) || rawEventType > 0x7f)
++                {
++                    return ipmi::responseUnspecifiedError();
++                }
++                eventType = uint7_t{rawEventType};
++                // Keep the recorded generator and LUN, rather than replacing
++                // them with a current sensor-tree mapping.
+             }
+             else
+             {
+-                // system software
+-                generatorID |= sensorAndLun >> 8;
+-            }
+-            eventType = getSensorEventTypeFromPath(sensorPath);
++                // Get the sensor type, sensor number, and event type for the sensor
++                sensorType = getSensorTypeFromPath(sensorPath);
++                sensorAndLun = getSensorNumberFromPath(sensorPath);
++                sensorNum = static_cast<uint8_t>(sensorAndLun);
++                if ((generatorID & 0x0001) == 0)
++                {
++                    // IPMB Address
++                    generatorID |= sensorAndLun & 0x0300;
++                }
++                else
++                {
++                    // system software
++                    generatorID |= sensorAndLun >> 8;
++                }
++                eventType = getSensorEventTypeFromPath(sensorPath);
++
++            }
+ 
+             // Get the event direction
+             try
+--- /dev/null
++++ b/platform_event.hpp
+@@ -0,0 +1,94 @@
++#pragma once
++
++#include <ipmid/api.hpp>
++#include <ipmid/utils.hpp>
++#include <phosphor-logging/lg2.hpp>
++#include <user_channel/channel_layer.hpp>
++
++#include <algorithm>
++#include <format>
++#include <vector>
++
++namespace ipmi::platform_event
++{
++// Both legacy and dynamic providers use this implementation. BIOS/KCS includes
++// a software Generator ID; LAN and the local D-Bus INTRABMC channel omit it.
++inline RspType<> handle(Context::ptr ctx, const std::vector<uint8_t>& data)
++{
++    ChannelInfo channelInfo;
++    if (getChannelInfo(ctx->channel, channelInfo) != ccSuccess)
++    {
++        return responseUnspecifiedError();
++    }
++    const auto medium = static_cast<EChannelMediumType>(channelInfo.mediumType);
++    const bool system = medium == EChannelMediumType::systemInterface;
++    // Retain the eight-byte workaround used by older on-BMC clients, only on
++    // the internal OEM channel. Never guess the format of LAN/IPMB messages.
++    const bool internal = medium == EChannelMediumType::oem &&
++                          ctx->channel == getChannelByName("INTRABMC");
++    const bool legacyInternal = internal && data.size() == 8 &&
++                                (data[0] & 1) != 0 && data[1] == 4;
++    const bool hasGenerator = system || legacyInternal;
++    const size_t offset = hasGenerator ? 1 : 0;
++    const size_t headerSize = offset + 4;
++    if (data.size() < headerSize + 1 || data.size() > headerSize + 3)
++    {
++        return responseReqDataLenInvalid();
++    }
++    if ((hasGenerator && (data[0] & 1) == 0) || data[offset] != 4)
++    {
++        return responseInvalidFieldRequest();
++    }
++    const uint8_t sensorType = data[offset + 1];
++    if (sensorType > 0x2c && sensorType < 0xc0)
++    {
++        return responseInvalidFieldRequest();
++    }
++    const uint8_t sensorNumber = data[offset + 2];
++    const uint8_t directionType = data[offset + 3];
++    const uint8_t eventType = directionType & 0x7f;
++    const bool asserted = (directionType & 0x80) == 0;
++    const uint8_t eventData1 = data[headerSize];
++    const size_t required = (eventData1 & 0x30) != 0 ? 3 :
++                            (eventData1 & 0xc0) != 0 ? 2 : 1;
++    if (data.size() < headerSize + required)
++    {
++        return responseReqDataLenInvalid();
++    }
++    // Preserve all supplied bytes, even when their validity bits are zero.
++    std::vector<uint8_t> eventData(3, 0xff);
++    std::copy(data.begin() + headerSize, data.end(), eventData.begin());
++    uint16_t generator = static_cast<uint16_t>(ctx->channel) << 12;
++    if (hasGenerator)
++    {
++        generator |= data[0];
++    }
++    else if (internal)
++    {
++        generator |= 0x41; // Local system-management software.
++    }
++    else
++    {
++        generator |= ((ctx->lun & 3) << 8) | (ctx->rqSA << 1);
++    }
++    const std::string message = std::format(
++        "IPMI platform event: type={:02x} sensor={:02x} event={:02x} {} data={:02x}{:02x}{:02x}",
++        sensorType, sensorNumber, eventType, asserted ? "asserted" : "deasserted",
++        eventData[0], eventData[1], eventData[2]);
++    boost::system::error_code ec;
++    const auto recordId = callDbusMethod<uint16_t>(
++        ctx, ec, "xyz.openbmc_project.Logging.IPMI", "/xyz/openbmc_project/Logging/IPMI",
++        "xyz.openbmc_project.Logging.IPMI", "IpmiSelAddPlatform", message,
++        sensorType, sensorNumber, eventType, eventData, asserted, generator);
++    if (ec)
++    {
++        lg2::error("Platform event SEL add failed: {ERROR}", "ERROR", ec.message());
++        return responseUnspecifiedError();
++    }
++    if (recordId == 0xffff)
++    {
++        return responseOutOfSpace();
++    }
++    return responseSuccess();
++}
++} // namespace ipmi::platform_event

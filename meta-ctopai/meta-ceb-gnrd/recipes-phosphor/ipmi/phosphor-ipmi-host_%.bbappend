@@ -6,6 +6,7 @@ SRC_URI:append = " \
     file://0003-ceb-gnrd-fru-area-is-the-whole-eeprom.patch \
     file://0004-ceb-gnrd-ipmi-version-and-system-guid.patch \
     file://0005-ceb-gnrd-compatible-chassis-and-optional-vr.patch \
+    file://0006-ceb-gnrd-platform-event-channel-and-metadata.patch \
     "
 
 # The patch adds cebGnrdAux(); route the Get Device ID reply through it with a
@@ -37,3 +38,6 @@ do_install:append:ceb-gnrd() {
         ${D}${libexecdir}/ceb-gnrd-wait-sensors.sh
 }
 FILES:${PN}:append:ceb-gnrd = " ${systemd_system_unitdir}/phosphor-ipmi-host.service.d ${libexecdir}/ceb-gnrd-wait-sensors.sh"
+
+# Platform-event persistence uses the board SEL logger extension.
+RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-sel-logger"

@@ -1,0 +1,52 @@
+Subject: [PATCH] sel: persist original platform event sensor and event identifiers
+
+Upstream-Status: Inappropriate [CEB-GNRD IPMI event integration]
+
+Add a file-backed platform-event method and optional trailing SEL fields.
+Keep the existing IpmiSelAdd interface and event-data format unchanged.
+The external event path is descriptive and does not create a BMC sensor.
+
+---
+--- a/src/sel_logger.cpp
++++ b/src/sel_logger.cpp
+@@ -443,6 +443,25 @@
+             return selAddSystemRecord(conn, message, path, selData, assert,
+                                       genId);
+         });
++#ifndef SEL_LOGGER_SEND_TO_LOGGING_SERVICE
++    // Platform Event messages describe the sender's sensor namespace, which
++    // must not be reconstructed from the BMC's current D-Bus sensor tree.
++    ifaceAddSel->register_method(
++        "IpmiSelAddPlatform",
++        [conn](const std::string& message, uint8_t sensorType, uint8_t sensorNumber,
++               uint8_t eventType, const std::vector<uint8_t>& selData,
++               bool asserted, uint16_t genId) {
++            if (selData.empty() || eventType > 0x7f)
++            {
++                throw std::invalid_argument("Invalid platform event");
++            }
++            return selAddSystemRecord(
++                conn, message, "/xyz/openbmc_project/ipmi/platform_event", selData,
++                asserted, genId, "IPMI_SEL_SENSOR_TYPE=%x", sensorType,
++                "IPMI_SEL_SENSOR_NUMBER=%x", sensorNumber,
++                "IPMI_SEL_EVENT_TYPE=%x", eventType);
++        });
++#endif
+     // Add a new OEM SEL entry
+     ifaceAddSel->register_method(
+         "IpmiSelAddOem",
+--- a/rsyslog/phosphor-sel-logger.conf
++++ b/rsyslog/phosphor-sel-logger.conf
+@@ -12,6 +12,12 @@
+     property(name="$!IPMI_SEL_SENSOR_PATH")
+     constant(value=",")
+     property(name="$!IPMI_SEL_EVENT_DIR")
++    constant(value=",")
++    property(name="$!IPMI_SEL_SENSOR_TYPE")
++    constant(value=",")
++    property(name="$!IPMI_SEL_SENSOR_NUMBER")
++    constant(value=",")
++    property(name="$!IPMI_SEL_EVENT_TYPE")
+     constant(value="\n")
+ }
+ 
