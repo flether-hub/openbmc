@@ -8,6 +8,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0003-ceb-gnrd-skip-static-platform-inventory-events.patch \
     file://0004-ceb-gnrd-megcrps800-schema.patch \
     file://0005-ceb-gnrd-classify-busy-fru-scan-addresses.patch \
+    file://0006-ceb-gnrd-gpio-presence-empty-discovery.patch \
+    file://0007-ceb-gnrd-generic-crps-schema.patch \
     "
 
 do_install:append:ceb-gnrd() {

@@ -1,0 +1,46 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] psu: consume CRPS devices selected during startup
+
+CRPS identifies an externally managed slot, independently of the selected kernel
+driver. Accept generic pmbus hwmon telemetry alongside megcrps800, and avoid
+creating or deleting these clients when psusensor restarts. Other platforms
+using the ordinary pmbus configuration retain their existing ownership.
+Base: dbus-sensors 17f2fc3fe1400bf9e45c075e4864cc79afa2ed91 plus board patches 0001-0012.
+
+Upstream-Status: Inappropriate [CEB-GNRD PSU integration]
+
+diff --git a/src/psu/PSUSensorMain.cpp b/src/psu/PSUSensorMain.cpp
+--- a/src/psu/PSUSensorMain.cpp
++++ b/src/psu/PSUSensorMain.cpp
+@@ -140,6 +140,7 @@
+     {"PLI1209BC", I2CDeviceType{"pli1209bc", true}},
+     {"pmbus", I2CDeviceType{"pmbus", true}},
+     {"MEGCRPS800", I2CDeviceType{"megcrps800", true}},
++    {"CRPS", I2CDeviceType{"pmbus", true}},
+     {"PXE1610", I2CDeviceType{"pxe1610", true}},
+     {"Q54SN120A1", I2CDeviceType{"q54sn120a1", true}},
+     {"Q54SW120A7", I2CDeviceType{"q54sw120a7", true}},
+diff --git a/src/DeviceMgmt.hpp b/src/DeviceMgmt.hpp
+--- a/src/DeviceMgmt.hpp
++++ b/src/DeviceMgmt.hpp
+@@ -140,11 +140,17 @@
+ 
+             std::optional<I2CDeviceParams> params =
+                 getI2CDeviceParams(sensorTypes, cfg);
+-            // The CEB-GNRD hotplug monitor exclusively owns these devices.
++            // CEB-GNRD PSU startup detection exclusively owns these devices.
+             // Consume their hwmon files without creating/deleting I2C clients.
+-            if (params.has_value() && params->type.name == "megcrps800")
++            if (params.has_value())
+             {
+-                continue;
++                const auto* type =
++                    std::get_if<std::string>(&cfg.at("Type"));
++                if (params->type.name == "megcrps800" ||
++                    (type != nullptr && *type == "CRPS"))
++                {
++                    continue;
++                }
+             }
+             if (params.has_value() && !params->deviceStatic())
+             {

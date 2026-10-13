@@ -13,6 +13,8 @@
 
 STATE=/var/lib/ceb-gnrd
 MARK=$STATE/clean-shutdown
+BOOT_STATE=/run/ceb-gnrd
+BOOT_CLEAN=$BOOT_STATE/previous-clean-shutdown
 STATUS=/sys/class/watchdog/watchdog0/bootstatus
 CARDRESET=32
 
@@ -39,6 +41,15 @@ case "$1" in
         [ -r "$STATUS" ] && status=$(cat "$STATUS")
         clean=0
         [ -e "$MARK" ] && clean=1
+        # Preserve this boot's decision for phosphor-bmc-state-manager before
+        # consuming the persistent marker. /run is cleared on the next boot.
+        if mkdir -p "$BOOT_STATE" &&
+            printf '%s\n' "$clean" > "$BOOT_CLEAN.tmp" &&
+            mv -f "$BOOT_CLEAN.tmp" "$BOOT_CLEAN"; then
+            :
+        else
+            echo "Failed to publish the previous clean-shutdown state" >&2
+        fi
         rm -f "$MARK"
         if [ $((status & CARDRESET)) -ne 0 ] && [ "$clean" = 0 ]; then
             echo "BMC was restarted by the hardware watchdog without a clean shutdown (bootstatus=$status)"

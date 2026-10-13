@@ -1,12 +1,12 @@
 [Unit]
-Description=CEB-GNRD PSU presence monitor
+Description=CEB-GNRD PSU startup detection and driver binding
 After=systemd-udevd.service
+Before=xyz.openbmc_project.psusensor.service
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/libexec/ceb-gnrd-psu-detect.sh
-Restart=always
-RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

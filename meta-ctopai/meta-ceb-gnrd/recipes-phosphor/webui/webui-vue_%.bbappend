@@ -55,6 +55,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0053-ceb-gnrd-overview-existing-build-info.patch \
     file://0054-ceb-gnrd-bios-missing-version-na.patch \
     file://0055-ceb-gnrd-hide-overview-source-version.patch \
+    file://0056-ceb-gnrd-virtual-media-survives-navigation.patch \
     file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "

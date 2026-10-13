@@ -528,8 +528,8 @@
     /delete-node/ eeprom@50;
 
     /* CRPS PMBus modules (0, 1 or 2 present at 0x58/0x59/0x5a) are not declared
-     * here: ceb-gnrd-psu-detect creates a megcrps800 device for each installed
-     * module, so empty slots do not log probe failures. */
+     * here: ceb-gnrd-psu-detect selects megcrps800 or generic pmbus for each
+     * installed module, so empty slots do not log probe failures. */
 };
 
 /* Schematic I2C9 connects to CPLD-reserved pins; no target is currently used. */

@@ -1,0 +1,167 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] virtual-media: retain browser mounts across menu navigation
+
+Keep the VirtualMedia route instance alive for the authenticated application
+and use a stable key when changing menus or refreshing other views. Recheck
+device metadata when returning without replacing the objects captured by NBD
+callbacks. Retain connecting sockets, avoid wrapping NBD in a reactive proxy,
+and stop local sockets on logout or application teardown. Explicit Stop and
+the existing NBD read verification and transport error handling remain active.
+
+Upstream-Status: Inappropriate [CEB-GNRD browser virtual media]
+---
+
+--- a/src/layouts/AppLayout.vue
++++ b/src/layouts/AppLayout.vue
+@@ -10,7 +10,15 @@
+     />
+     <app-navigation :key="routerKey" class="app-navigation" />
+     <page-container class="app-content">
+-      <router-view ref="routerView" :key="routerKey" />
++      <router-view v-slot="{ Component, route }">
++        <keep-alive include="VirtualMedia">
++          <component
++            :is="Component"
++            ref="routerView"
++            :key="route.name === 'virtual-media' ? 'virtual-media' : routerKey"
++          />
++        </keep-alive>
++      </router-view>
+       <!-- Scroll to top button -->
+       <button-back-to-top />
+     </page-container>
+--- a/src/store/modules/Operations/VirtualMediaStore.js
++++ b/src/store/modules/Operations/VirtualMediaStore.js
+@@ -29,17 +29,20 @@
+       const currentDevices = state.proxyDevices;
+       state.proxyDevices = deviceData.map((newDevice) => {
+         const currentDevice = currentDevices.find(
+-          (d) => d.id === newDevice.id
++          (device) =>
++            device.id === newDevice.id ||
++            (device.websocket && device.websocket === newDevice.websocket),
+         );
+-        if (currentDevice?.isActive && currentDevice?.file) {
+-          return {
+-            ...newDevice,
++        if (currentDevice) {
++          // NBD callbacks reference this object. Preserve its identity when
++          // revisiting the page, including while a socket is connecting.
++          return Object.assign(currentDevice, newDevice, {
+             file: currentDevice.file,
+-            // FIXME: Vuex state is now explicitly carrying non-serializable browser
+-            // objects, better done in a composable
+             nbd: currentDevice.nbd,
+-            isActive: currentDevice.isActive,
+-          };
++            isActive: currentDevice.nbd
++              ? currentDevice.isActive
++              : newDevice.isActive,
++          });
+         }
+         return {
+           ...newDevice,
+@@ -57,6 +60,15 @@
+       }
+     },
+     clearDevices(state) {
++      // Stop browser-owned mounts on logout or application teardown, rather
++      // than losing the handles to sockets still serving the local files.
++      for (const device of state.proxyDevices) {
++        if (!device.nbd) continue;
++        device.nbd.socketStarted = () => {};
++        device.nbd.socketClosed = () => {};
++        device.nbd.errorReadingFile = () => {};
++        device.nbd.stop();
++      }
+       state.proxyDevices = [];
+       state.legacyDevices = [];
+     },
+--- a/src/views/Operations/VirtualMedia/VirtualMedia.vue
++++ b/src/views/Operations/VirtualMedia/VirtualMedia.vue
+@@ -14,6 +14,7 @@
+                   v-if="!dev.isActive"
+                   :id="concatId(dev.id)"
+                   v-model="dev.file"
++                  :disabled="!!dev.nbd"
+                 >
+                   <template #invalid>
+                     <b-form-invalid-feedback role="alert">
+@@ -43,7 +44,7 @@
+               <b-button
+                 v-if="!dev.isActive"
+                 variant="primary"
+-                :disabled="!dev.file"
++                :disabled="!dev.file || !!dev.nbd"
+                 @click="startVM(dev)"
+               >
+                 {{ $t('pageVirtualMedia.start') }}
+@@ -133,6 +134,7 @@
+ import LoadingBarMixin from '@/components/Mixins/LoadingBarMixin';
+ import ModalConfigureConnection from './ModalConfigureConnection';
+ import NbdServer from '@/utilities/NBDServer';
++import { markRaw } from 'vue';
+ import FormFile from '@/components/Global/FormFile';
+ import i18n from '@/i18n';
+ import { useModal } from 'bootstrap-vue-next';
+@@ -147,6 +149,7 @@
+   },
+   data() {
+     return {
++      refreshOnActivation: false,
+       modalConfigureConnection: null,
+       showConfigureConnectionModal: false,
+       loadImageFromExternalServer:
+@@ -170,14 +173,31 @@
+       .dispatch('virtualMedia/getData')
+       .finally(() => this.endLoader());
+   },
++  activated() {
++    if (!this.refreshOnActivation) return;
++    this.refreshOnActivation = false;
++    this.$store.dispatch('virtualMedia/getData');
++  },
++  deactivated() {
++    // Menu navigation deactivates this cached view. Keep serving the ISO.
++    this.refreshOnActivation = true;
++  },
++  beforeUnmount() {
++    // Leaving the authenticated application destroys the cache, so release
++    // browser-owned sockets. Deactivation alone must never stop a mount.
++    this.$store.commit('virtualMedia/clearDevices');
++  },
+   methods: {
+     startVM(device) {
++      if (!device.file || device.nbd) return;
+       const token = this.$store.getters['authentication/token'];
+-      device.nbd = new NbdServer(
+-        `wss://${window.location.host}${device.websocket}`,
+-        device.file,
+-        device.id,
+-        token,
++      device.nbd = markRaw(
++        new NbdServer(
++          `wss://${window.location.host}${device.websocket}`,
++          device.file,
++          device.id,
++          token,
++        ),
+       );
+       device.nbd.socketStarted = () => {
+         this.successToast(
+@@ -211,7 +231,14 @@
+         });
+       };
+ 
+-      device.nbd.start();
++      try {
++        device.nbd.start();
++      } catch (error) {
++        device.nbd = null;
++        this.errorToast(
++          i18n.global.t('pageVirtualMedia.toast.serverClosedWithErrors'),
++        );
++      }
+     },
+     stopVM(device) {
+       if (!device.nbd) return;

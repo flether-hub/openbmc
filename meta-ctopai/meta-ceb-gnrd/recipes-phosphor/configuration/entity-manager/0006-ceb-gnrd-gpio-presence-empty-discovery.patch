@@ -1,0 +1,48 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] gpio-presence: treat an empty initial configuration scan as discovery
+
+ResourceNotFound during initial inventory discovery is expected before
+Entity-Manager publishes configuration. Keep late InterfacesAdded handling
+and retain errors for transport, type and configuration failures.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+---
+
+--- a/src/gpio-presence/config_provider.cpp
++++ b/src/gpio-presence/config_provider.cpp
+@@ -9,10 +9,12 @@
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/async/match.hpp>
+ #include <sdbusplus/bus/match.hpp>
++#include <sdbusplus/exception.hpp>
+ #include <xyz/openbmc_project/ObjectMapper/client.hpp>
+ 
+ #include <ranges>
+ #include <string>
++#include <string_view>
+ 
+ PHOSPHOR_LOG2_USING;
+ 
+@@ -53,6 +55,22 @@
+         std::vector<std::string> interfaces = {interface};
+         res = co_await client.get_sub_tree("/xyz/openbmc_project/inventory", 0,
+                                            interfaces);
++    }
++    catch (const sdbusplus::exception_t& e)
++    {
++        if (std::string_view(e.name()) ==
++            "xyz.openbmc_project.Common.Error.ResourceNotFound")
++        {
++            // Entity-Manager may not have published inventory yet. The
++            // InterfacesAdded match remains active for late configurations.
++            debug("No GPIO presence configuration yet; waiting for {INTF}",
++                  "INTF", interface);
++        }
++        else
++        {
++            error("Failed GetSubTree call for configuration interface: {ERR}",
++                  "ERR", e);
++        }
+     }
+     catch (std::exception& e)
+     {

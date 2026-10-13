@@ -2,6 +2,21 @@
 
 set -eu
 
+holder=""
+stop_owner() {
+    # systemd stops this service alongside PID control. Reap the GPIO holder
+    # and report a successful stop instead of propagating wait's status 143.
+    # ExecStopPost then drives the ownership line low to return it to CPLD.
+    trap '' TERM INT
+    if [ -n "$holder" ]; then
+        kill "$holder" 2>/dev/null || :
+        wait "$holder" 2>/dev/null || :
+    fi
+    exit 0
+}
+# Cover shutdown during readiness checks as well as while holding the GPIO.
+trap stop_owner TERM INT
+
 line="BMC_FAN_BMC_OVERRIDE_N"
 location=$(gpiofind "$line")
 set -f
@@ -118,7 +133,6 @@ fi
 
 gpioset --mode=signal "$chip" "$line_no=1" &
 holder=$!
-trap 'kill "$holder" 2>/dev/null' TERM INT
 
 # give gpioset a moment to request the line (that is what sets the tolerance bit)
 sleep 1
@@ -131,10 +145,16 @@ reg=$($devmem "$tol" 32 2>/dev/null) || reg=""
 if [ -z "$reg" ] || ! $devmem "$tol" 32 $((reg & ~mask)) 2>/dev/null ||
     [ $(($($devmem "$tol" 32 2>/dev/null) & mask)) -ne 0 ]; then
     echo "Cannot clear the reset tolerance of $line ($tol, devmem); leaving control with CPLD" >&2
-    kill "$holder" 2>/dev/null
-    wait "$holder" 2>/dev/null
+    kill "$holder" 2>/dev/null || :
+    wait "$holder" 2>/dev/null || :
     exit 1
 fi
 echo "$line: BMC owns the fans, reset tolerance cleared (a BMC reset returns them to the CPLD)"
 
-wait "$holder"
+holder_status=0
+wait "$holder" || holder_status=$?
+# A requested stop exits through stop_owner(). Any other holder termination
+# loses BMC ownership and must trigger the service's failure recovery.
+echo "GPIO holder exited unexpectedly (status=$holder_status); returning fan control to CPLD" >&2
+[ "$holder_status" -ne 0 ] || holder_status=1
+exit "$holder_status"

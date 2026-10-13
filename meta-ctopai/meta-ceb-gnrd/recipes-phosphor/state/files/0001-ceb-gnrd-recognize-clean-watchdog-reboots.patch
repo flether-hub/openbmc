@@ -1,0 +1,50 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] state: recognize orderly software reboots performed by watchdog
+
+Use the existing board clean-shutdown decision to distinguish orderly
+software reboots from unexpected watchdog resets. POR detection and
+unexpected-reset SEL logging remain intact. A volatile receipt preserves
+the decision if the BMC state daemon restarts within the same boot.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+---
+
+--- a/bmc_state_manager.cpp
++++ b/bmc_state_manager.cpp
+@@ -18,6 +18,7 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <iostream>
++#include <system_error>
+ 
+ namespace phosphor::state::manager
+ {
+@@ -356,8 +357,27 @@
+             this->lastRebootCause(RebootCause::Software);
+             return;
+         case WDIOF_CARDRESET:
+-            this->lastRebootCause(RebootCause::Watchdog);
++        {
++            // ASPEED also uses the watchdog for an orderly software reboot.
++            // The health service publishes its decision in /run before
++            // consuming the clean-shutdown marker. Prefer that receipt so
++            // restarting this daemon cannot reinterpret the previous boot.
++            // Read the marker first, then the receipt: publication happens
++            // before marker removal, avoiding a gap between the two reads.
++            std::error_code ec;
++            bool cleanShutdown = std::filesystem::exists(
++                                     "/var/lib/ceb-gnrd/clean-shutdown", ec) &&
++                                 !ec;
++            std::ifstream receipt("/run/ceb-gnrd/previous-clean-shutdown");
++            if (receipt.is_open())
++            {
++                unsigned int clean = 0;
++                cleanShutdown = (receipt >> clean) && clean == 1;
++            }
++            this->lastRebootCause(cleanShutdown ? RebootCause::Software
++                                               : RebootCause::Watchdog);
+             return;
++        }
+         default:
+             this->lastRebootCause(RebootCause::POR);
+             // Continue below to see if more details can be found

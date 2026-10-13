@@ -6,3 +6,6 @@
 # 1 reboot (the count is cleared 15 minutes after a boot, so a later,
 # independent fault gets its reboot again); after that the BMC stays in Quiesced.
 PACKAGECONFIG:append:ceb-gnrd = " auto-reboot-on-bmc-quiesce"
+
+FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
+SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-recognize-clean-watchdog-reboots.patch"

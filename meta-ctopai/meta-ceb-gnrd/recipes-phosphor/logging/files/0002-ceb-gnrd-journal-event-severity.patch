@@ -1,0 +1,74 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] logging: preserve committed event severity in journal
+
+Use the event severity for both synchronous and asynchronous journal
+commits. Preserve the JSON message, event filters and D-Bus persistence.
+Ready and reboot-cause information remain available in the full journal
+without being mislabeled as errors; genuine errors retain their severity.
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+---
+
+--- a/lib/lg2_commit.cpp
++++ b/lib/lg2_commit.cpp
+@@ -116,6 +116,42 @@
+     };
+ }
+ 
++// Preserve the event severity in journal as well as in its JSON payload.
++// Information events must not appear in warning/error journal queries.
++static void journal_event(int severity, const std::string& data)
++{
++    switch (severity)
++    {
++        case LOG_EMERG:
++            lg2::emergency("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        case LOG_ALERT:
++            lg2::alert("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        case LOG_CRIT:
++            lg2::critical("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        case LOG_ERR:
++            lg2::error("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        case LOG_WARNING:
++            lg2::warning("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        case LOG_NOTICE:
++            lg2::notice("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        case LOG_INFO:
++            lg2::info("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        case LOG_DEBUG:
++            lg2::debug("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++        default:
++            lg2::error("OPENBMC_MESSAGE_ID={DATA}", "DATA", data);
++            break;
++    }
++}
++
+ } // namespace details
+ 
+ auto commit(sdbusplus::exception::generated_event_base&& t,
+@@ -136,7 +172,7 @@
+     {
+         nlohmann::json entry = t.to_json();
+         entry["severity"] = severity;
+-        lg2::error("OPENBMC_MESSAGE_ID={DATA}", "DATA", entry.dump());
++        details::journal_event(severity, entry.dump());
+     }
+ 
+     if constexpr (LG2_COMMIT_DBUS)
+@@ -195,7 +231,7 @@
+     {
+         nlohmann::json entry = t.to_json();
+         entry["severity"] = severity;
+-        lg2::error("OPENBMC_MESSAGE_ID={DATA}", "DATA", entry.dump());
++        details::journal_event(severity, entry.dump());
+     }
+ 
+     if constexpr (LG2_COMMIT_DBUS)

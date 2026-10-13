@@ -17,6 +17,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0010-hwmon-temp-skip-peci-auxiliary-devices.patch \
     file://0011-guard-optional-mode-and-intrusion-discovery.patch \
     file://0012-psu-recover-cleared-grouped-alarms.patch \
+    file://0013-ceb-gnrd-consume-auto-selected-crps-driver.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \

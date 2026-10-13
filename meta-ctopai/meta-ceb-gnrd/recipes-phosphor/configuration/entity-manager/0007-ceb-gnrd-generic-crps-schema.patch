@@ -1,0 +1,21 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] configuration: accept externally managed CRPS PSU slots
+
+Startup detection selects megcrps800 only for MEG-CRPS800AOP and uses
+generic pmbus for other models. The CRPS slot type keeps its sensor
+configuration independent of the selected driver.
+Base: entity-manager 27d0e48a6dcd69fd12d92b7528d66853db1d6543 plus patch 0004.
+
+Upstream-Status: Inappropriate [CEB-GNRD PSU integration]
+
+diff --git a/schemas/legacy.json b/schemas/legacy.json
+--- a/schemas/legacy.json
++++ b/schemas/legacy.json
+@@ -1030,6 +1030,7 @@
+                         "PLI1209BC",
+                         "pmbus",
+                         "MEGCRPS800",
++                        "CRPS",
+                         "PXE1610",
+                         "Q54SN120A1",
+                         "Q54SW120A7",
