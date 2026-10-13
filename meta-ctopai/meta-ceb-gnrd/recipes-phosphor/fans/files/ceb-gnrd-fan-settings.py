@@ -18,7 +18,8 @@ D-Bus API (reachable through the bmcweb D-Bus REST interface):
   method   Save()  snapshot the current Entity-Manager values (or delete the
                    stored file when Persist is false)
   method   ApplyFan<0..5|All><Adaptive|Fixed20..100><Keep|Forget>() -> b
-                   atomic target/mode/duty/persistence operation (web page)
+                   atomic target/mode/duty/persistence operation (web page,
+                   fixed duties in 10 percent steps)
   method   KeepSettings() / ForgetSettings()  set Persist and save (no arguments,
                    for the web page)
   method   GetFans() -> ay  status of the six fans (used by the IPMI OEM command)
@@ -483,7 +484,7 @@ def _web_apply_method(name, fan, mode, duty, persist):
 
 for _fan in range(FAN_COUNT + 1):
     _target = "All" if _fan == FAN_COUNT else str(_fan)
-    for _mode, _duty in [(0, 0)] + [(1, d) for d in (20, 40, 60, 80, 100)]:
+    for _mode, _duty in [(0, 0)] + [(1, d) for d in range(20, 101, 10)]:
         for _persist in (0, 1):
             _name = "ApplyFan%s%s%s" % (
                 _target, "Adaptive" if _mode == 0 else "Fixed%d" % _duty,
