@@ -1,0 +1,138 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] power: block software start and reset during host flash programming
+
+Use a backend lock shared by all Host/Chassis transition setters.
+BIOS/CPLD acquire it before waiting for stable Off. Shutdown remains
+available; On, reboot/cycle and force-button pulses are refused until
+the programmer releases the lock. A read-only board property excludes
+power-on/cycle wait states that the generic Chassis API calls Off.
+The BIOS updater releases its lock only
+after unbinding MTD and returning flash ownership, before its power cycle.
+
+Upstream-Status: Inappropriate [CEB-GNRD update policy]
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -15,6 +15,12 @@
+ */
+ #include "power_control.hpp"
+ 
++#include <fcntl.h>
++#include <sys/file.h>
++#include <unistd.h>
++#include <memory>
++#include <stdexcept>
++
+ #include <sys/sysinfo.h>
+ #include <sys/stat.h>
+ 
+@@ -42,6 +48,36 @@
+ 
+ namespace power_control
+ {
++// Hold a shared lock through accepting an On/Reset/Cycle request. BIOS and
++// CPLD take it exclusively before confirming Off and selecting flash access.
++class HostFirmwarePowerGuard
++{
++  public:
++    HostFirmwarePowerGuard()
++    {
++        fd = open("/run/lock/ceb-gnrd-host-flash.lock",
++                  O_CREAT | O_RDWR | O_CLOEXEC, 0600);
++        if (fd < 0 || flock(fd, LOCK_SH | LOCK_NB) != 0)
++        {
++            if (fd >= 0)
++            {
++                close(fd);
++                fd = -1;
++            }
++            throw std::runtime_error("Host start/reset is blocked during firmware programming");
++        }
++    }
++    ~HostFirmwarePowerGuard()
++    {
++        close(fd);
++    }
++    HostFirmwarePowerGuard(const HostFirmwarePowerGuard&) = delete;
++    HostFirmwarePowerGuard& operator=(const HostFirmwarePowerGuard&) = delete;
++
++  private:
++    int fd = -1;
++};
++
+ static boost::asio::io_context io;
+ std::shared_ptr<sdbusplus::asio::connection> conn;
+ PersistentState appState;
+@@ -586,6 +622,8 @@
+     hostIface->set_property("CurrentHostState",
+                             std::string(getHostState(powerState)));
+ 
++    chassisIface->set_property("FirmwareProgrammingAllowed",
++                               powerState == PowerState::off);
+     chassisIface->set_property("CurrentPowerState",
+                                std::string(getChassisState(powerState)));
+     chassisIface->set_property("LastStateChangeTime", getCurrentTimeMs());
+@@ -3096,6 +3134,11 @@
+         "RequestedHostTransition",
+         std::string("xyz.openbmc_project.State.Host.Transition.Off"),
+         [](const std::string& requested, std::string& resp) {
++            std::unique_ptr<HostFirmwarePowerGuard> firmwareGuard;
++            if (!requested.ends_with(".Off"))
++            {
++                firmwareGuard = std::make_unique<HostFirmwarePowerGuard>();
++            }
+             if (requested == "xyz.openbmc_project.State.Host.Transition.Off")
+             {
+                 // if power button is masked, ignore this
+@@ -3204,6 +3247,11 @@
+         "RequestedPowerTransition",
+         std::string("xyz.openbmc_project.State.Chassis.Transition.Off"),
+         [](const std::string& requested, std::string& resp) {
++            std::unique_ptr<HostFirmwarePowerGuard> firmwareGuard;
++            if (!requested.ends_with(".Off"))
++            {
++                firmwareGuard = std::make_unique<HostFirmwarePowerGuard>();
++            }
+             if (requested == "xyz.openbmc_project.State.Chassis.Transition.Off")
+             {
+                 // if power button is masked, ignore this
+@@ -3260,9 +3308,14 @@
+             resp = requested;
+             return 1;
+         });
++    // The standard Chassis state also says Off during power-on wait
++    // and cycle delays. Only the actual stable Off state permits programming.
++    chassisIface->register_property("FirmwareProgrammingAllowed",
++                                    powerState == PowerState::off);
+     chassisIface->register_property("CurrentPowerState",
+                                     std::string(getChassisState(powerState)));
+     chassisIface->register_method("ForcePowerButtonOff", []() {
++        HostFirmwarePowerGuard firmwareGuard;
+         if (powerState != PowerState::off)
+         {
+             throw std::invalid_argument("ForcePowerButtonOff requires host Off");
+@@ -3295,6 +3348,11 @@
+         "RequestedPowerTransition",
+         std::string("xyz.openbmc_project.State.Chassis.Transition.On"),
+         [](const std::string& requested, std::string& resp) {
++            std::unique_ptr<HostFirmwarePowerGuard> firmwareGuard;
++            if (!requested.ends_with(".Off"))
++            {
++                firmwareGuard = std::make_unique<HostFirmwarePowerGuard>();
++            }
+             if (requested ==
+                 "xyz.openbmc_project.State.Chassis.Transition.PowerCycle")
+             {
+@@ -3338,6 +3396,11 @@
+             "RequestedPowerTransition",
+             std::string("xyz.openbmc_project.State.Chassis.Transition.On"),
+             [](const std::string& requested, std::string& resp) {
++            std::unique_ptr<HostFirmwarePowerGuard> firmwareGuard;
++            if (!requested.ends_with(".Off"))
++            {
++                firmwareGuard = std::make_unique<HostFirmwarePowerGuard>();
++            }
+                 if (requested ==
+                     "xyz.openbmc_project.State.Chassis.Transition.On")
+                 {

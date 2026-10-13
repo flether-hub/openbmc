@@ -5,4 +5,5 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 SRC_URI:append:ceb-gnrd = " \
     file://0001-ceb-gnrd-ignore-fan-tach-failures-while-host-off.patch \
     file://0002-ceb-gnrd-deduplicate-failsafe-state-logs.patch \
+    file://0003-ceb-gnrd-quiet-fan-logs-during-host-transitions.patch \
     "

@@ -1,0 +1,247 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] pid: quiet transient telemetry logs and report zone transitions once
+
+Allow 60 seconds for telemetry after daemon startup and each observed
+host-state change. Suppress only transient availability diagnostics;
+critical/threshold diagnostics remain immediate and persistent failures
+are reported after the interval. Keep all failure detection and PWM
+control active. Replace misleading missing text with the actual reason
+and remove per-fan copies of the zone transition message.
+
+Upstream-Status: Inappropriate [CEB-GNRD board policy]
+
+diff --git a/hoststatemonitor.hpp b/hoststatemonitor.hpp
+--- a/hoststatemonitor.hpp
++++ b/hoststatemonitor.hpp
+@@ -6,6 +6,7 @@
+ #include <sdbusplus/message.hpp>
+ #include <xyz/openbmc_project/State/Host/common.hpp>
+ 
++#include <chrono>
+ #include <functional>
+ #include <iostream>
+ #include <memory>
+@@ -46,7 +47,29 @@
+         return powerStatusOff;
+     }
+ 
++    // Only diagnostics wait for host-powered telemetry to settle. Fan
++    // failure checks, protection demand and PWM output remain active.
++    bool sensorLogsSettling() const
++    {
++        return std::chrono::steady_clock::now() < sensorLogDeadline;
++    }
++
+   private:
++    void recordState(const std::string& stateValue)
++    {
++        if (stateValue != lastHostState)
++        {
++            lastHostState = stateValue;
++            sensorLogDeadline = std::chrono::steady_clock::now() +
++                                std::chrono::seconds(60);
++        }
++        powerStatusOn = stateValue.ends_with(".Running");
++        powerStatusOff = stateValue.ends_with(".Off");
++    }
++
++    std::string lastHostState;
++    std::chrono::steady_clock::time_point sensorLogDeadline =
++        std::chrono::steady_clock::now() + std::chrono::seconds(60);
+     explicit HostStateMonitor(sdbusplus::bus_t& bus);
+ 
+     void handleStateChange(sdbusplus::message_t& message);
+@@ -115,13 +138,7 @@
+         {
+             const std::string& stateValue =
+                 std::get<std::string>(findState->second);
+-            bool newPowerStatus = stateValue.ends_with(".Running");
+-            powerStatusOff = stateValue.ends_with(".Off");
+-
+-            if (newPowerStatus != powerStatusOn)
+-            {
+-                powerStatusOn = newPowerStatus;
+-            }
++            recordState(stateValue);
+         }
+     }
+     catch (const std::exception& e)
+@@ -145,8 +162,7 @@
+         auto currentState = reply.unpack<std::variant<std::string>>();
+ 
+         const std::string& stateValue = std::get<std::string>(currentState);
+-        powerStatusOn = stateValue.ends_with(".Running");
+-        powerStatusOff = stateValue.ends_with(".Off");
++        recordState(stateValue);
+     }
+     catch (const std::exception& e)
+     {
+diff --git a/pid/zone.hpp b/pid/zone.hpp
+--- a/pid/zone.hpp
++++ b/pid/zone.hpp
+@@ -212,7 +212,7 @@
+                 }
+                 outputFailsafeLogWithZone(_zoneId, this->getFailSafeMode(),
+                                           sensorInput,
+-                                          "The sensor has timed out.");
++                                          "Sensor timeout");
+             }
+             else
+             {
+@@ -229,7 +229,7 @@
+                     _failSafeSensors.erase(kt);
+                     outputFailsafeLogWithZone(_zoneId, this->getFailSafeMode(),
+                                               sensorInput,
+-                                              "The sensor has recovered.");
++                                              "All required inputs are available.");
+                 }
+             }
+         }
+diff --git a/pid/zone.cpp b/pid/zone.cpp
+--- a/pid/zone.cpp
++++ b/pid/zone.cpp
+@@ -125,7 +125,7 @@
+     }
+ 
+     outputFailsafeLogWithZone(_zoneId, this->getFailSafeMode(), name,
+-                              "The sensor is missing.");
++                              failReason);
+ 
+     if (debugEnabled)
+     {
+diff --git a/pid/fancontroller.cpp b/pid/fancontroller.cpp
+--- a/pid/fancontroller.cpp
++++ b/pid/fancontroller.cpp
+@@ -169,23 +169,9 @@
+         }
+         else
+         {
+-            // Only print once per transition when not debugging
+-            if (failsafeTransition)
+-            {
+-                failsafeTransition = false;
+-                std::cerr << "Zone " << _owner->getZoneID() << " fans, "
+-                          << (failsafeCurrState ? "entering failsafe"
+-                                                : "returning to normal")
+-                          << " mode, output pwm: " << percent << "\n";
+-
+-                std::map<std::string, std::pair<std::string, double>>
+-                    failSensorList = _owner->getFailSafeSensors();
+-                for (const auto& it : failSensorList)
+-                {
+-                    std::cerr << "Fail sensor: " << it.first
+-                              << ", reason: " << it.second.first << "\n";
+-                }
+-            }
++            // The zone logger reports one aggregate transition. Printing
++            // here duplicates the same event once for every fan controller.
++            failsafeTransition = false;
+         }
+     }
+     else
+diff --git a/failsafeloggers/failsafe_logger.cpp b/failsafeloggers/failsafe_logger.cpp
+--- a/failsafeloggers/failsafe_logger.cpp
++++ b/failsafeloggers/failsafe_logger.cpp
+@@ -12,52 +12,16 @@
+     const int64_t zoneId, const bool newFailsafeState,
+     const std::string& location, const std::string& reason)
+ {
+-    // Remove outdated log entries.
+-    const auto now = std::chrono::high_resolution_clock::now();
+-    uint64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+-                         now.time_since_epoch())
+-                         .count();
+-    // Limit the log output in 1 second.
+-    constexpr uint64_t secondInMS = 1000; // 1 second in milliseconds
+-    while (!_logTimestamps.empty() &&
+-           nowMs - _logTimestamps.front() >= secondInMS)
+-    {
+-        _logTimestamps.pop_front();
+-    }
+-
+-    // There is a failsafe state change, clear the logs in current state.
+-    bool originFailsafeState = _currentFailsafeState;
+-    if (newFailsafeState != _currentFailsafeState)
+-    {
+-        _logsInCurrentState.clear();
+-        _currentFailsafeState = newFailsafeState;
+-    }
+-    // Do not output the log if the capacity is reached, or if the log is
+-    // already encountered in the current state.
+-    std::string locationReason = location + " @ " + reason;
+-    if (_logTimestamps.size() >= _logMaxCountPerSecond ||
+-        _logsInCurrentState.contains(locationReason))
++    // Several inputs and fan controllers share one zone. Only report
++    // aggregate transitions; input-specific reasons use outputSensorLog.
++    if (newFailsafeState == _currentFailsafeState)
+     {
+         return;
+     }
+-    _logsInCurrentState.insert(locationReason);
+-
+-    // Only output the log if the zone enters, stays in, or leaves failsafe
+-    // mode. No need to output the log if the zone stays in non-failsafe mode.
+-    if (newFailsafeState)
+-    {
+-        std::cerr << "Zone `" << zoneId
+-                  << "` is in failsafe mode.\t\tWith update at `" << location
+-                  << "`: " << reason << "\n";
+-    }
+-    else if (!newFailsafeState && originFailsafeState)
+-    {
+-        std::cerr << "Zone `" << zoneId
+-                  << "` leaves failsafe mode.\t\tWith update at `" << location
+-                  << "`: " << reason << "\n";
+-    }
+-
+-    _logTimestamps.push_back(nowMs);
++    _currentFailsafeState = newFailsafeState;
++    std::cerr << "Zone " << zoneId
++              << (newFailsafeState ? " entered failsafe: " : " left failsafe: ")
++              << location << ": " << reason << "\n";
+ }
+ 
+ void FailsafeLogger::outputSensorLog(
+diff --git a/failsafeloggers/failsafe_logger_utility.hpp b/failsafeloggers/failsafe_logger_utility.hpp
+--- a/failsafeloggers/failsafe_logger_utility.hpp
++++ b/failsafeloggers/failsafe_logger_utility.hpp
+@@ -20,6 +20,13 @@
+ 
+ namespace pid_control
+ {
++inline bool immediateSensorDiagnostic(const std::string& reason)
++{
++    return reason.find("threshold") != std::string::npos ||
++           reason.find("critical") != std::string::npos ||
++           reason.find("Margin hot") != std::string::npos;
++}
++
+ 
+ /** Given a sensor name, attempt to output entering/leaving-failsafe-mode
+  * logs for its corresponding zones.
+@@ -36,6 +43,12 @@
+             if (HostStateMonitor::getInstance().isPowerOff())
+             {
+                 logger->clearLogs();
++                continue;
++            }
++            if (newFailsafeState &&
++                HostStateMonitor::getInstance().sensorLogsSettling() &&
++                !immediateSensorDiagnostic(reason))
++            {
+                 continue;
+             }
+             logger->outputSensorLog(zoneId, newFailsafeState, location, reason);
+@@ -58,6 +71,12 @@
+             logger->clearLogs();
+             return;
+         }
++        if (newFailsafeState &&
++            HostStateMonitor::getInstance().sensorLogsSettling() &&
++            !immediateSensorDiagnostic(reason))
++        {
++            return;
++        }
+         logger->outputFailsafeLog(zoneId, newFailsafeState, location, reason);
+     }
+ }

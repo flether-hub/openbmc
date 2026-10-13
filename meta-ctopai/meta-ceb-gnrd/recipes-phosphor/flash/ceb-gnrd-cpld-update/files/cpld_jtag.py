@@ -112,7 +112,13 @@ def host_off():
         ['busctl', 'get-property', 'xyz.openbmc_project.State.Chassis',
          '/xyz/openbmc_project/state/chassis0', 'xyz.openbmc_project.State.Chassis',
          'CurrentPowerState'], capture_output=True, text=True, timeout=2, check=True)
-    return result.stdout.strip() == 's "xyz.openbmc_project.State.Chassis.PowerState.Off"'
+    if result.stdout.strip() != 's "xyz.openbmc_project.State.Chassis.PowerState.Off"':
+        return False
+    stable = subprocess.run(
+        ['busctl', 'get-property', 'xyz.openbmc_project.State.Chassis',
+         '/xyz/openbmc_project/state/chassis0', 'xyz.openbmc_project.State.Chassis',
+         'FirmwareProgrammingAllowed'], capture_output=True, text=True, timeout=2, check=True)
+    return stable.stdout.strip() == 'b true'
 
 
 def boot_id():

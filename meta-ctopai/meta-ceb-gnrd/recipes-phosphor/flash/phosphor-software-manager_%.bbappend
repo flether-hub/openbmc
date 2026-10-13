@@ -2,6 +2,7 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/${PN}:"
 
 SRC_URI:append:ceb-gnrd = " \
     file://0001-ceb-gnrd-bmc-update-partition-selection.patch \
+    file://0002-ceb-gnrd-lock-bmc-staging-against-other-updaters.patch \
     file://bios-update.sh \
     file://bios-layout.txt \
     file://obmc-flash-host-bios@.service \

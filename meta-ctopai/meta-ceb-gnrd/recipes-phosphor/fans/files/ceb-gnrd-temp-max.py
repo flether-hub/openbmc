@@ -83,6 +83,10 @@ TEMP_INPUT_RE = re.compile(r"temp(\d+)_input$")
 CPU_INPUT_LABEL_RE = re.compile(r"Die|Core\s+\d+", re.IGNORECASE)
 
 POLL_SECONDS = 2
+# Host-powered telemetry is temporarily unavailable during boot/reset. These
+# intervals delay diagnostics only; the protection temperature remains active.
+SENSOR_LOG_SETTLE_SECONDS = 60
+MISSING_LOG_DELAY_SECONDS = 10
 SAMPLE_STALE_SECONDS = 15
 PECI_RESCAN_SECONDS = 30
 PECI_DEVICE_ROOT = "/sys/bus/peci/devices"
@@ -539,6 +543,30 @@ async def watchdog_task(sensors, availability, operational, progress, interval=5
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(message)s")
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    log_state = {"settle_until": time.monotonic() + SENSOR_LOG_SETTLE_SECONDS,
+                 "host_state": None}
+
+    def host_transition(msg):
+        if (msg.message_type is MessageType.SIGNAL
+                and msg.path == "/xyz/openbmc_project/state/host0"
+                and msg.interface == PROPS and msg.member == "PropertiesChanged"
+                and msg.signature == "sa{sv}as"
+                and msg.body[0] == "xyz.openbmc_project.State.Host"):
+            current = msg.body[1].get("CurrentHostState")
+            if current is not None and current.value != log_state["host_state"]:
+                log_state["host_state"] = current.value
+                log_state["settle_until"] = time.monotonic() + SENSOR_LOG_SETTLE_SECONDS
+        return None
+
+    bus.add_message_handler(host_transition)
+    try:
+        await call(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                   "org.freedesktop.DBus", "AddMatch", "s",
+                   ["type='signal',path='/xyz/openbmc_project/state/host0',"
+                    "interface='org.freedesktop.DBus.Properties',"
+                    "member='PropertiesChanged',arg0='xyz.openbmc_project.State.Host'"])
+    except Exception as exc:
+        LOG.warning("Cannot monitor host transitions for sensor diagnostics: %s", exc)
     sensors = {"CPU": TempSensor("CPU_MAX_TEMP"), "DIMM": TempSensor("DIMM_MAX_TEMP")}
     assocs = {"CPU": Associations(), "DIMM": Associations()}
     thresholds = {}
@@ -580,6 +608,7 @@ async def main():
     was_on = False
     last_rescan = -PECI_RESCAN_SECONDS
     missing_groups = set()
+    missing_since = {}
     while True:
         on = await host_is_on(bus)
         now = time.monotonic()
@@ -590,6 +619,8 @@ async def main():
                     and now - last_rescan >= PECI_RESCAN_SECONDS)):
             last_rescan = now
             await asyncio.to_thread(rescan_peci)
+        if on != was_on:
+            log_state["settle_until"] = now + SENSOR_LOG_SETTLE_SECONDS
         was_on = on
         # sysfs reads are PECI transactions: keep them off the event loop
         sources = await asyncio.to_thread(scan_sources)
@@ -618,8 +649,16 @@ async def main():
         if not on:
             # Power-off is expected, not a temperature recovery/failure.
             missing_groups.clear()
+            missing_since.clear()
         else:
-            newly_missing = missing - missing_groups
+            for group in list(missing_since):
+                if group not in missing:
+                    del missing_since[group]
+            for group in missing:
+                missing_since.setdefault(group, now)
+            newly_missing = {group for group in missing - missing_groups
+                             if now >= log_state["settle_until"]
+                             and now - missing_since[group] >= MISSING_LOG_DELAY_SECONDS}
             recovered = missing_groups - missing
             if newly_missing:
                 LOG.warning("No readable PECI temperature for %s; using %.1f C fan failsafe",
@@ -627,7 +666,9 @@ async def main():
             if recovered:
                 LOG.info("PECI temperature sources recovered for %s",
                          ", ".join(sorted(recovered)))
-            missing_groups = missing
+            # A brief unavailable interval never logged as a fault must not
+            # produce a recovered message when its first live sample arrives.
+            missing_groups = (missing_groups - recovered) | newly_missing
         for group, sensor in sensors.items():
             values = [readings[path] for path, (g, _) in sources.items()
                       if g == group and path in readings

@@ -1,0 +1,115 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] static: serialize BMC staging with BIOS and CPLD programming
+
+Acquire backend locks before changing any staged files. Keep the locks
+through the pending static update until reboot; an Active property or
+completed Web task only means staging is done. Refuse other activations
+without deleting another job's images. BIOS/CPLD also check pending
+markers after acquiring their locks, covering daemon restarts.
+
+Upstream-Status: Inappropriate [CEB-GNRD update policy]
+
+diff --git a/bmc/static/flash.cpp b/bmc/static/flash.cpp
+--- a/bmc/static/flash.cpp
++++ b/bmc/static/flash.cpp
+@@ -8,6 +8,12 @@
+ 
+ #include <phosphor-logging/lg2.hpp>
+ 
++#include <fcntl.h>
++#include <sys/file.h>
++#include <unistd.h>
++
++#include <memory>
++#include <utility>
+ #include <cstdint>
+ #include <algorithm>
+ #include <filesystem>
+@@ -18,6 +24,59 @@
+ 
+ namespace
+ {
++// BIOS holds the first lock exclusively; CPLD holds both exclusively. Web
++// uploads share the CPLD lock, so the backend must also exclude BIOS/BMC jobs.
++class BoardFirmwareLocks
++{
++  public:
++    BoardFirmwareLocks()
++    {
++        bios = open("/run/lock/ceb-gnrd-bios-update.lock",
++                    O_CREAT | O_RDWR | O_CLOEXEC, 0600);
++        if (bios < 0 || flock(bios, LOCK_EX | LOCK_NB) != 0)
++        {
++            release();
++            return;
++        }
++        cpld = open("/run/lock/ceb-gnrd-cpld-update.lock",
++                    O_CREAT | O_RDWR | O_CLOEXEC, 0600);
++        if (cpld < 0 || flock(cpld, LOCK_SH | LOCK_NB) != 0)
++        {
++            release();
++        }
++    }
++    ~BoardFirmwareLocks()
++    {
++        release();
++    }
++    BoardFirmwareLocks(const BoardFirmwareLocks&) = delete;
++    BoardFirmwareLocks& operator=(const BoardFirmwareLocks&) = delete;
++    bool valid() const
++    {
++        return bios >= 0 && cpld >= 0;
++    }
++
++  private:
++    int bios = -1;
++    int cpld = -1;
++    void release()
++    {
++        if (cpld >= 0)
++        {
++            close(cpld);
++            cpld = -1;
++        }
++        if (bios >= 0)
++        {
++            close(bios);
++            bios = -1;
++        }
++    }
++};
++// Static staging reports Active before the reboot writes flash. Keep the
++// locks until process shutdown, including after the upload task completes.
++std::unique_ptr<BoardFirmwareLocks> stagedBmcLocks;
++
+ constexpr auto PATH_INITRAMFS = "/run/initramfs";
+ constexpr auto FLASH_ALT_SERVICE_TMPL = "obmc-flash-bmc-alt@";
+ } // namespace
+@@ -55,6 +114,19 @@
+     // the image to flash during reboot.
+     fs::path uploadDir(IMG_UPLOAD_DIR);
+     fs::path toPath(PATH_INITRAMFS);
++
++    auto interlock = std::make_unique<BoardFirmwareLocks>();
++    std::error_code pendingError;
++    bool pending = fs::exists(toPath / "bmc-partitions.txt", pendingError);
++    // An unowned incomplete marker without a published plan may be recovered
++    // by retrying BMC staging under these locks. BIOS/CPLD must still refuse it.
++    if (stagedBmcLocks || !interlock->valid() || pending || pendingError)
++    {
++        error("BMC activation blocked: another firmware update is active or staged");
++        softwareServer::Activation::activation(
++            softwareServer::Activation::Activations::Failed);
++        return;
++    }
+ 
+     // The package-local selection is processed only after normal image
+     // validation/signature verification. No global settings carry to the next
+@@ -274,6 +346,7 @@
+         fail("cannot remove incomplete marker");
+         return;
+     }
++    stagedBmcLocks = std::move(interlock);
+     info("BMC update {ID}: partitions staged, U-Boot={BOOT}, environment reset={ENV}",
+          "ID", versionId, "BOOT", selected.contains("u-boot"),
+          "ENV", selected.contains("u-boot-env"));

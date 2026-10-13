@@ -41,3 +41,6 @@ FILES:${PN}:append:ceb-gnrd = " ${systemd_system_unitdir}/phosphor-ipmi-host.ser
 
 # Platform-event persistence uses the board SEL logger extension.
 RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-sel-logger"
+
+# Board front-panel buttons cannot be masked by the BMC.
+SRC_URI:append:ceb-gnrd = " file://0007-ceb-gnrd-report-front-panel-masking-unsupported.patch"

@@ -10,7 +10,6 @@
 
 EEPROM=/sys/bus/i2c/devices/10-0050/eeprom
 DEFAULT=/usr/share/ceb-gnrd/default-fru.bin
-BLANK=ffffffffffffffffffffffffffffffff
 
 i=0
 while [ ! -r "$EEPROM" ] && [ "$i" -lt 30 ]
@@ -23,10 +22,25 @@ if [ ! -r "$EEPROM" ]; then
     exit 1
 fi
 
-# BusyBox od has no -A/-t/-N: first 16 bytes as 8 hex words
-first=$(dd if="$EEPROM" bs=16 count=1 2>/dev/null | od -v -x | head -n 1)
-first=$(echo "${first#* }" | tr -d ' ')
-if [ "$first" != "$BLANK" ]; then
+# Read the entire EEPROM successfully before making the blank decision.
+# An erased header is not proof that the remaining FRU data is empty.
+snapshot=$(mktemp /tmp/ceb-gnrd-fru.XXXXXX) || exit 1
+trap 'rm -f "$snapshot"' 0
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if ! cat "$EEPROM" > "$snapshot" || [ ! -s "$snapshot" ]; then
+    echo "Unable to read the entire FRU EEPROM; left unchanged" >&2
+    exit 1
+fi
+# BusyBox od emits an offset, hex words and a final offset-only line.
+# Reject every non-FFFF word rather than inspecting just the common header.
+hex=$(od -v -x "$snapshot") || {
+    echo "Unable to inspect FRU EEPROM contents; left unchanged" >&2
+    exit 1
+}
+if ! printf '%s\n' "$hex" | awk '
+    NF > 1 { words += NF - 1; for (i = 2; i <= NF; i++) if ($i != "ffff") bad = 1 }
+    END { exit (bad || !words) ? 1 : 0 }'; then
     echo "FRU EEPROM is not blank, left unchanged"
     exit 0
 fi

@@ -4,4 +4,5 @@
 /etc/ssl/certs/https
 /etc/ssl/certs/authority
 /var/lib/ceb-gnrd
+/var/lib/ipmi
 /var/lib/bmcweb/bmcweb_persistent_data.json

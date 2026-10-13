@@ -34,6 +34,14 @@ flock -s -n 8 || {
     exit 1
 }
 
+# Recheck after acquiring the update locks. A static BMC update remains pending
+# until reboot, including if bmcweb or the software updater daemon restarted.
+if [[ -e /run/initramfs/bmc-partitions.txt ||
+      -e /run/initramfs/ceb-gnrd-update-incomplete ]]; then
+    echo "ERROR: BMC firmware update is staged; restart the BMC before updating BIOS." >&2
+    exit 1
+fi
+
 # Progress for the web page: the image directory is /tmp/images/<version id>, and the
 # software manager's object of this update is /xyz/openbmc_project/software/<id>.
 # Its ActivationProgress.Progress (0-100) becomes PercentComplete of the Redfish
@@ -64,7 +72,19 @@ power_status() {
         xyz.openbmc_project.State.Chassis CurrentPowerState 2>/dev/null) || return 2
     case "$state" in
         *"PowerState.On"*)                    echo on ;;
-        *"PowerState.Off"*)                   echo off ;;
+        *"PowerState.Off"*)
+            # Generic Off also includes a pending power-on/cycle delay.
+            # Require the board state machine's stable Off indication.
+            state=$(busctl get-property xyz.openbmc_project.State.Chassis \
+                /xyz/openbmc_project/state/chassis0 \
+                xyz.openbmc_project.State.Chassis FirmwareProgrammingAllowed \
+                2>/dev/null) || return 2
+            case "$state" in
+                'b true') echo off ;;
+                'b false') echo transitioning ;;
+                *) return 2 ;;
+            esac
+            ;;
         *"PowerState.TransitioningToOff"*|*"PowerState.TransitioningToOn"*)
             echo transitioning
             ;;
@@ -186,6 +206,13 @@ for name in "${LAYOUT_REGIONS[@]}"; do
     [[ " ${SELECTED_REGIONS[*]} " == *" $name "* ]] || echo "Region kept unchanged: $name"
 done
 
+# Power-control rejects software On/Reset/Cycle requests while this lock is
+# held. Acquire before checking Off so no new request races flash selection.
+exec 7>/run/lock/ceb-gnrd-host-flash.lock
+flock -n 7 || {
+    echo "ERROR: Another host firmware programmer is active." >&2
+    exit 1
+}
 wait_for_host_off
 
 find_bios_mtd() {
@@ -375,6 +402,9 @@ set_progress 89
 release_bios_spi_nor
 set_flash_select 0
 sleep 1
+# Flash is detached and owned by the host again; permit the required power cycle.
+flock -u 7
+exec 7>&-
 HOST_POWER=$(power_status) || {
     echo "ERROR: Unable to determine host power state after BIOS flash." >&2
     exit 1

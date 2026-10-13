@@ -87,7 +87,8 @@ class Update(ServiceInterface):
                 raise ValueError('JTAG Master-1 device is unavailable')
             RUN.mkdir(mode=0o700, parents=True, exist_ok=True)
             # Same BIOS lock as the existing updater, plus a CPLD singleton.
-            for name in ('ceb-gnrd-bios-update', 'ceb-gnrd-cpld-update'):
+            for name in ('ceb-gnrd-bios-update', 'ceb-gnrd-cpld-update',
+                         'ceb-gnrd-host-flash'):
                 Path('/run/lock').mkdir(exist_ok=True)
                 fd = os.open(f'/run/lock/{name}.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
                 try:
@@ -96,6 +97,9 @@ class Update(ServiceInterface):
                     os.close(fd)
                     raise ValueError('BIOS or CPLD update is already active')
                 self.locks.append(fd)
+            if (Path('/run/initramfs/bmc-partitions.txt').exists() or
+                    Path('/run/initramfs/ceb-gnrd-update-incomplete').exists()):
+                raise ValueError('A BMC firmware update is staged; restart the BMC before CPLD programming')
             job = os.urandom(16).hex()
             image = RUN / 'image.bit'
             fd = os.open(image, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)

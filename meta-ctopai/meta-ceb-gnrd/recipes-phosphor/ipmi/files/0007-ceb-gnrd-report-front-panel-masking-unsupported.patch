@@ -1,0 +1,57 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ipmi: report unmaskable board front-panel buttons
+
+Do not query non-existent Power0/Reset0 or x86 button masking objects.
+Advertise no front-panel masking capability and reject disable requests
+without pretending to change the physical button behavior.
+
+Upstream-Status: Inappropriate [CEB-GNRD board policy]
+
+diff --git a/chassishandler.cpp b/chassishandler.cpp
+--- a/chassishandler.cpp
++++ b/chassishandler.cpp
+@@ -1120,6 +1120,13 @@
+                                              const std::string& buttonPath,
+                                              const std::string& buttonIntf)
+ {
++    // CEB-GNRD: Power is a notification input; Reset is not connected to
++    // the BMC. Neither physical button can be masked. An absent optional
++    // reading advertises Disable Allowed=false in Get Chassis Status.
++    if (buttonPath == powerButtonPath || buttonPath == resetButtonPath)
++    {
++        return std::nullopt;
++    }
+     bool buttonDisabled = false;
+     boost::system::error_code ec;
+     std::string service;
+@@ -1163,6 +1170,11 @@
+                               const std::string& buttonPath,
+                               const std::string& buttonIntf, bool disable)
+ {
++    if (buttonPath == powerButtonPath || buttonPath == resetButtonPath)
++    {
++        // Enabling an unmaskable button is a no-op; disabling is unsupported.
++        return !disable;
++    }
+     std::string service;
+     boost::system::error_code ec;
+     ec = ipmi::getService(ctx, buttonIntf, buttonPath, service);
+@@ -2558,9 +2570,17 @@
+ 
+ ipmi::RspType<> ipmiSetFrontPanelButtonEnables(
+     ipmi::Context::ptr ctx, bool disablePowerButton, bool disableResetButton,
+-    bool, bool, uint4_t)
++    bool disableDiagnosticButton, bool disableSleepButton, uint4_t reserved)
+ {
+     using namespace chassis::internal;
++
++    // Reject unsupported disable requests before doing any writes. The
++    // board reports all four Disable Allowed bits as false.
++    if (disablePowerButton || disableResetButton || disableDiagnosticButton ||
++        disableSleepButton || reserved != 0)
++    {
++        return ipmi::responseInvalidFieldRequest();
++    }
+ 
+     // set power button Enabled property
+     bool success =
