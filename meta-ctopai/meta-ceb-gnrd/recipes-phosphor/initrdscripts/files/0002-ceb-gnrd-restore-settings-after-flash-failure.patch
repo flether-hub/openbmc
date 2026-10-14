@@ -1,0 +1,58 @@
+Subject: [PATCH] initfs: restore saved settings even after a partition write fails
+
+Upstream-Status: Inappropriate [CEB-GNRD update recovery]
+
+The board flash hook stops further writes using flash_failed and break.
+Preserve the restore phase and return failure after attempting restoration.
+Do not copy into an unmounted directory or remove the backup on failure.
+
+--- a/obmc-update.sh
++++ b/obmc-update.sh
+@@ -241,6 +241,10 @@
+ then
+ 	mkdir -p $upper
+-	cp -rp "$save/." "$upper/"
++	if ! cp -rp "$save/." "$upper/"
++	then
++		echoerr "Unable to restore saved settings to RAM."
++		flash_failed=1
++	fi
+ fi
+ 
+ if test -d "$save" -a "$dorestore" = "y"
+@@ -254,16 +258,28 @@
+ 	upper=$rwdir${upper#"$odir"}
+ 
+ 	mkdir -p $rwdir
+-	mount "$rwdev" $rwdir -t "$(probe_fs_type "$rwdev")" -o $rwopts
+-	mkdir -p "$upper"
+-	cp -rp "$save/." "$upper/"
+-	umount $rwdir
+-	rmdir $rwdir
++	if mount "$rwdev" $rwdir -t "$(probe_fs_type "$rwdev")" -o $rwopts
++	then
++		if ! mkdir -p "$upper" || ! cp -rp "$save/." "$upper/"
++		then
++			echoerr "Unable to restore saved settings to rwfs."
++			flash_failed=1
++		fi
++		if ! umount $rwdir
++		then
++			echoerr "Unable to unmount restored rwfs."
++			flash_failed=1
++		fi
++		rmdir $rwdir || :
++	else
++		echoerr "Unable to mount rwfs for settings restoration; retaining backup."
++		flash_failed=1
++	fi
+ fi
+ 
+-if test "$doclean" = "y"
++if test "$doclean" = "y" && test "${flash_failed:-0}" = 0
+ then
+ 	rm -rf "$save"
+ fi
+ 
+-exit
++exit "${flash_failed:-0}"

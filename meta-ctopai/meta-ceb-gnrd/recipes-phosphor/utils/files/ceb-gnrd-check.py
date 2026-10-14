@@ -23,7 +23,7 @@ FILE_LIMIT = 256 * 1024
 REPORT_LIMIT = 2 * 1024 * 1024
 BUNDLE_LIMIT = 4 * 1024 * 1024
 POST_PAGE_SIZE = 32
-POST_ENTRY_LIMIT = 1024  # two retained boots, at most 512 records per boot
+POST_ENTRY_LIMIT = 512  # latest retained boot, at most 512 records
 PASSWORD = os.environ.get('BMC_PASSWORD', '0penBmc')
 ENV = 'qemu' if sys.argv[1] == '0' else 'board'
 COUNT = Counter()
@@ -505,9 +505,9 @@ def peripherals_network():
     rc, value = prop('xyz.openbmc_project.State.Boot.PostCode0', '/xyz/openbmc_project/State/Boot/PostCode0',
                      'xyz.openbmc_project.State.Boot.PostCode', 'CurrentBootCycleCount')
     match = re.search(r'\b[qut] (\d+)', value)
-    require('POST history retained cycles <= 2', rc == 0 and match is not None and int(match[1]) <= 2, value.strip())
+    require('POST history retained cycles <= 1', rc == 0 and match is not None and int(match[1]) <= 1, value.strip())
     slots = [p for p in Path('/var/lib/phosphor-post-code-manager/host0').glob('*') if p.name.isdecimal()]
-    require('POST persisted archive slots <= 2', len(slots) <= 2, ', '.join(p.name for p in slots))
+    require('POST persisted archive slots <= 1', len(slots) <= 1, ', '.join(p.name for p in slots))
     if HOST == 'on':
         require('POST history nonempty', match is not None and int(match[1]) > 0)
     check('RTC time readable', ['hwclock', '-r'], r'\d')

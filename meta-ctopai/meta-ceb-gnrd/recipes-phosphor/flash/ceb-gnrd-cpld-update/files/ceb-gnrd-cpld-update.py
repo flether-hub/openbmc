@@ -16,7 +16,8 @@ from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType, MessageType, NameFlag, PropertyAccess, RequestNameReply
 from dbus_fast.service import ServiceInterface, dbus_property, method
 from cpld_jtag import (DEVICE, RECEIPT, MAX_IMAGE, bit_plan, boot_id,
-                       checkpoint, configuration, host_off, require_background)
+                       checkpoint, configuration, host_off, require_background,
+                       PROGRAM_TIMEOUT_SECONDS)
 
 LOG = logging.getLogger('ceb-gnrd-cpld-update')
 
@@ -26,6 +27,8 @@ INTERFACE = 'com.ctopai.CebGnrd.CpldUpdate'
 RUN = Path('/run/ceb-gnrd-cpld-update')
 ACTIVE = {'WaitingForHostOff', 'Preflight', 'Erasing', 'Writing', 'Verifying'}
 REBOOT_GUARD_HELPER = '/usr/bin/obmc-flash-bmc'
+HOST_WAIT_SECONDS = 600
+WORKER_EXIT_GRACE_SECONDS = 15
 
 
 def reconcile_reboot_guard(operation):
@@ -62,7 +65,9 @@ class Update(ServiceInterface):
 
     @dbus_property(access=PropertyAccess.READ)
     def Status(self) -> 's':
-        value = dict(self.state, ready=self.ready(), timeoutSeconds=600,
+        value = dict(self.state, ready=self.ready(), timeoutSeconds=PROGRAM_TIMEOUT_SECONDS,
+                     hostWaitTimeoutSeconds=HOST_WAIT_SECONDS,
+                     programmingTimeoutSeconds=PROGRAM_TIMEOUT_SECONDS,
                      supportedFormat='bit', maxUploadBytes=MAX_IMAGE,
                      currentBootId=boot_id(),
                      remainingSeconds=max(0, int(self.deadline - time.monotonic())))
@@ -84,7 +89,7 @@ class Update(ServiceInterface):
         image = None
         job = None
         try:
-            accepted_deadline = time.monotonic() + 600
+            accepted_deadline = time.monotonic() + HOST_WAIT_SECONDS
             if len(encoded) > 4 * ((MAX_IMAGE + 2) // 3):
                 raise ValueError('CPLD .bit file exceeds 1 MiB')
             raw = binascii.a2b_base64(encoded, strict_mode=True)
@@ -116,7 +121,7 @@ class Update(ServiceInterface):
             if time.monotonic() >= self.deadline:
                 raise TimeoutError('The upgrade deadline expired while validating the .bit image')
             self.state = dict(job=job, phase='WaitingForHostOff', progress=0,
-                              detail='Please shut down the host. Waiting for stable Off state before CPLD programming.',
+                              detail='Please shut down the host within 10 minutes. Programming has its own separate 10-minute budget.',
                               sha256=plan['sha256'], flashSha256=plan['flashSha256'],
                               feature=plan['feature'], bootId=boot_id(),
                               flashVerified=False, programmingFormat='bit',
@@ -201,6 +206,9 @@ class Update(ServiceInterface):
                 raise asyncio.CancelledError
             if time.monotonic() >= deadline:
                 raise TimeoutError('The 10-minute update timeout expired before programming')
+            # Waiting for shutdown must not consume the Flash programming budget.
+            deadline = time.monotonic() + PROGRAM_TIMEOUT_SECONDS
+            self.deadline = deadline
             self.publish(phase='Preflight', progress=3, detail='Host is Off; checking JTAG')
             checkpoint(self.state)
             process = await asyncio.create_subprocess_exec(
@@ -230,7 +238,9 @@ class Update(ServiceInterface):
                 self.publish(**completion)
                 checkpoint(self.state)
 
-            await asyncio.wait_for(messages(), max(0.1, deadline - time.monotonic()))
+            # Allow the worker's own deadline check and failure cleanup to finish
+            # before the service enforces its final process timeout.
+            await asyncio.wait_for(messages(), max(0.1, deadline - time.monotonic()) + WORKER_EXIT_GRACE_SECONDS)
         except asyncio.CancelledError:
             self.publish(phase='Cancelled', progress=0, detail='Update cancelled before programming')
             checkpoint(self.state)

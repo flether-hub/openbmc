@@ -1,0 +1,26 @@
+Subject: [PATCH] CEB-GNRD: migrate the factory netupdate command
+
+Upstream-Status: Inappropriate [CEB-GNRD board-specific]
+
+Only replace the exact unsafe factory script or a missing script. Preserve
+custom commands, transfer filenames and all provisioned network addresses.
+
+--- a/board/aspeed/evb_ast2600/evb_ast2600.c
++++ b/board/aspeed/evb_ast2600/evb_ast2600.c
+@@ -190,5 +190,8 @@
+ 		{ "netboot_addr", CEB_GNRD_NETBOOT_ADDR },
+ 		{ "bootnet", CEB_GNRD_BOOTNET },
++		{ "netupdate_kernel", "image-kernel" },
++		{ "netupdate_rofs", "image-rofs" },
++		{ "netupdate", CEB_GNRD_NETUPDATE },
+ 	};
+ 	bool changed = false;
+ 	bool save_ok = true;
+@@ -255,5 +258,7 @@
+ 			else if (!strcmp(defaults[i].name, "bootnet") && migrate_rootfs)
+ 				legacy = kernel_only_bootnet;
++			else if (!strcmp(defaults[i].name, "netupdate"))
++				legacy = CEB_GNRD_LEGACY_NETUPDATE;
+ 			if (!legacy || strcmp(value, legacy))
+ 				continue;
+ 		}

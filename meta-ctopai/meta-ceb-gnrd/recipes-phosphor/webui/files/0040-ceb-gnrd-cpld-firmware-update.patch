@@ -261,7 +261,7 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +  "pageCpld": {
 +    "title": "CPLD",
 +    "description": "Upload an Anlogic .bit file (maximum 1 MiB).",
-+    "shutdownWarning": "Shut down the host before programming. The update has a 10-minute timeout.",
++    "shutdownWarning": "Shut down the host before programming. Waiting for shutdown and programming each have a separate 10-minute timeout.",
 +    "notReady": "Programming is blocked until the running design supports background programming, the target feature code is approved, and the JTAG device is available.",
 +    "image": "CPLD firmware (.bit)",
 +    "start": "Start update",
@@ -272,8 +272,8 @@ Upstream-Status: Inappropriate [CEB-GNRD CPLD upgrade]
 +    "cancelFailed": "Unable to cancel. Programming may already have started.",
 +    "unavailable": "CPLD update service is unavailable.",
 +    "connectionLost": "Connection to the BMC was lost. The displayed progress is the last received state; programming success has not been confirmed. Rechecking the existing job.",
-+    "remaining": "Time remaining in the complete update: {seconds} seconds.",
-+    "timeout": "The 10-minute monitoring timeout expired. Check the server update status before retrying.",
++    "remaining": "Time remaining in the current stage: {seconds} seconds.",
++    "timeout": "Monitoring of the current stage timed out. Check the server update status before retrying.",
 +    "activationWarning": "AC power cycle required: disconnect all PSU AC inputs, wait until the standby LEDs turn off, then restore AC to load the new CPLD firmware.",
 +    "phases": {
 +      "Idle": "Ready",

@@ -201,6 +201,8 @@
     }
   },
   "pageFanControl": {
+    "mixed": "混合设置，请选择应用于全部风扇的模式",
+    "customDuty": "{value}%（自定义）",
     "description": "配置自适应或固定风扇转速控制。",
     "fan": "风扇",
     "allFans": "全部风扇",
@@ -1454,7 +1456,7 @@
   "pageCpld": {
     "title": "CPLD",
     "description": "上传安路 .bit 文件（最大 1 MiB）。",
-    "shutdownWarning": "请先关闭 Host。升级超时为 10 分钟。",
+    "shutdownWarning": "请先关闭 Host。等待关机和编程分别有独立的 10 分钟超时。",
     "notReady": "尚未确认当前固件支持后台编程、批准目标配置码，或 JTAG 设备不可用，已阻止烧写。",
     "image": "CPLD 固件（.bit）",
     "start": "开始更新",
@@ -1465,8 +1467,8 @@
     "cancelFailed": "无法取消，烧写可能已经开始。",
     "unavailable": "CPLD 升级服务不可用。",
     "connectionLost": "与 BMC 的连接已中断，当前显示的是最后收到的进度；尚未确认烧录成功，正在重新查询已有任务。",
-    "remaining": "整个升级流程剩余时间：{seconds} 秒。",
-    "timeout": "10分钟监控超时，请检查服务端升级状态后再决定是否重试。",
+    "remaining": "当前阶段剩余时间：{seconds} 秒。",
+    "timeout": "当前阶段监控超时，请检查服务端升级状态后再决定是否重试。",
     "phases": {
       "Idle": "就绪",
       "WaitingForHostOff": "等待 Host 关机",

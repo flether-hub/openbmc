@@ -4,7 +4,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 # timezone, hostname, SSH host keys, web certificates, the CEB-GNRD fan settings
 # and the bmcweb data (web login sessions, Redfish service UUID), so the web page
 # stays logged in across a BMC update.  A factory reset still erases everything.
-SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-whitelist file://ceb-gnrd-update-skip-u-boot.sh file://ceb-gnrd-netboot.sh file://0001-ceb-gnrd-tftp-rootfs-for-network-boot.patch"
+SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-whitelist file://ceb-gnrd-update-skip-u-boot.sh file://ceb-gnrd-netboot.sh file://0001-ceb-gnrd-tftp-rootfs-for-network-boot.patch file://0002-ceb-gnrd-restore-settings-after-flash-failure.patch"
 
 do_install:append:ceb-gnrd() {
     install -Dm0644 ${UNPACKDIR}/ceb-gnrd-netboot.sh ${D}/ceb-gnrd-netboot.sh
@@ -18,7 +18,8 @@ do_install:append:ceb-gnrd() {
         index($0, "flashcp -v") && index($0, "&& rm") {
             print "\t\tif ! flashcp -v \"$f\" \"/dev/$m\"; then"
             print "\t\t\techoerr \"Flash write failed: $f; stopping update\""
-            print "\t\t\texit 1"
+            print "\t\t\tflash_failed=1"
+            print "\t\t\tbreak"
             print "\t\tfi"
             print "\t\trm \"$f\""
             stop_on_error = 1

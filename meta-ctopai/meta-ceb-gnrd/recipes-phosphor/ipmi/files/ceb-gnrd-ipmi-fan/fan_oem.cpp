@@ -49,7 +49,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiCebGnrdGetFans(ipmi::Context::ptr ctx)
     if (ec)
     {
         lg2::error("GetFans failed: {ERROR}", "ERROR", ec.message());
-        return ipmi::responseResponseError();
+        return ipmi::responseUnspecifiedError();
     }
     return ipmi::responseSuccess(std::move(data));
 }
@@ -57,6 +57,13 @@ ipmi::RspType<std::vector<uint8_t>> ipmiCebGnrdGetFans(ipmi::Context::ptr ctx)
 ipmi::RspType<> ipmiCebGnrdSetFan(ipmi::Context::ptr ctx, uint8_t fan,
                                   uint8_t mode, uint8_t duty, uint8_t persist)
 {
+    // Reject caller errors before contacting the service. Adaptive mode ignores
+    // duty, matching the documented OEM command and the D-Bus implementation.
+    if ((fan != 0xFF && fan >= 6) || mode > 1 || persist > 1 ||
+        (mode == 1 && (duty < 10 || duty > 100)))
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
     boost::system::error_code ec;
     bool ok = ctx->bus->yield_method_call<bool>(
         ctx->yield, ec, fanService, fanPath, fanInterface, "SetFan", fan, mode,
@@ -64,11 +71,13 @@ ipmi::RspType<> ipmiCebGnrdSetFan(ipmi::Context::ptr ctx, uint8_t fan,
     if (ec)
     {
         lg2::error("SetFan failed: {ERROR}", "ERROR", ec.message());
-        return ipmi::responseResponseError();
+        return ipmi::responseUnspecifiedError();
     }
     if (!ok)
     {
-        return ipmi::responseInvalidFieldRequest();
+        // Inputs already passed validation. A service refusal is an execution
+        // failure, including older services which still return false on errors.
+        return ipmi::responseUnspecifiedError();
     }
     return ipmi::responseSuccess();
 }

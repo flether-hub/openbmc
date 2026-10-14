@@ -1,0 +1,117 @@
+Subject: [PATCH] fan-control: retain exact custom duties and display mixed settings
+
+Upstream-Status: Inappropriate [CEB-GNRD integration]
+
+--- a/src/views/Settings/FanControl/FanControl.vue
++++ b/src/views/Settings/FanControl/FanControl.vue
+@@ -51,7 +51,7 @@
+       <b-button
+         variant="primary"
+         type="submit"
+-        :disabled="isSaving || !hasControl"
++        :disabled="isSaving || !hasControl || mode === 'mixed'"
+       >
+         {{ $t('global.action.saveSettings') }}
+       </b-button>
+@@ -92,9 +92,8 @@
+ import BVToastMixin from '@/components/Mixins/BVToastMixin';
+ import PageTitle from '@/components/Global/PageTitle';
+ 
+-// The service has argument-free methods only: bmcweb's D-Bus REST cannot pass
+-// arguments here.  Saving is three calls: select the fan(s), set the mode of
+-// the selection, then choose whether the result is kept after a BMC reboot.
++// SetFan accepts exact IPMI duty values through the scalar D-Bus REST bridge.
++// The mode, duty and persistence setting are applied in one transaction.
+ const settingsPath = '/xyz/openbmc_project/ceb_gnrd/fan_settings';
+ const fanCount = 6;
+ 
+@@ -114,11 +113,8 @@
+       modeOptions: [
+         { text: this.$t('pageFanControl.adaptive'), value: 'adaptive' },
+         { text: this.$t('pageFanControl.fixed'), value: 'fixed' },
++        { text: this.$t('pageFanControl.mixed'), value: 'mixed', disabled: true },
+       ],
+-      fixedOptions: [20, 30, 40, 50, 60, 70, 80, 90, 100].map((value) => ({
+-        text: `${value}%`,
+-        value,
+-      })),
+       fanOptions: [
+         { text: this.$t('pageFanControl.allFans'), value: 'all' },
+         ...Array.from({ length: fanCount }, (_, index) => ({
+@@ -138,11 +134,25 @@
+     };
+   },
+   computed: {
++    fixedOptions() {
++      const values = [20, 30, 40, 50, 60, 70, 80, 90, 100];
++      const custom = Number(this.fixedSpeed);
++      if (Number.isInteger(custom) && custom >= 10 && custom <= 100 && !values.includes(custom)) {
++        values.push(custom);
++        values.sort((a, b) => a - b);
++      }
++      return values.map((value) => ({
++        text: value % 10 !== 0 || value < 20
++          ? this.$t('pageFanControl.customDuty', { value }) : `${value}%`,
++        value,
++      }));
++    },
+     fanIndex() {
+       // fan number 0..5, 0xFF = all fans
+       return this.selectedFan === 'all' ? 255 : Number(this.selectedFan);
+     },
+     setCommand() {
++      if (this.mode === 'mixed') return '';
+       const fixed = this.mode === 'fixed';
+       return `ipmitool raw 0x30 0x02 ${[
+         this.fanIndex,
+@@ -158,9 +168,9 @@
+     this.loadSettings();
+   },
+   methods: {
+-    async callService(action) {
++    async callService(action, data = []) {
+       const response = await api.post(`${settingsPath}/action/${action}`, {
+-        data: [],
++        data,
+       });
+       return response?.data?.data;
+     },
+@@ -183,6 +193,11 @@
+     },
+     showSelectedFan() {
+       const status = this.fanStatus[this.selectedFan === 'all' ? 0 : this.selectedFan];
++      if (this.selectedFan === 'all' && status && this.fanStatus.some((fan) =>
++        fan.fixed !== status.fixed || (fan.fixed && fan.duty !== status.duty))) {
++        this.mode = 'mixed';
++        return;
++      }
+       if (status?.fixed && status.duty >= 10 && status.duty <= 100) {
+         this.mode = 'fixed';
+         this.fixedSpeed = status.duty;
+@@ -191,15 +206,13 @@
+       }
+     },
+     async saveSettings() {
+-      const select =
+-        this.selectedFan === 'all' ? 'All' : `${this.selectedFan}`;
+-      const apply =
+-        this.mode === 'fixed' ? `Fixed${this.fixedSpeed}` : 'Adaptive';
+-      const keep = this.persist ? 'Keep' : 'Forget';
++      if (this.mode === 'mixed') return;
++      const fixed = this.mode === 'fixed';
++      const data = [this.fanIndex, fixed ? 1 : 0,
++        fixed ? Number(this.fixedSpeed) : 0, this.persist ? 1 : 0];
+       this.isSaving = true;
+       try {
+-        const action = `ApplyFan${select}${apply}${keep}`;
+-        if ((await this.callService(action)) !== true) throw new Error(action);
++        if ((await this.callService('SetFan', data)) !== true) throw new Error('SetFan');
+         await this.loadSettings();
+         this.successToast(this.$t('pageFanControl.saveSuccess'));
+       } catch {
+--- a/src/locales/en-US.json
++++ b/src/locales/en-US.json
+@@ -1,1 +1,3 @@
+         "fixed": "Fixed speed",
++        "mixed": "Mixed settings - choose a mode for all fans",
++        "customDuty": "{value}% (custom)",

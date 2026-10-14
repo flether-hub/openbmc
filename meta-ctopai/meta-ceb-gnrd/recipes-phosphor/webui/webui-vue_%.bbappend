@@ -59,6 +59,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0057-ceb-gnrd-consumed-boot-override.patch \
     file://0058-ceb-gnrd-fix-event-export-and-fan-load-status.patch \
     file://0059-ceb-gnrd-fan-speed-ten-percent-steps.patch \
+    file://0060-ceb-gnrd-vm-close-and-cpld-stage-timeouts.patch \
+    file://0061-ceb-gnrd-show-custom-and-mixed-fan-settings.patch \
     file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "

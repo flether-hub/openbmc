@@ -23,6 +23,8 @@ DEVICE = '/dev/ceb-cpld-jtag'
 RECEIPT = Path('/var/lib/ceb-gnrd-cpld-update/result.json')
 RECOVERY = RECEIPT.with_name('recovery.json')
 MAX_IMAGE = 1024 * 1024
+PROGRAM_TIMEOUT_SECONDS = 600
+MIN_PROGRAM_SECONDS = 540
 # DS600_1.8 section 2.9.11, EF3L90CG400: Golden feature/address at
 # 0x060000, Golden bitstream at 0x061000. Never erase/program that region.
 PRIMARY_FLASH_LIMIT = 0x060000
@@ -340,7 +342,7 @@ class Jtag:
 
 
 def update(path, job, remaining, expected_digest=None):
-    if not 0 < remaining <= 600:
+    if not 0 < remaining <= PROGRAM_TIMEOUT_SECONDS:
         raise ValueError('Invalid remaining upgrade timeout')
     deadline = time.monotonic() + remaining
     with Path(path).open('rb') as source:
@@ -387,6 +389,9 @@ def update(path, job, remaining, expected_digest=None):
         jtag.scan(32, 0x400080a5)
         jtag.wait_flash_ready(2, 'QE register write')
         trace('END background entry and QE setup')
+        guard(force=True)
+        if deadline - time.monotonic() < MIN_PROGRAM_SECONDS:
+            raise TimeoutError('Insufficient programming time before erase; Flash data was not erased')
         arm_recovery(plan, job, existing)
         for sector in range(plan['sectors']):
             address = sector * 4096

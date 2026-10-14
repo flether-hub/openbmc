@@ -8,4 +8,4 @@ FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/${PN}:"
 SRC_URI:append:ceb-gnrd = " file://settings.override.yml"
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-bound-persistent-setting-text.patch"
+SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-bound-persistent-setting-text.patch file://0002-ceb-gnrd-recover-oversized-persisted-settings.patch"

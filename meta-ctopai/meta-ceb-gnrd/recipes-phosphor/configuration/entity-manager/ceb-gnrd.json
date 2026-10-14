@@ -299,7 +299,7 @@
             "Type": "AspeedFan"
         },
         {
-            "FailSafePercent": 30,
+            "FailSafePercent": 60,
             "MinThermalOutput": 30,
             "Name": "Zone 1",
             "Type": "Pid.Zone"

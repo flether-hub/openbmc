@@ -26,7 +26,8 @@
  * alone.  Partition layout (must match the device trees):
  *   kernel  0x0100000  size 0x0900000
  *   rofs    0x0a00000  size 0x2800000
- * ${filesize} is a hex string without "0x", hence "0x${filesize}" for test.
+ * Both downloads and hex size checks complete before the first Flash write.
+ * Separate RAM ranges retain kernel (max 9 MiB) and rofs (max 40 MiB).
  * Usage:  run netupdate      (then: reset)
  * The files are taken from ${serverip}; names are in netupdate_kernel and
  * netupdate_rofs.
@@ -44,6 +45,31 @@
 	"setenv bootargs \"${ceb_netboot_saved_bootargs}\"; " \
 	"setenv ceb_netboot_saved_bootargs; fi; fi"
 
+#define CEB_GNRD_NETUPDATE \
+	"sf probe 0 && " \
+	"tftpboot 0x90000000 ${netupdate_kernel} && " \
+	"itest 0x${filesize} -gt 0 && itest 0x${filesize} -le 0x900000 && " \
+	"setenv ceb_netupdate_kernel_size ${filesize} && " \
+	"tftpboot 0x91000000 ${netupdate_rofs} && " \
+	"itest 0x${filesize} -gt 0 && itest 0x${filesize} -le 0x2800000 && " \
+	"setenv ceb_netupdate_rofs_size ${filesize} && " \
+	"sf update 0x90000000 0x100000 ${ceb_netupdate_kernel_size} && " \
+	"sf update 0x91000000 0xa00000 ${ceb_netupdate_rofs_size} && " \
+	"echo Network update done, run reset || " \
+	"echo Network update FAILED"
+
+/* Exact old factory value: migrate this script, preserving custom scripts. */
+#define CEB_GNRD_LEGACY_NETUPDATE \
+	"sf probe 0 && " \
+	"tftpboot 0x90000000 ${netupdate_kernel} && " \
+	"test 0x${filesize} -le 0x900000 && " \
+	"sf update 0x90000000 0x100000 ${filesize} && " \
+	"tftpboot 0x90000000 ${netupdate_rofs} && " \
+	"test 0x${filesize} -le 0x2800000 && " \
+	"sf update 0x90000000 0xa00000 ${filesize} && " \
+	"echo Network update done, run reset || " \
+	"echo Network update FAILED"
+
 #define CEB_GNRD_ENV	\
 	"netboot_kernel=" CEB_GNRD_NETBOOT_KERNEL "\0" \
 	"netboot_rofs=" CEB_GNRD_NETBOOT_ROFS "\0" \
@@ -51,14 +77,4 @@
 	"bootnet=" CEB_GNRD_BOOTNET "\0" \
 	"netupdate_kernel=image-kernel\0"	\
 	"netupdate_rofs=image-rofs\0"	\
-	"netupdate="	\
-		"sf probe 0 && "	\
-		"tftpboot 0x90000000 ${netupdate_kernel} && "	\
-		"test 0x${filesize} -le 0x900000 && "	\
-		"sf update 0x90000000 0x100000 ${filesize} && "	\
-		"tftpboot 0x90000000 ${netupdate_rofs} && "	\
-		"test 0x${filesize} -le 0x2800000 && "	\
-		"sf update 0x90000000 0xa00000 ${filesize} && "	\
-		"echo Network update done, run reset || "	\
-		"echo Network update FAILED"	\
-	"\0"
+	"netupdate=" CEB_GNRD_NETUPDATE "\0"

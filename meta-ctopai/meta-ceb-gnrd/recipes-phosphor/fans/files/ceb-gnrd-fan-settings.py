@@ -471,7 +471,10 @@ class FanSettings(ServiceInterface):
                     # Maintenance retries this exact snapshot, even when the
                     # user had not enabled persistent settings.
                     LOG.error("Fan setting rollback pending: %s", rollback_error)
-            return False
+            # False is reserved for invalid caller parameters. Runtime failures
+            # must take the IPMI bridge's internal-error path after rollback.
+            raise DBusError(IFACE + ".OperationFailed",
+                            "Cannot apply fan settings: %s" % str(exc)[:512]) from exc
         LOG.info("SetFan: fan %s mode %s duty %d persist %d (%d value(s) changed)",
                  "all" if fan == 0xFF else fan, "fixed" if mode else "adaptive",
                  duty, persist, changed)

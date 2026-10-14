@@ -1,0 +1,28 @@
+Subject: [PATCH] settings: validate restored values before applying properties
+
+Upstream-Status: Inappropriate [CEB-GNRD persistent settings recovery]
+
+Validate the entire restored object before setters can serialize partial data.
+Convert size-limit rejection to the archive exception already handled by the
+manager: log the affected object, remove the invalid archive and initialize
+all properties on that object from defaults. D-Bus writes retain InvalidArgument.
+
+--- a/settings_manager.hpp.mako
++++ b/settings_manager.hpp.mako
+@@ -390,5 +390,16 @@
+     }
+ % endif
++    try
++    {
++% for p in props:
++        checkPersistentSettingSize(${p['prop']});
++% endfor
++    }
++    catch (const sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument&)
++    {
++        throw cereal::Exception("Persisted setting exceeds board size limits on ${object}");
++    }
++
+ <% props = [] %>
+ % for index, item in enumerate(settingsDict[object]):
+   % for  prop, metaDict in item['Properties'].items():

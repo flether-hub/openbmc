@@ -189,6 +189,8 @@ class _Threshold(ServiceInterface):
     """Common state of one upper threshold level; subclasses expose the
     D-Bus property names of that level."""
 
+    HYSTERESIS_C = 2.0
+
     def __init__(self, interface, high):
         super().__init__(interface)
         self.interface_name = interface
@@ -204,7 +206,10 @@ class _Threshold(ServiceInterface):
     def evaluate(self, sensor_name, value, alarm_name):
         if math.isnan(value):
             return False          # reading lost: keep the current alarm state
-        alarm = value >= self.high
+        # Assert at the original limit; clear only after cooling by 2 C.
+        # Keep state unchanged inside the band to avoid SEL/LED oscillation.
+        alarm = (value > self.high - self.HYSTERESIS_C
+                 if self.alarm else value >= self.high)
         if alarm != self.alarm:
             self.alarm = alarm
             self.emit_properties_changed({alarm_name: alarm})

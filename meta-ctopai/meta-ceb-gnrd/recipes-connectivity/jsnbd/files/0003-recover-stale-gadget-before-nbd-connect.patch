@@ -1,0 +1,19 @@
+Subject: [PATCH] nbd-proxy: recover orphan gadget before connecting a new NBD
+
+Upstream-Status: Inappropriate [CEB-GNRD virtual media recovery]
+
+The hook must inspect old kernel/client state before the new client starts.
+If the existing gadget cannot safely be reclaimed, reject the new session
+without changing the old NBD connection or USB binding.
+
+--- a/nbd-proxy.c
++++ b/nbd-proxy.c
+@@ -928,4 +928,8 @@
+     fprintf(stderr, "virtual-media[%s,pid=%ld]: session start device=%s timeout=%d\n", ctx->config->name, (long)getpid(), ctx->config->nbd_device, ctx->nbd_timeout);
++    rc = run_state_hook(ctx, "recover", true);
++    if (rc)
++        goto out_free;
++
+     rc = open_nbd_socket(ctx);
+     if (rc)
+         goto out_free;
