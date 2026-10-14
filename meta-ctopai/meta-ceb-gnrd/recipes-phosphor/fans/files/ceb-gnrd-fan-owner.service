@@ -3,9 +3,14 @@ Description=Select BMC ownership of CEB-GNRD fans
 BindsTo=phosphor-pid-control.service
 After=phosphor-pid-control.service
 PartOf=phosphor-pid-control.service
+# Settings changes legitimately restart PID and this ownership service.
+# Retry failures with RestartSec without rate-limiting requested starts.
+StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=150
 ExecStart=/usr/sbin/ceb-gnrd-fan-owner
 ExecStopPost=/usr/sbin/ceb-gnrd-fan-release
 Restart=on-failure

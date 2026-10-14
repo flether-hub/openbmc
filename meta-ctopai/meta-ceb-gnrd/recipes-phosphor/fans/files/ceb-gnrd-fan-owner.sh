@@ -150,6 +150,7 @@ if [ -z "$reg" ] || ! $devmem "$tol" 32 $((reg & ~mask)) 2>/dev/null ||
     exit 1
 fi
 echo "$line: BMC owns the fans, reset tolerance cleared (a BMC reset returns them to the CPLD)"
+systemd-notify --ready --status="BMC fan ownership established; reset tolerance cleared"
 
 holder_status=0
 wait "$holder" || holder_status=$?

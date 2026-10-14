@@ -18,7 +18,7 @@ S = "${UNPACKDIR}"
 SYSTEMD_SERVICE:${PN} = "ceb-gnrd-fan-owner.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 
-RDEPENDS:${PN} = "libgpiod-tools util-linux"
+RDEPENDS:${PN} = "libgpiod-tools util-linux systemd"
 
 do_install() {
     install -d ${D}${sbindir} ${D}${systemd_system_unitdir}

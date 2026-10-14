@@ -202,20 +202,50 @@ async def write_config(bus, interface, stored):
     return changed
 
 
+async def wait_unit_ready(bus, unit):
+    """Wait for the start job and readiness, not just job acceptance."""
+    deadline = asyncio.get_running_loop().time() + 10
+    while asyncio.get_running_loop().time() < deadline:
+        body = await call(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+                          "org.freedesktop.systemd1.Manager", "GetUnit", "s", [unit])
+        properties = await call(bus, "org.freedesktop.systemd1", body[0],
+                                PROPS, "GetAll", "s", ["org.freedesktop.systemd1.Unit"])
+        state = properties[0]["ActiveState"].value
+        job = properties[0]["Job"].value
+        if job[0] == 0:
+            if state == "active":
+                return
+            if state in ("failed", "inactive"):
+                raise RuntimeError("%s is %s after control refresh" % (unit, state))
+        await asyncio.sleep(0.25)
+    raise RuntimeError("%s did not become ready within 10 seconds" % unit)
+
+
 async def refresh_control(bus):
     """Rebuild controllers even if Entity-Manager suppressed its change signal.
 
     Its property setter can update the value and then return an error while
     saving JSON. Readback alone does not prove that swampd loaded the value.
-    RestartUnit queues a restart; it does not wait for sensors to become ready.
+    RestartUnit only queues a restart. Wait for that job and ownership
+    readiness before reporting that the requested configuration was applied.
     """
     await call(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
                "org.freedesktop.systemd1.Manager", "RestartUnit", "ss",
                ["phosphor-pid-control.service", "replace"])
+    await wait_unit_ready(bus, "phosphor-pid-control.service")
+    # PartOf/BindsTo releases ownership while PID restarts. Also recover an
+    # ownership service left rate-limited by an earlier settings operation.
+    await call(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+               "org.freedesktop.systemd1.Manager", "ResetFailedUnit", "s",
+               ["ceb-gnrd-fan-owner.service"])
+    await call(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+               "org.freedesktop.systemd1.Manager", "StartUnit", "ss",
+               ["ceb-gnrd-fan-owner.service", "replace"])
+    await wait_unit_ready(bus, "ceb-gnrd-fan-owner.service")
 
 
 async def finish_control_refresh(bus, iface):
-    """Only clear the retry flag after systemd accepted the restart."""
+    """Only clear retry intent after PID and fan ownership are ready."""
     iface.refresh_pending = True
     await refresh_control(bus)
     iface.refresh_pending = False
@@ -260,7 +290,11 @@ async def read_pwm_percent(bus, index):
         body = await call(bus, MAPPER, MAPPER_PATH, MAPPER, "GetObject", "sas", [path, [FANPWM_IFACE]])
         service = next(iter(body[0]))
         value = await call(bus, service, path, PROPS, "Get", "ss", [FANPWM_IFACE, "Target"])
-        return max(0, min(100, int(round(float(value[0].value)))))
+        # Control.FanPwm.Target uses 0..255; Sensor.Value uses percent.
+        target = float(value[0].value)
+        if not math.isfinite(target) or not 0 <= target <= 255:
+            return None
+        return int(round(target * 100.0 / 255.0))
     except Exception:
         return None
 
