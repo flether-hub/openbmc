@@ -313,7 +313,7 @@ def system():
 def ipmi_sensors_fans():
     section('2. IPMI, sensors, FRU, fans and GPIO')
     check('IPMI Get Device ID', ['ipmitool', 'raw', '0x06', '0x01'], r'^\s*[0-9a-f]{2} ')
-    check('IPMI identity', ['ipmitool', 'mc', 'info'], r'Manufacturer ID\s*:\s*6659')
+    check('IPMI identity', ['ipmitool', 'mc', 'info'], r'Manufacturer ID\s*:\s*49871')
     check('chassis status', ['ipmitool', 'chassis', 'status'], 'System Power')
     check('SEL information', ['ipmitool', 'sel', 'info'], 'Version')
     check('SOL configuration', ['ipmitool', 'sol', 'info', '1'], 'Enabled')
@@ -326,7 +326,7 @@ def ipmi_sensors_fans():
         lan_env = dict(os.environ, IPMI_PASSWORD=PASSWORD)
         check('IPMI LAN+ authentication/Get Device ID', ['ipmitool', '-I', 'lanplus', '-H', match[1],
               '-U', 'root', '-E', '-N', '2', '-R', '1', 'mc', 'info'],
-              r'Manufacturer ID\s*:\s*6659', timeout=20, env=lan_env)
+              r'Manufacturer ID\s*:\s*49871', timeout=20, env=lan_env)
     else:
         result('SKIP', 'IPMI LAN+ authentication', 'eth0 has no IPv4 address')
     text = check('sensor list', ['ipmitool', 'sensor'], r'\|', timeout=40)

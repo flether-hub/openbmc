@@ -4,7 +4,7 @@ Date: Fri, 2 Oct 2026 00:00:00 +0000
 Subject: [PATCH] strings: add the CEB-GNR-D product name
 
 "ipmitool mc info" prints the Product Name from a built-in table; add the
-CEB-GNR-D entry (manufacturer 6659 = 0x1A03, product 3346 = 0x0D12).
+CEB-GNR-D entry (manufacturer 49871 = 0xC2CF, product 59380 = 0xE7F4).
 
 Upstream-Status: Inappropriate [CEB-GNRD board-specific product id]
 ---
@@ -17,8 +17,8 @@ diff --git a/lib/ipmi_strings.c b/lib/ipmi_strings.c
  } oem_valstr_list_t;
  
  const struct oemvalstr ipmi_oem_product_info[] = {
-+   /* CEB-GNRD board: manufacturer 6659 (0x1A03), product 3346 (0x0D12) */
-+   { 6659, 3346, "CEB-GNR-D" },
++   /* CEB-GNRD board: manufacturer 49871 (0xC2CF), product 59380 (0xE7F4) */
++   { 49871, 59380, "CEB-GNR-D" },
 +
     /* Keep OEM grouped together */
  

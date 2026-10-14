@@ -596,7 +596,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 
 ### 4. IPMI、日志和保留策略
 
-* `ipmitool mc info`：Device ID 32、Device Revision 2、Manufacturer ID 6659、Product ID 3346；当前发行版本对应 Firmware Revision 2.01。
+* `ipmitool mc info`：Device ID 32、Device Revision 2、Manufacturer ID 49871、Product ID 59380（0xE7F4）；当前发行版本对应 Firmware Revision 2.01。
 * `ipmitool raw 0x30 0x01` 读取六个风扇，返回 25 字节。设置示例：`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`，全部固定 60%并保留；设置需要 Admin。
 * CPU 温度上限 UNC/UC/UNR 为 90/98/105°C，DIMM 为 80/85/95°C。电压使用 LC/UC；风扇没有转速阈值告警。板级私有 UNR接口不会触发 HardShutdown。
 * Host Off 时 CPU/DIMM 值为 0，停止 Host 供电传感器失读告警；Host On 失读时发布至少 70°C 的保护输入，保留更高的最后读值，直到恢复有效采样或确认 DC Off。告警使用真实读值，不用保护值制造温度告警。
