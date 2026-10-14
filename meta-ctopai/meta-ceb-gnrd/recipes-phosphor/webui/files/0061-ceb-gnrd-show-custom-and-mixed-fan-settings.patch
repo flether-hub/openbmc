@@ -111,7 +111,12 @@ Upstream-Status: Inappropriate [CEB-GNRD integration]
        } catch {
 --- a/src/locales/en-US.json
 +++ b/src/locales/en-US.json
-@@ -1,1 +1,3 @@
+@@ -207,6 +207,8 @@
+         "mode": "Control mode",
+         "adaptive": "Adaptive",
          "fixed": "Fixed speed",
 +        "mixed": "Mixed settings - choose a mode for all fans",
 +        "customDuty": "{value}% (custom)",
+         "fixedSpeed": "Fixed fan speed",
+         "unavailable": "No fan control configuration was found on the BMC, so fan speeds cannot be changed.",
+         "loadError": "Unable to load fan control settings.",
