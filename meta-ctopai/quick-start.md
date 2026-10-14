@@ -113,7 +113,7 @@ source oe-init-build-env build/ceb-gnrd
 | 对比项 | `. setup ceb-gnrd` | `source oe-init-build-env build/ceb-gnrd` |
 | :--- | :--- | :--- |
 | **功能定位** | OpenBMC 定制的一键初始化脚本 | Yocto 原生环境变量配置脚本 |
-| **配置文件生成** | 自动生成/覆写 `local.conf` 与 `bblayers.conf` | 不生成新配置，直接复用现有配置文件 |
+| **配置文件生成** | 首次生成配置；已有配置复用并执行板级迁移 | 不生成新配置，直接复用现有配置文件 |
 | **`MACHINE` 设定** | 自动在配置中锁定目标板卡为 `ceb-gnrd` | 依赖已有配置或需手动声明 `export MACHINE=...` |
 | **主要使用时机** | **首次初始化** / 全新构建时使用 | **日常开发** / 新窗口恢复环境时使用 |
 
@@ -138,13 +138,20 @@ source oe-init-build-env build/ceb-gnrd
 
 ### 4. 构建产物说明
 
-构建产物存放于：`build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/`
-* `obmc-phosphor-image-ceb-gnrd-*.static.mtd`：BMC SPI 原始固件镜像（供编程器烧录或 QEMU 启动）。
-* `obmc-phosphor-image-ceb-gnrd-*.tar.gz`：BMC 根文件系统压缩包。
-* `fitImage`：包含 Linux 内核与 Initramfs 的镜像。
-* `aspeed-ceb-gnrd.dtb`：编译后的板级设备树二进制。
+产物目录：`build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/`。各文件用途不同：
 
----
+| 产物 | 用途 |
+|---|---|
+| `obmc-phosphor-image-ceb-gnrd.static.mtd`（链接到带构建时间的文件） | 编程器/QEMU 使用的完整原始镜像，64 MiB，即 67,108,864 字节；编程器从地址 0 写入 |
+| `*.static.mtd.tar` | Web/Redfish 使用的 BMC 分区升级包，不能直接作为编程器原始镜像 |
+| `image-bmc` / `flash-ceb-gnrd` | 完整 `.static.mtd` 镜像的链接 |
+| `image-kernel` / `fitImage` | 内核、设备树和 initramfs 的 FIT 镜像 |
+| `image-rofs` | SquashFS-XZ 根文件系统，用于 `bootnet` / `netupdate` |
+| `image-rwfs` | JFFS2 可写分区镜像 |
+
+固件发行版本由 `meta-ctopai/conf/distro/ctopai-openbmc.conf` 的 `DISTRO_VERSION` 指定：当前为 `2.1.0`，Web 和 `/etc/os-release` 使用此字符串，IPMI `mc info` 显示 `2.01`。Git 标签 `2.00-golden-release` 标记的是此前的 2.00 发布提交，不会随工作区版本修改而移动。
+
+编程器烧录后，整片读回 64 MiB 并与实际烧录的原始文件比较。若出现 `unable to read id index table` 或其他 SquashFS 挂载错误，先核对文件格式、完整性、烧录偏移和高地址区域；完整启动日志与读回文件可帮助区分镜像问题和 SPI 读取问题。
 
 ## 四、在 QEMU 虚拟机中启动与测试
 
@@ -246,10 +253,10 @@ ip addr
 | TFTP 服务器地址 | **192.168.185.84**（Ubuntu 主机，U-Boot 默认 `serverip`） | **192.168.185.1**（QEMU 虚拟网络里的“宿主机”，`host=` 指定） |
 | TFTP 服务由谁提供 | Ubuntu 上的 `tftpd-hpa`（目录 `/srv/tftp`） | QEMU 自带，启动命令里加 `tftp=/srv/tftp` |
 | 网络 | 必须和 Ubuntu 在同一局域网（经交换机），192.168.185.0/24 | QEMU 的 `-nic user` 虚拟网络，只在虚拟机内部有效 |
-| 手动 TFTP 前要做什么 | 无（`serverip` 默认就是 .84） | 手动 `setenv serverip 192.168.185.1` |
+| 手动 TFTP 前要做什么 | 确认生产 MAC、空闲 ipaddr 与实际 serverip | 手动 `setenv serverip 192.168.185.1` |
 | `mii`、PHY 寄存器、RGMII 时序 | 真实硬件，**必须上板验证** | 模拟的（所有 PHY 地址都应答，页寄存器读出全 0），不能代表真实板子 |
 
-**镜像**：`fitImage` 只含内核、设备树和 initramfs，手动网络启动只替换这一部分，根文件系统仍用本地闪存的 rofs。文件在 `build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/fitImage`，文件名必须保持 `fitImage`。
+**镜像**：`fitImage` 只含内核、设备树和 initramfs，手动网络启动只替换这一部分，根文件系统仍用本地闪存的 rofs。若要同时从 TFTP 使用新 rootfs，部署 `image-kernel` 和 `image-rofs` 后执行 `run bootnet`（RAM overlay，不写 Flash）。文件在 `build/ceb-gnrd/tmp/deploy/images/ceb-gnrd/fitImage`，文件名必须保持 `fitImage`。
 
 #### 4.1 在 Ubuntu 上准备 TFTP 服务（物理主板和 QEMU 都用同一个目录）
 
@@ -299,21 +306,23 @@ bootm 0x83000000
 #### 4.3 物理主板上手动网络启动
 
 1. Ubuntu 的网口配好 `192.168.185.84/24`，BMC 的网口和它在同一局域网（经交换机或直连）。
-2. 烧入新编译的 U-Boot 和镜像后，**第一次要重置 U-Boot 环境**（环境存在闪存里；如果以前保存过带 `tftpboot` 的旧 `bootcmd`，会盖住新默认值，板子仍会先走网络），并按需设置 MAC。U-Boot 默认带有固定的本地管理地址（`ethaddr=02:26:00:00:00:01`、`eth1addr=02:26:00:00:00:02`），已保存的环境里缺这两项时，启动时会自动补齐并保存；真实板卡应写入每板唯一的生产 MAC：
+2. 更新后的 U-Boot 不再提供固定 `ethaddr` / `eth1addr`，也不会在缺失时自动补齐。先读取 `printenv bootcmd ethaddr eth1addr ipaddr serverip`，保留生产 MAC；仅在需要恢复默认环境时执行 `env default -a`，然后重新写入本板唯一的两路 MAC 和实际网络参数，再 `saveenv`。例如：
 
 ```
-env default -a
-setenv ethaddr 02:00:00:00:00:01
+setenv bootcmd 'run bootspi'
+setenv ethaddr <本板eth0的生产MAC>
+setenv eth1addr <本板eth1的生产MAC>
+setenv ipaddr <BMC在此网络中的空闲IPv4地址>
+setenv serverip <TFTP服务器IPv4地址>
 saveenv
-reset
 ```
 
-   `env default -a` 不可用时，手动设置：`setenv bootcmd 'run bootspi'; setenv ipaddr 192.168.185.200; setenv netmask 255.255.255.0; setenv gatewayip 192.168.185.1; setenv serverip 192.168.185.84; saveenv`。
+   尖括号内容必须替换为实际值，不能原样执行。已有保存的 MAC 不会被删除；整片编程器烧录或主动更新环境分区会改变环境内容。
 3. 重启后应直接从本地闪存启动，不出现 TFTP。要手动网络启动时，在 `Hit any key to stop autoboot` 时按任意键，然后执行 `tftpboot 0x83000000 fitImage` 和 `bootm 0x83000000`，串口日志里应出现 `TFTP from server 192.168.185.84; our IP address is 192.168.185.200` 和 `Bytes transferred`。
 4. 出问题时的排查（**只适用于物理板子**）：
    * Ubuntu：`ip -br addr`（地址在接 BMC 的网卡上）、`sudo ufw status`（放开 UDP 69）、`sudo journalctl -u tftpd-hpa -f`（看有没有收到请求）。
    * 抓包（局域网流量大，用 BMC 的 MAC 过滤）：`sudo tcpdump -i <网卡> -n -e ether host 02:00:00:00:00:01`。
-   * 链路已 `up` 但 ARP/TFTP 不通：用 `sudo ethtool -s <网卡> speed 100 duplex full autoneg on` 把链路限制到 100M 再试；100M 通而 1000M 不通，说明是 RGMII 延时问题，可在 U-Boot 里用 `mii write 2 0x1f 0xd08` 后读写 `0x11`（TX 延时，bit 8）和 `0x15`（RX 延时，bit 3）做实验，确认后再改设备树的 `phy-mode`。
+   * 链路已 `up` 但 ARP/TFTP 不通：先检查 IP、服务器、网线和交换机，查看 `mdio list` / `ethtool eth0`。当前代码使用 PHY 地址 1 和 `rgmii-id`，不要照旧说明向地址 2 写延时寄存器。
 
 #### 4.4 U-Boot 里的 NC-SI 口
 
@@ -331,16 +340,16 @@ reset
 
 1. `sf probe 0`，选中 BMC 的 SPI 闪存。
 2. 从 `serverip` 取 `image-kernel`（变量 `netupdate_kernel`）到内存 `0x90000000`，检查大小不超过 9 MiB，`sf update` 写到 `0x100000`。
-3. 取 `image-rofs`（变量 `netupdate_rofs`），检查大小不超过 44 MiB，`sf update` 写到 `0xa00000`。
+3. 取 `image-rofs`（变量 `netupdate_rofs`），检查大小不超过 40 MiB，`sf update` 写到 `0xa00000`。
 4. 成功后提示 `Network update done, run reset`。
 
-**不会改动**：U-Boot 本体和环境（`0x000000` 到 `0x0fffff`，所以保存的 `ethaddr`、`bootcmd` 不丢）、可写分区 `rwfs`（`0x3600000`，所以用户配置不丢）。
+**不会改动**：U-Boot 本体和环境（`0x000000` 到 `0x0fffff`，所以保存的 `ethaddr`、`bootcmd` 不丢）、可写分区 `rwfs`（`0x3200000`，所以用户配置不丢）。
 
 **准备**：把 `image-kernel`、`image-rofs` 放进 TFTP 目录（`sudo cp -L <deploy 目录>/image-kernel /srv/tftp/` 和 `image-rofs`，`chmod 644`）。物理主板上 `serverip` 默认就是 192.168.185.84；QEMU 里先 `setenv serverip 192.168.185.1`（并且 QEMU 要带 `tftp=`）。文件名不同时，用 `setenv netupdate_kernel <名字>` / `setenv netupdate_rofs <名字>` 修改。
 
 **注意**：
 * 写入过程中断电可能让镜像损坏；这条命令不写 U-Boot，所以即使失败，也还能进入 U-Boot 重新执行。
-* 旧的已保存环境会盖住新默认值，第一次需要 `env default -a; saveenv`（见 4.3）。
+* 旧的已保存环境会盖住新默认值，需要恢复默认环境时，先记录并恢复生产 MAC/网络配置再 `saveenv`（见 4.3）。
 * 在 QEMU 里它会改写 `.mtd` 文件，先备份：`cp obmc-phosphor-image-ceb-gnrd.static.mtd backup.mtd`。
 * `0x90000000` 是内存里的空闲区，1008 MiB 内存足够；分区偏移和大小来自设备树，改了分区布局要同步修改 `ceb-gnrd-env.h`。
 ---
@@ -537,75 +546,72 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 
 ## 六、当前功能与实现状态
 
-> 下表只描述代码里已经实现的内容；标 ⚠️ 的项还没有上板验证或存在疑问，详见 `port_guide.xlsx` 底部红字的“待澄清”区块。
+本章依据当前板级代码说明功能。`port_guide.xlsx` 是硬件配置和用途表，不再包含旧版红字“待澄清”区块。配置、接口存在和实际硬件数据通路正常应分别确认。
 
 ### 1. 板级硬件与固件布局
 
-| 项目 | 现状 |
-| :--- | :--- |
-| BMC Flash | W25Q512JV 64 MiB；布局：U-Boot / 环境变量 / 内核 9 MiB / **ROFS 44 MiB** / **RWFS 10 MiB**（`FLASH_RWFS_OFFSET:flash-65536 = "55296"`，设备树分区与之对应） |
-| 管理网口 `eth0` | MAC2 + RTL8211FS（`rgmii`，PHY 地址 2 ⚠️，复位由 CPLD 控制），默认 IPv4 DHCP（地址、网关、DNS 由 DHCP 服务器提供；`run-qemu.sh` 的模拟器里地址池从 `192.168.185.200` 开始） |
-| NC-SI 网口 `eth1` | MAC3，Linux 里默认 DHCP；E810 没有待机供电，主机上电后由 `ceb-gnrd-ncsi` 自动拉起（30 秒内没有链路就 down/up 重试，每 30 秒一次，最多 3 次），主机关机时关闭；U-Boot 里不启动该口 |
-| MAC 地址 | 保存在 U-Boot 环境变量 `ethaddr` / `eth1addr`，固件升级不会擦除 `u-boot-env` 分区 |
-| ADC | 内部 2.5 V 参考电压；`D3V0_BAT0` 因 R542/Q39 未焊会饱和 ⚠️ |
-| eSPI | 仅 Peripheral 通道；驱动带复位恢复、错误计数和 debugfs 日志 ⚠️（见下） |
-| RTC / 时间 | AST2600 内部 RTC（无电池）已关闭，板上 NCT3015Y 是 `rtc0`；内核开机校时，`ceb-gnrd-rtc-sync` 兜底（最多等 `/dev/rtc0` 3 秒，启动超时 5 秒；没有 `/dev/rtc0` 的环境，例如不带板级补丁的裸 QEMU，会等满 3 秒；`run-qemu.sh` 的模拟器里有 NCT3018Y 模型）；BMC 系统时间和 SEL 时间默认来自 RTC |
-| 主机 KCS | 设备树 `&kcs3` 带 `aspeed,lpc-io-reg = <0xca2>`（驱动必需），未配 SerIRQ；需要 eSPI 外设通道就绪、BIOS 把 KCS 端口设为 0xCA2 才通 ⚠️ |
-| U-Boot | 固定从本地 SPI 闪存启动（`bootcmd = run bootspi`）；默认网络参数与 Linux eth0 一致（用于手动 TFTP）；`run netupdate` 通过 TFTP 更新闪存里的内核和 rofs（见第四章 4.5）；NC-SI 口在 U-Boot 里禁用 |
-| PSU | `ceb-gnrd-psu-detect` 每 5 秒探测 0x58/0x59/0x5A，仅为在位模块创建 pmbus 设备；传感器有输入/输出电压、输入/输出功率和 PSUn_Temp（取 pmbus 的 temp2）⚠️ |
-| SD / eMMC | 本板没有，U-Boot 和 Linux 设备树都把 `emmc`、`sdhci` 相关节点设为 disabled，开机日志里不再有 `mmc0: Failed to initialize a non-removable card` |
-| 硬件看门狗 | AST2600 WDT1 由 systemd 喂狗（`RuntimeWatchdogSec=120s`），复位类型 `soc`（只复位 SoC，不是整颗芯片，避免 GPIO 回到上电状态让 CPLD/主机侧信号抖动 ⚠️ 上板要确认复位期间这些电平稳定）。`aspeed_wdt` 不支持预超时，所以 `systemd-conf` 安装了一个和 meta-phosphor 同名的 `/etc/systemd/system.conf.d/40-hardware-watchdog.conf`（同名文件 /etc 里的覆盖 /usr/lib 里的），只保留 `RuntimeWatchdogSec=120s` 和 `WatchdogDevice`，去掉 `RuntimeWatchdogPreSec`、`RuntimeWatchdogPreGovernor=panic`，否则每次开机都会有 `Failed to set watchdog pretimeout_governor` 提示（曾试过用空赋值清除，systemd 报 `Failed to parse RuntimeWatchdogPreSec=`，不可行）。内核崩溃：`CONFIG_PANIC_ON_OOPS` + `CONFIG_PANIC_TIMEOUT=5`，5 秒后重启；打开了 Magic SysRq（`echo c > /proc/sysrq-trigger` 可以制造崩溃做测试，串口 BREAK 不能触发）。服务恢复（标准做法，`ceb-gnrd-health`）：drop-in `10-ceb-gnrd-restart.conf` 给对象映射器、Entity-Manager、bmcweb、ipmid 和本层的风扇设置、温度最大值、告警灯服务设置 `Restart=always`、启动限制（5 分钟内 5 次）和 `OnFailure=obmc-bmc-service-quiesce@0.target`，服务一直起不来时 phosphor-state-manager 把 BMC 置为 Quiesced，并按 `phosphor-state-manager_%.bbappend` 里打开的 `auto-reboot-on-bmc-quiesce` 自动重启 BMC。上游没有次数限制，这里用 `ceb-gnrd-quiesce-reboot-limit.sh` 限制为**最多自动重启 1 次**（计数存在读写分区，开机 15 分钟后由定时器清零）：重启后同一个故障还在，BMC 就停在 Quiesced 状态，不再自动重启，并写一条 SEL，需要人工处理；上游的守护进程不向 systemd 报活，所以只能恢复崩溃，进程还在但卡死不会被发现，本层自己的三个服务是 `Type=notify` + `WatchdogSec=`，主循环卡死会被重启；`ceb-gnrd-wdt-reset-log` 在没有干净关机标记而 `bootstatus` 显示看门狗复位时写 SEL（在 U-Boot 里 `reset` 也会被记一次）。以上新增部分没有编译、没有验证 |
+| 项目 | 当前配置 |
+|---|---|
+| BMC Flash | W25Q512JVFIQ，64 MiB；U-Boot 896 KiB、环境 128 KiB、kernel 9 MiB、ROFS 40 MiB、RWFS 14 MiB；ROFS 起点 `0x00a00000`，RWFS 起点 `0x03200000` |
+| 管理网口 eth0 | 物理 MAC2（DT mac1），RTL8211FS，PHY 地址 1，`rgmii-id`；默认 IPv4 DHCP |
+| NC-SI eth1 | 物理 MAC3（DT mac2），Intel E810；Host On 且 BIOS POST complete 后等待 5 秒，再初始化；关机/POST 撤销时关闭，尊重 NICEnabled 设置 |
+| 网络匹配 | eth0 使用 `Path=platform-1e680000.ethernet`；eth1 使用 `Path=platform-1e670000.ethernet`；配置迁移保留 IP/DHCP/DNS/静态邻居 |
+| MAC 地址 | U-Boot 不再编入或自动补齐固定 MAC；已有保存的 `ethaddr` / `eth1addr` 继续使用，生产板应配置唯一地址 |
+| PSU | BMC 启动时一次探测 Linux i2c-7 的 0x58/0x59/0x5a；MEG-CRPS800AOP 使用 megcrps800，其余型号或未知型号默认 generic pmbus；不周期轮询/自动热插拔换驱动 |
+| ADC / 温度 | 16 路 ADC、4 个 LM75A 兼容板级温度；CPU/DIMM 最高温来自 PECI。D3V0_BAT0 分压仍需结合实际焊接确认 |
+| 调试串口 / SOL | UART5/ttyS4 是 115200 调试口；默认 Host SOL 为物理 UART3/ttyS2，Web 可另选 VUART1/ttyVUART0 |
+| RTC | NCT3015Y-R（Linux i2c-9，0x6f）使用 nct3018y 驱动作为 rtc0；片内 RTC 关闭；系统/RTC 时间保持 UTC，页面可按浏览器时区显示 |
+| eSPI / KCS | Peripheral 和 Virtual Wire ready；KCS3 在 0xCA2/0xCA3，未配置 KCS SerIRQ；POST 监听 0x80 |
+| CPLD JTAG | 专用 Master-1，寄存器 `0x1e6e4000`；不是 GPIOI Master-2；板级驱动提供 `/dev/ceb-gnrd-jtag` |
+| Watchdog | AST2600 WDT1，systemd RuntimeWatchdogSec=120s，SoC reset；内核 panic 后 5 秒重启 |
+| SD / eMMC | 未接入，设备树禁用；BMC 使用 SPI NOR 启动 |
 
-### 2. GPIO 行为
+### 2. GPIO 与电源行为
 
-| GPIO | 行为 |
-| :--- | :--- |
-| UID 按键 `BMC_UID_BUTTON_N`（GPIOV0） | 低有效，按下切换 identify 灯组；UID 灯 `BMC_UID_LED`（GPIOV1）高有效 |
-| CPU 开关机 `BMC_CPU_POWER_BUTTON`（V2）、复位 `BMC_CPU_RESET`（V3） | 低脉冲，由 `x86-power-control` 输出（200 ms / 强制关机 8 s / 复位 500 ms；强制关机脉冲在 `power-config-host0.json` 的 `ForceOffPulseMs`，`bios-update.sh` 里的 `FORCE_OFF_PULSE_S` 要比它大 1 秒） |
-| `BMC_CPU_PWRGD`（V4） | 高有效输入，供状态机判断上电 |
-| 电源按键输入 `BMC_POWER_BUTTON_INPUT`（GPIOM2） | **只检测**：按下时写 SEL 和日志，不触发开关机，也不直通到 CPU 电源按键输出 |
-| 告警灯 `BMC_SYS_ALERT_LED`（GPIOI5） | 内核 LED 名 `fault`，由 phosphor-led-manager 的标准组 `enclosure_fault` 驱动（`ceb-gnrd-alert-led` 只负责置位/清除该组的 `Asserted`，每 30 秒重发一次以防 led-manager 重启丢状态）。电压越限点亮，温度到达 UNR（不可恢复上限）点亮；**CPU_MAX_TEMP / DIMM_MAX_TEMP 到达 Upper Critical（98°C / 85°C）也点亮**，阈值告警解除且没有其他故障时熄灭；BIOS 启动超时（**600 秒**）点亮，后续 POST complete 成功后清除；watchdog 超时锁存点亮，BMC 重启后清除 ⚠️ 没有验证 |
-| `BMC_FAN_BMC_OVERRIDE_N`（GPIOI6） | 风扇控制就绪后拉高，BMC 接管风扇；服务停止时拉低交还 CPLD。BMC 复位（看门狗或用户触发）期间 BMC 不能控制风扇，必须交还 CPLD，所以这根脚**不保持**：内核对用户态申请的线都会置位 reset tolerance，`ceb-gnrd-fan-owner` 在占住这根线后用 `devmem` 清掉 `0x1e7800ac` 的 bit6，复位时它回到输入态；清不掉就不接管风扇（留给 CPLD）。正常关机时服务停止，`ceb-gnrd-fan-release` 先把它拉低 ⚠️ 没有在板上验证（复位后这根脚悬空时 CPLD 是否接管风扇要确认） |
-| 复位保持（reset tolerance） | AST2600 的 GPIO 每个引脚有 reset tolerance 位，置位的引脚在看门狗 SoC 复位时保持方向和输出值；用户态（x86-power-control、`gpioset`）申请一根线时内核自动置位。`BMC_CPU_POWER_BUTTON`、`BMC_CPU_RESET`、`BMC_BIOS_FLASH_SELECT` 依赖这个行为，在用户触发的 BMC 复位和看门狗复位中保持状态；`BMC_BIOS_FLASH_SELECT` 只在 BIOS 升级时被改变，其他时间 BMC 不碰它 ⚠️ 没有在板上验证 |
-| `BMC_HBLED_N`（GPIOP7） | eSPI 驱动就绪后启用内核 heartbeat 触发器 |
-| `BMC_BIOS_FLASH_SELECT`（GPIOM1） | BIOS 升级时拉高切给 BMC，等 5 秒后烧写，结束后拉低 |
-| `BMC_BIOS_BOOT_OK`（GPIOM7） | x86-power-control 的标准 `PostComplete`（高有效）：拉高时 D-Bus `xyz.openbmc_project.State.OperatingSystem` 的 `OperatingSystemState` 为 `Standby`，否则为 `Inactive`（主机关机时也是 `Inactive`）。主机开着时它的下降沿会进入 x86-power-control 的热复位检查并记一次软复位的重启原因，**不会产生电源脉冲**。告警灯服务读 `OperatingSystemState` 来取消当次 BIOS 启动超时告警 ⚠️ 没有在板上验证 |
+| 信号 | 行为 |
+|---|---|
+| UID / GPIOV0 | 低有效；短按释放保留 chassis identify 功能；连续按住 5 秒请求正常 BMC 重启，长按释放不再切换 identify |
+| 实体 Power button / GPIOM2 | 仅通知 BMC并记录日志/SEL；不由 BMC 转发实体按键动作；实体 Reset button 没有接入 BMC |
+| BMC_CPU_POWER_BUTTON / GPIOV2 | x86-power-control 输出低有效脉冲：普通 200 ms，强制关机 8000 ms |
+| BMC_CPU_RESET / GPIOV3 | x86-power-control 输出低有效 500 ms 复位脉冲 |
+| BMC_CPU_PWRGD / GPIOV4 | 高有效，提供实际机箱 DC 电源状态 |
+| BMC_BIOS_BOOT_OK / GPIOM7 | 高有效 POST complete；OperatingSystemState 为 Standby；下降沿参与热复位识别 |
+| 风扇接管 / GPIOI6 | 高为 BMC PWM、低为 CPLD；取得控制后清 reset tolerance，停止时交还 CPLD。异常停止和实板复位电平仍需硬件验证 |
+| BIOS Flash select / GPIOM1 | 仅在 BIOS 升级锁和稳定 Host Off 条件下切给 BMC；写入结束后解除 SPI-NOR 绑定再交还 CPU |
+| 心跳 / GPIOP7 | 低有效；eSPI 驱动就绪后启用内核 heartbeat 触发器 |
+| 系统告警 / GPIOI5 | 电压 Critical、温度 UNR及 CPU/DIMM Upper Critical、BIOS 启动超时、Host watchdog 共同驱动 enclosure_fault；解除规则见第九章 |
 
-### 3. Web 界面
+### 3. Web 与升级
 
-* **已保留**：概要、事件日志、POST Code、转储、清单与 LED（系统/BMC/机箱三张表）、传感器、恢复出厂设置（仅 BMC）、KVM（含全屏）、固件、重启 BMC、SOL、服务器电源操作、虚拟媒体、日期与时间、风扇控制、网络、电源恢复策略、会话、用户管理、策略、证书。
-* **已移除**（无后台支持）：转储页的“System dump”选项（只保留 BMC dump）、固件页 BMC 和 BIOS 两处的“备份镜像”卡片以及“切换为运行”（BMC 和 BIOS 都只有一个镜像区）、概览页“电源信息”卡片（功耗读数和功率上限依赖 DCMI 电源支持，本板不提供）、SNMP Alerts、清除密钥、LDAP、策略页的“虚拟 TPM”和“RTAD”开关、资源管理/电源、“仅重置服务器选项”、清单页的 DIMM/风扇/电源/处理器/组件表。
-* **页面行为补丁**（`recipes-phosphor/webui/files/`，编号 0016–0030）：POST Code 和事件日志默认最新在前；传感器页分“模拟/离散”两个标签，模拟传感器表分页；固件页更新进度条在离开页面再回来后仍保留，BMC 更新分区需显式确认（U-Boot / 环境变量分区默认不选），并通过启动 ID 识别 BMC 已重启，更新完成的通知保留到刷新或重新登录；恢复出厂页只用 BMC 相关措辞；概览页的固件卡只显示运行版本；等待电源操作和实时状态页（传感器等）会自动刷新；虚拟媒体停止时关闭会话，大块读回复拆成 64 KiB 的 WebSocket 消息。
-* **转储**：只有 BMC dump（`phosphor-debug-collector`）；转储页走 bmcweb 的 Redfish Dump 服务，需要编译选项 `redfish-dump-log`（已在 `bmcweb_%.bbappend` 里启用，缺了这个选项转储页没有后端）。在 QEMU 里点“开始转储”要约 30 秒才完成，期间再点会报“Another user initiated dump in progress”，点一次后等它完成即可（QEMU 里已验证列表正常）。
-* **固件版本**：bmcweb 默认（`redfish-updateservice-use-dbus=enabled`）到 `/xyz/openbmc_project/software/bmc/functional` 找 BMC 版本，而这里用的经典 `phosphor-image-updater` 发布在 `/xyz/openbmc_project/software/functional`，结果 Redfish 的 `FirmwareVersion` 为空、网页 BMC 卡片显示 `--`；`bmcweb_%.bbappend` 里已把该选项设为 `disabled`（同时固件上传走 `/tmp/images`，和经典更新服务一致）⚠️ 没有验证。`journalctl` 里的 `mapperx: Found invalid association` 是 BMC 版本对象的 `inventory` 关联目标路径为空（找不到 BMC 清单对象），只是告警。网页只提供“从浏览器读取镜像文件”（走 bmcweb 的 /vm/0/0 WebSocket → jsnbd → nbd → USB mass storage → 主机 VL805 USB 口）；“从外部服务器读取镜像文件”（CIFS/HTTPS）需要已停止维护的 virtual-media 服务，镜像里没有，网页默认也不显示。上板验证：网页选一个 ISO 点开始，主机里应出现一个 USB 光盘/U 盘；BMC 上 `ls /sys/kernel/config/usb_gadget/`、`ls /dev/nbd0`。
-* **U-Boot 启动方式**：固定从本地 SPI 闪存启动（`bootcmd = run bootspi`），不自动走网络；U-Boot 默认带静态网络参数（192.168.185.200/24，网关 192.168.185.1，TFTP 服务器 192.168.185.84；Linux 的 `eth0` 已改为 DHCP，两者互不影响），只用于手动 TFTP 启动调试和 `run netupdate`。虚拟机与物理主板的区别、环境重置、排查步骤详见第四章 “4. U-Boot 的 TFTP 使用”。
-* **时间和 SEL**：BMC 系统时间默认从板上 RTC（NCT3015Y）读取，SEL 时间戳用系统时间。AST2600 内部 RTC 已关闭，NCT3015Y 是 `rtc0`。
-* **SEL 记录**：电压、温度（含 CPU_MAX_TEMP / DIMM_MAX_TEMP，含不可恢复级别）、watchdog 超时、BIOS 启动失败（600 秒）、电源按键都会写 SEL。SEL 为 rollover，用标准的 logrotate 实现（`ceb-gnrd-sel-logrotate`，开机 30 秒后首次检查，之后每 1 分钟一次，单个文件 15 KiB、保留 1 个旧文件），约保留最新 100 到 200 条，更老的删除；按大小轮转，条数是近似值，记录 ID 由 sel-logger 单独保存，不会重复。
-* **SSH / SCP**：BMC 用 dropbear 提供 SSH（22 端口），已带 `openssh-sftp-server` 和 `openssh-scp`，`scp` 新旧协议都可用，例如 `scp -P 2222 file root@127.0.0.1:/tmp/`（QEMU）。
-* **SOL**：走 AST2600 的 VUART1（主机看到的是 COM1，I/O 0x3F8，经 eSPI），可双向；obmc-console 用 `ttyVUART0`，BIOS 的串口重定向要选 COM1。UART3 RX 仍保留但不再是 SOL 来源。网页 SOL 可以输入（原来的只读补丁 `0005` 已移除）。
-* **风扇控制**：6 个风扇可单独或统一设置（网页下拉框是“全部风扇”和 `SYS_FAN0` 到 `SYS_FAN5`），模式只有“自适应”（最低 30%、最高 100%，固定默认值，没有最低转速滑块）和“固定转速”（20/40/60/80/100%）。页面下方有命令框：上面一个是读取每个风扇转速和模式的命令，下面一个随当前选择实时生成设置命令。风扇控制器（Pid）在 Entity-Manager 里叫 `Fan0 Control` 到 `Fan5 Control`，不能和风扇本身的 `SYS_FAN0` 到 `SYS_FAN5` 同名。
-  * **IPMI OEM 命令**（netfn 0x30，只有两条，ipmitool 不用改，KCS 和 LAN 都可用，已加入白名单；由 `ceb-gnrd-ipmi-fan` 库实现，转发给 `ceb-gnrd-fan-settings` 服务）：`ipmitool raw 0x30 0x01` 读取，返回 25 字节：第 0 字节“重启后保留”标志，之后每个风扇 4 字节（模式 0 自适应/1 固定、占空比 %（`0xFF` 表示读不到）、RPM 低字节、RPM 高字节）；`ipmitool raw 0x30 0x02 <风扇 0-5 或 0xFF 全部> <模式> <占空比十六进制> <保留 0/1>` 设置，例如 `ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01` 是全部风扇固定 60% 并保留；需要 Admin 权限。
-  * **网页保存的实现**：bmcweb 的 D-Bus REST 在这个版本里不能给方法传参数，Entity-Manager 对 Pid 属性的写入又会“值已改但返回 InvalidArgs”，所以网页每次保存只调用 `ceb-gnrd-fan-settings` 里一个不带参数的方法 `ApplyFan<0..5|All><Adaptive|Fixed20/40/60/80/100><Keep|Forget>`，方法名已包含风扇、模式和是否保留，避免多客户端交错覆盖；服务写 Entity-Manager 后会回读确认。勾选“BMC 重启后保留这些设置”时，设置保存到 `/var/lib/ceb-gnrd/fan-settings.json`，重启和断电重启后恢复，不勾选则 BMC 重启后回到自适应。该功能依赖 bmcweb 的 `dbus-rest`。
-* **升级后保留**：普通固件升级不会清读写分区；需要清读写分区的升级会按白名单保存时区、主机名、SSH 主机密钥、网站证书和风扇设置。恢复出厂则全部清除（MAC 不受影响）。
+* 固件页显示运行镜像；缺失 BIOS 版本显示 `N/A`。概览固件卡显示运行版本、Build ID 和 Git commit；Source version 已隐藏。信息来自系统现有版本数据，未额外生成编译日志文件。
+* BMC 上传 `.static.mtd.tar`；BIOS 上传含完整 64 MiB BIOS 镜像的 `.tar` 包，不能直接上传裸 `.bin`/`.rom`。CPLD 上传 `.bit`。提示位于上传区上方，成功后的 AC power cycle 说明合并为一处。
+* BMC 分区选择：kernel/rofs 默认选中并须一起更新；rwfs 按选择处理；U-Boot/环境默认不选，启用时需要确认。环境更新会清除保存的 MAC/网络启动配置。分区选择在后端再次校验，整片 `.static.mtd.all.tar` 更新被拒绝。
+* BMC/BIOS 与 CPLD 升级期间，另一组上传/启动按钮禁用；后端使用共享升级锁、电源互锁与重启保护。网页禁用只是第一层，不能代替后端校验。
+* 固定风扇档位为 20%、30%、40% … 100%，默认表单值 60%。可独立控制 SYS_FAN0–5或统一控制，自动模式为 30–100%。IPMI 固定占空比接受 10–100%，网页提供的是 10% 步进预设。
+* 保存调用 `ApplyFan<0..5|All><Adaptive|Fixed20..100><Keep|Forget>`（固定值每 10% 一档）；变更前保存快照，写入和控制重载失败时回滚。保留选项将配置保存到 `/var/lib/ceb-gnrd/fan-settings.json`。
+* 六个控制器配置或上下限不可读/非法时，GetFans 返回 D-Bus 错误，Web 显示加载失败，IPMI 返回响应错误，不再把未知模式显示为自动。
+* 虚拟媒体的本地 ISO 会话可跨 BMC 内部菜单保持；浏览器刷新/关闭会断开。切换标签或后台休眠仍可能导致 WebSocket 断流，不能承诺挂载持续；独立挂载窗口方案尚未实现。
+* KVM、SOL、时间、事件日志和传感器页面提供各自的实时刷新/显示逻辑。KVM 键释放失败导致重复输入的缺口尚未修复，需要保留为已知问题。
+* Web 仅保留 BMC dump、单运行镜像、实际支持的清单/设置；PLDM、DCMI、SMBIOS 清单、远端 CIFS/HTTPS 虚拟媒体未配置。
 
-### 4. IPMI
+### 4. IPMI、日志和保留策略
 
-* `mc info`：Device ID 32，Device Revision 2，Product ID 3346（`0x0D12`），Manufacturer ID 6659（`0x1A03`），在 BMC 上的 ipmitool 显示 `CTOPAI` / `CEB-GNR-D`。这些值来自 `recipes-phosphor/ipmi/phosphor-ipmi-config/dev_id.json`：`id` 是厂商自定义的设备编号（沿用默认值 32，不影响功能）；`revision` 写 130（`0x82`），最高位 bit7 = 1 表示“提供设备 SDR”（`Provides Device SDRs: yes`），低 4 位 = 2 就是显示的 Device Revision。
-* 传感器：已启用 `dynamic-sensors`，电压/温度/风扇/CPU_MAX_TEMP/DIMM_MAX_TEMP 都会出现在 IPMI。CPU_MAX_TEMP 告警阈值 90/98/105 ℃，DIMM_MAX_TEMP 80/85/95 ℃（UNC/UC/UNR，只设上限）；6 个风扇不设告警，没接风扇读 0 RPM 属正常；温度读不到（主机已开机）时风扇 60%（temp-max 发布 70 ℃，两条曲线在 70 ℃ 都是 60%），风扇读到几个都不影响（FailSafePercent=30）。
-* 主机侧 IPMI 走 KCS3（见上）；LAN 通道 1 是 eth0（RMCP+ 只绑 eth0），通道 2 是 NC-SI 的 eth1。
-* SEL：存放在 `/var/log/ipmi_sel`，`ceb-gnrd-sel-logrotate`（logrotate 按大小轮转）保持 rollover，sel-logger 加了补丁，把“不可恢复”事件也记成 SEL（CPU/DIMM 最高温的 UNR 放在我们自己的接口上，不用 HardShutdown，所以不会触发任何自动关机）；告警灯的四种告警都有 SEL 记录。
-* DCMI（`ipmitool dcmi power reading`、`dcmi get_temp_reading`）：**未配置**，`power_reading.json` 的路径为空，`dcmi_sensors.json` 为空数组，命令会报不支持或没有内容。
-* 电压阈值：规格表里的上下限（标称 ±15%）按 Critical 级别配置（`lower critical` / `upper critical`），所以 `ipmitool sensor` 的 LC / UC 列能显示；越限时 sel-logger 直接记成 Critical 事件，告警灯随之点亮。CPU/DIMM 最高温度的 UNC / UC / UNR 都能显示：UNR 在我们自己的接口 `com.ctopai.CebGnrd.Threshold.NonRecoverable` 上，ipmid 加了补丁读取它。**BMC 不会因为任何阈值自动关机**：不使用 HardShutdown / SoftShutdown 接口，并且镜像里去掉了会据此关机的 phosphor-fan 的 sensor-monitor。
+* `ipmitool mc info`：Device ID 32、Device Revision 2、Manufacturer ID 6659、Product ID 3346；当前发行版本对应 Firmware Revision 2.01。
+* `ipmitool raw 0x30 0x01` 读取六个风扇，返回 25 字节。设置示例：`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`，全部固定 60%并保留；设置需要 Admin。
+* CPU 温度上限 UNC/UC/UNR 为 90/98/105°C，DIMM 为 80/85/95°C。电压使用 LC/UC；风扇没有转速阈值告警。板级私有 UNR接口不会触发 HardShutdown。
+* Host Off 时 CPU/DIMM 值为 0，停止 Host 供电传感器失读告警；Host On 失读时发布至少 70°C 的保护输入，保留更高的最后读值，直到恢复有效采样或确认 DC Off。告警使用真实读值，不用保护值制造温度告警。
+* POST 只保留最近一次 Host 启动，每轮最多 512 条；冷启动/热复位切换历史。BMC或 POST服务重启恢复当前轮，不以空内存缓存作为新 Host 启动。按 4F/60、90、AD、AF 等锚点判断 AMI/Intel 参考上下文；原始码仍保留，未知/OEM码不强行判为错误。
+* 本次完整 journal 在 RAM `/run/log/journal`，最多约 8 MiB；警告及以上文本保存在 `/var/log/bmc-system.log`，每文件 512 KiB、5个旧文件。SEL每文件 15 KiB、1个旧文件；Redfish日志每文件 64 KiB、1个旧文件，由 rsyslog 写入时轮转。定时器每分钟监控 RWFS 空间。
+* 普通重启不主动清除持久日志；重写 RWFS 的升级按白名单恢复设置，SEL/Redfish/系统警告日志不在白名单中，不能承诺保留。恢复出厂清除 RWFS；U-Boot环境位于独立分区。
+* SSH 使用 Dropbear，现代 SCP走 SFTP（保留 openssh-sftp-server）；旧 `scp -O` 和 rsync 不随本镜像提供。
+
 * FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式，默认值已经填在输入行里，可以直接修改，直接回车则采用默认值。默认值：制造商 `CTOPAI`，Board/Product 名称 `CEB-GNR-D`，Chassis PN `93-XXXXX-XX`、Board PN `91-59380-A0`、Product PN `81-59380-A0`，Product 版本 `v1.0`，Product 资产标签 `Xeon6-SOC`，Board / Product FRU file ID `0`，序列号为生成当天 UTC 日期 `YYMMDD` 加 `0001`，例如 `2610060001`（序号可手动修改，不自动递增）。输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成镜像须不超过 EEPROM 容量），再用 `ipmitool fru print 0` 核对。
-* ipmid 启动：`phosphor-ipmi-host` 有一个 drop-in（`10-ceb-gnrd-wait-sensors.conf`），启动前最多等 90 秒，等映射器里的传感器数量连续 8 秒不变。原因是 ipmid 在传感器刚注册、阈值接口还没出来时去读会失败，开机后一分钟内 `ipmitool sensor` 只剩 2 个静态传感器。代价是开机后约一分钟内 `ipmitool` 不可用（QEMU 里已验证开机后传感器完整）。 PCIe 槽位总线 i2c-0 至 i2c-5（本板没有 slot 2 的总线）。
-
----
 
 ## 七、验证清单
 
 ### 0. 一键检查脚本 `ceb-gnrd-check`
 
-镜像里自带 `/usr/bin/ceb-gnrd-check`（源文件 `recipes-phosphor/utils/files/ceb-gnrd-check.sh`），在 BMC 里直接运行，逐项输出 PASS / FAIL，覆盖系统服务、传感器和阈值、IPMI 常规命令、风扇 OEM 命令（设置、读回、保留、清除、非法参数）、Redfish 和网页、RTC、MTD 分区等，同时把 journal、dmesg、D-Bus 树等日志打包。参数 `0` 表示检查 `run-qemu.sh` 的模拟器（默认），`1` 表示物理板；默认只读，结果分为 PASS / FAIL / SKIP / INFO（`SKIP` 表示需要额外操作，不能当成通过），有 FAIL 时退出码为 1。检查按已安装的板级配置核对各路 ADC、温度、风扇和已绑定的 PSU，主机关机时跳过只在开机时有效的读数。只有显式设置 `CEB_CHECK_CLEAR_LOGS=1` 才会清除事件日志。
+镜像里自带 `/usr/bin/ceb-gnrd-check`（源文件 `recipes-phosphor/utils/files/ceb-gnrd-check.sh`），在 BMC 里直接运行，逐项输出 PASS / FAIL，覆盖系统服务、传感器和阈值、IPMI 常规命令、风扇 OEM 状态读取（默认不改转速或持久化设置）、Redfish 和网页、RTC、MTD 分区等，同时把 journal、dmesg、D-Bus 树等日志打包。参数 `0` 表示检查 `run-qemu.sh` 的模拟器（默认），`1` 表示物理板；默认只读，结果分为 PASS / FAIL / SKIP / INFO（`SKIP` 表示需要额外操作，不能当成通过），有 FAIL 时退出码为 1。检查按已安装的板级配置核对各路 ADC、温度、风扇和已绑定的 PSU，主机关机时跳过只在开机时有效的读数。只有显式设置 `CEB_CHECK_CLEAR_LOGS=1` 才会清除事件日志。
 
 ```bash
 ceb-gnrd-check 0                                 # 在 BMC 里运行；开机后等约 1 分钟再跑（ipmid 要等传感器稳定）
@@ -613,7 +619,7 @@ BMC_PASSWORD='你的密码' ceb-gnrd-check 0           # root 密码不是默认
 scp -P 2222 root@127.0.0.1:/tmp/ceb-gnrd-check.tar.gz .   # 在 Ubuntu 上取回日志包（QEMU）
 ```
 
-报告在 `/tmp/ceb-gnrd-check/report.txt`，诊断包在 `/tmp/ceb-gnrd-check.tar.gz`；重复运行会覆盖上一份，并发运行由 `/run/ceb-gnrd-check.lock` 阻止。该脚本在新固件上还没有重新跑过，也没有在物理板上运行过；接口元数据正常不等于数据路径全部通过。
+报告在 `/tmp/ceb-gnrd-check/report.txt`，诊断包在 `/tmp/ceb-gnrd-check.tar.gz`；重复运行会覆盖上一份，并发运行由 `/run/ceb-gnrd-check.lock` 阻止。报告只代表运行时的当前检查结果。接口元数据正常不等于数据路径全部通过；POST history nonempty 的 FAIL 表示当前保留历史为空，需要结合 Host 状态和本次启动是否收到 POST 判断。
 
 ### 1. 构建后先在 QEMU 里检查
 
@@ -621,13 +627,13 @@ scp -P 2222 root@127.0.0.1:/tmp/ceb-gnrd-check.tar.gz .   # 在 Ubuntu 上取回
 systemctl --failed --no-pager                 # QEMU 缺少 KCS、eSPI、PECI 等硬件，对应服务失败属预期
 journalctl -b -p err --no-pager | tail -40
 ip addr show eth0                              # QEMU 里 DHCP 第一个租约应为 192.168.185.200
-cat /etc/os-release | head                     # VERSION_ID 应为 2.0.0；ipmitool mc info 的 Firmware Revision 应为 2.00
+cat /etc/os-release | head                     # VERSION_ID 应为 2.1.0；ipmitool mc info 的 Firmware Revision 应为 2.01
 ipmitool mc info                               # Manufacturer Name CTOPAI，Product Name CEB-GNR-D
 ```
 
 网页逐项点开：菜单里不应再有 SNMP / 清除密钥 / LDAP / 资源管理；风扇页应列出 6 个风扇；SOL 页应能输入；KVM 页应有“全屏”按钮。
 
-### 2. 上板后重点验证（对应端口指南红字项）
+### 2. 上板后重点验证
 
 | 项目 | 命令 / 方法 |
 | :--- | :--- |
@@ -636,14 +642,29 @@ ipmitool mc info                               # Manufacturer Name CTOPAI，Prod
 | PSU | 插 1 个和 2 个模块各验证：`journalctl -u ceb-gnrd-psu-detect`；`ipmitool sdr` 里应有 PSUn_Temp，`ls /sys/class/hwmon/*/temp*_input` 核对 temp2 确实是电源温度 |
 | 电源按键 | `journalctl -u ceb-gnrd-power-button-log -f`；`ipmitool sel list \| tail -3` |
 | 告警灯 | 电压越限、温度到 UNR、CPU_MAX_TEMP / DIMM_MAX_TEMP 到 Upper Critical、watchdog 超时、BIOS 启动超过 600 秒各验证一次（共用一个灯，阈值告警恢复后清除，BIOS 超时在后续 POST complete 成功后清除，watchdog 超时重启 BMC 才清除；没有其他故障时熄灭）；`busctl get-property xyz.openbmc_project.LED.GroupManager /xyz/openbmc_project/led/groups/enclosure_fault xyz.openbmc_project.Led.Group Asserted` 应随告警翻转，`cat /sys/class/leds/fault/brightness` 对应亮灭 |
-| 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`ls /xyz/openbmc_project/control/fanpwm/`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings`；OEM 命令：`ipmitool raw 0x30 0x01`、`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`（再读一次确认），失败时 `journalctl -u phosphor-ipmi-host` |
+| 风扇 | `busctl tree xyz.openbmc_project.EntityManager \| grep -i pid`；`busctl tree xyz.openbmc_project.FanSensor | grep fanpwm`；网页保存后查看 `journalctl -u ceb-gnrd-fan-settings`；OEM 命令：`ipmitool raw 0x30 0x01`、`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`（再读一次确认），失败时 `journalctl -u phosphor-ipmi-host` |
 | KCS | BMC：`ls /dev/ipmi-kcs3`、`journalctl -u phosphor-ipmi-kcs@ipmi-kcs3`；主机侧：`ipmitool -I open mc info` |
-| NC-SI | 主机上电后 `ip -br addr show eth1`、`journalctl -t ceb-gnrd-ncsi`（看有没有重试）；主机关机后接口应被关闭 |
-| SEL / 时间 | 制造电压和温度越限，`ipmitool sel list` 里应有事件和解除事件；SEL 超过 2100 条后确认最老的被删；断电重启后 `date`、`ipmitool sel time get` 应保持 RTC 的时间 |
-| U-Boot | 第一次要 `env default -a; setenv ethaddr ...; saveenv`，确认 `printenv bootcmd` 是 `run bootspi`；`run netupdate` 后 `reset` |
+| NC-SI | 主机 POST 完成并经过 5 秒就绪等待后 `ip -br addr show eth1`、`journalctl -t ceb-gnrd-ncsi`（看有没有重试）；主机关机后接口应被关闭 |
+| SEL / 时间 | 制造电压和温度越限，`ipmitool sel list` 里应有事件和解除事件；按文件大小轮转后确认最老的记录被淘汰（不使用固定 2100 条限制）；断电重启后 `date`、`ipmitool sel time get` 应保持 RTC 的时间 |
+| U-Boot | 按需恢复默认环境，并恢复两路生产 MAC 后 `saveenv`，确认 `printenv bootcmd` 是 `run bootspi`；`run netupdate` 后 `reset` |
 | BMC 状态 | `obmcutil state`（`Device Available` 取决于 BMC 是否为 Ready） |
 
 ---
+
+### 3. 日常 BMC 日志检查（只读）
+
+在 BMC控制台执行，以下输出均为本次启动的状态：
+
+```sh
+cat /etc/os-release
+systemctl --failed --no-pager
+journalctl -b -p warning --no-pager -o short-monotonic -n 300
+journalctl -b -k --no-pager -o short-monotonic |
+grep -Ei 'panic|oops|call trace|out of memory|oom|timeout|error|fail|squashfs'
+ipmitool sel elist
+```
+
+完整本次日志：`journalctl -b --no-pager -o short-monotonic`，可用MobaXterm保存串口输出。跨普通重启的警告文本看 `/var/log/bmc-system.log` 及轮转文件；`journalctl -b -1`不保证可用，因为journal在RAM。若根文件系统挂载前panic，采集U-Boot到panic的串口输出，无法在该次启动里运行journalctl。
 
 ## 八、构建加速与常见问题
 
@@ -676,20 +697,24 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 | `ipmitool mc info` 固件版本 `0.00`、网页运行版本 `--`，`xyz.openbmc_project.Software.BMC.Updater` 不存在 | BMC 镜像更新守护进程没有自启（updater 包整体设了 `SYSTEMD_AUTO_ENABLE = "disable"`），它同时提供 BMC 版本对象和固件上传后端；在 bbappend 里为它单独建 `multi-user.target.wants` 软链接 |
 | `ModuleNotFoundError: No module named 'xml'` | `python3-dbus-fast` 配方没带 `python3-xml` 等运行依赖，用到它的 Python 服务要在自己的 `RDEPENDS` 里补 |
 | `pin L26 already requested by ...mdio` | EVB 设备树默认启用 `mdio0` 至 `mdio3`，只保留用到的 `mdio1`，其余禁用，否则占用 I2C12 的引脚 |
-| 风扇设置：`busctl set-property ... Pid OutLimitMin` 报 `Invalid argument`，网页保存失败，`ipmitool raw 0x30 0x02` 返回 `0xCC` | Entity-Manager 写 Pid 属性时值已经改了却返回 InvalidArgs（它自己的日志里没有报错，根因没有深究）；Pid 与 AspeedFan 同名会共用一个 D-Bus 路径，所以把 Pid 改名为 `Fan<n> Control`；`ceb-gnrd-fan-settings` 写完后回读确认，值对了就算成功；网页和 OEM 命令在 QEMU 里都已验证可用 |
+| 风扇设置写入报 `Invalid argument` | Entity-Manager 可能在内存值已更新后返回错误；服务回读确认，再请求重载控制，失败回滚。Pid 使用 Fan0 Control–Fan5 Control，不能与 SYS_FAN0–5同名；不能只用属性值相等就判定 PID 已加载 |
 | `ipmitool raw 0x30 0x01` 返回 `0xCE`，服务日志有 `can't concat list to bytearray` | dbus-fast 的 `ay` 返回值必须是 `bytes`，不是整数列表 |
-| 网页调 D-Bus REST 方法报 `Invalid method arg type`、对属性 PUT 报 `Invalid arg type` | 这个 bmcweb 版本的 D-Bus REST 不能传标量参数；网页只调用不带参数的方法（见第六章“风扇控制”） |
+| 网页调 D-Bus REST 方法报 `Invalid method arg type` | 板级 bmcweb 补丁 `0009-ceb-gnrd-fix-dbus-rest-method-arguments.patch` 修复标量参数编码；风扇页仍用包含完整动作的无参数 ApplyFan 方法，避免共享未完成设置 |
 | 开机后约一分钟内 `ipmitool sensor` 只有 2 个传感器，日志有 `Failed to update sensor map for threshold sensor` | ipmid 在传感器的阈值接口出现前去读；`phosphor-ipmi-host` 的 drop-in 让它等传感器数量稳定后再启动 |
 | Redfish `FirmwareVersion` 为空、网页 BMC 版本 `--`，但 `busctl` 里版本对象存在 | bmcweb 默认从 `/xyz/openbmc_project/software/bmc/functional` 取版本，经典更新服务发布在 `/xyz/openbmc_project/software/functional`；`bmcweb_%.bbappend` 里设 `-Dredfish-updateservice-use-dbus=disabled`（`strings /usr/bin/bmcweb \| grep -c software/bmc/functional` 非 0 说明用的是新路径） |
 | `swampd`：`Must have one stepwise point`，风扇不按温度调速 | Entity-Manager 把整数数组（`[40, 50, ...]`）以 `at` 发布，pid-control 读不到，`Stepwise` 的 `Reading`/`Output` 要写成带小数点的 `40.0` |
 | 启动日志里有 `mmc0: Failed to initialize a non-removable card` | EVB 设备树启用了 eMMC/SD；本板没有，U-Boot 和 Linux 设备树里都把 `emmc`、`sdhci` 相关节点禁用 |
 | `patch-fuzz` 警告出现在 `phosphor-ipmi-host` | 手写补丁的上下文不对；按真实源码重新生成补丁（`0001` 已重新生成） |
-| `os-release.bb: git describe --dirty ... No names found` | openbmc 仓库没有带注释的 tag；`git tag -a v2.0.0 -m "CEB-GNRD 2.0.0"`（必须用 `-a`），固件版本号仍由 `DISTRO_VERSION` 决定（定义在 `meta-ctopai/conf/distro/ctopai-openbmc.conf`，`local.conf` 里必须是 `DISTRO ?= "ctopai-openbmc"`，`./setup ceb-gnrd` 会自动把旧的 `openbmc-phosphor` 改过来；没改的话固件版本会变成 `git describe` 的结果） |
+| `os-release.bb: git describe --dirty ... No names found` | 检查源码仓库标签是否完整，按需 `git fetch --tags origin`；已有 `2.00-golden-release` 注释标签不要在新提交上重建。发行版显示版本由 DISTRO_VERSION决定，确保 local.conf选ctopai-openbmc且BBLAYERS含meta-ctopai |
 | 告警灯服务日志反复出现 `Unable to read host boot GPIOs: Command '['gpioget', 'gpiochip0', '172']' returned non-zero exit status 1` | 第 172 号线是 `BMC_CPU_PWRGD`，已被 x86-power-control 独占请求，`gpioget` 会报设备忙。告警灯服务改为读 D-Bus 的 `xyz.openbmc_project.State.Chassis` `CurrentPowerState`（x86-power-control 根据这根线发布的状态）；`BMC_BIOS_BOOT_OK` 现在也是 x86-power-control 的 `PostComplete`，同样改读 `OperatingSystemState`，告警灯服务不再直接读任何 GPIO |
 | `wrong LCONF_VERSION (has 8, expecting 7)` | 发行版文件 `ctopai-openbmc.conf` 在 `meta-ctopai` 层里，而旧的 `build/ceb-gnrd/conf/bblayers.conf` 只列了 `meta-ceb-gnrd`，没有 `meta-ctopai`；`DISTRO` 找不到发行版文件时 BitBake 不报错（可选包含），`LAYER_CONF_VERSION` 就退回 oe-core 默认的 7（`phosphor-base.inc` 里设的是 8）。把 `meta-ctopai` 加进 `BBLAYERS`（`. setup ceb-gnrd` 会自动补），或在 `bblayers.conf` 里手动加一行 `/home/test/openbmc/meta-ctopai \` |
 | `ipmitool sel list` 一直是 "SEL has no entries"，但 journal 里有 `sel-logger ... threshold assert` | rsyslog 没有读 journal：默认只加载 `imuxsock`，拿不到 `MESSAGE_ID`、`IPMI_SEL_*` 字段，`/var/log/ipmi_sel` 就从来没被写入。`rsyslog_%.bbappend` 里要 `PACKAGECONFIG:append = " imjournal"`（Intel 参考平台同样这么做）；开机日志里应有 `imjournal`，没有 `Acquired UNIX socket ... syslog` 之外的输入就说明没生效 |
 | `ipmitool sel list` 有记录，但网页 “Event logs” 是空的 | 网页读的是 Redfish 事件日志 `/var/log/redfish`（格式 `<时间> <MessageId>,<参数>`），和 IPMI 的 SEL（`/var/log/ipmi_sel`）是两个文件。需要 rsyslog 有一条规则，把带 `REDFISH_MESSAGE_ID` 的 journal 条目写进去（`rsyslog_%.bbappend` 安装的 `ceb-gnrd-redfish.conf`，Intel 参考平台同样的规则，同样依赖 `imjournal`）。只有 bmcweb 注册表里有的消息 ID 才会显示 |
 | `do_rootfs: Group render has never been defined` | 来自 `rootfs-postcommands.bbclass` 的 `systemd_sysusers_check`，核对 `/usr/lib/sysusers.d/*.conf` 声明的组是否都在 `/etc/group`。`render` 组本来由 `udev` 包创建，但 meta-phosphor 的 `systemd_%.bbappend` 有意把 `udev` 从 `USERADD_PACKAGES` 里去掉（为了让 udev 不依赖 `shadow`，能放进 initramfs，BMC 没有 `/dev/dri`），所以这个告警是预期的，无影响，忽略 |
+| `unable to read id index table` / init panic | SquashFS根文件系统挂载失败；核对编程器文件是否为完整64MiB `.static.mtd`、起始地址0、芯片型号和高地址区域，整片读回与源文件比较；系统尚未启动时采集串口日志 |
+| `Invalid logsize. Default to 16kB` | obmc-console 的 logsize使用十进制字节数；当前配置为65536，日志在 `/run`，旧 `64K` 配置不适用 |
+| Host Off期间CPU/DIMM没有读数 | 正常断电不应作为失读恢复/故障；核对实际Chassis DC状态及固件版本，Host On失读仍保留保护输入 |
+| timesync1不存在而NTP未启用 | 当前板级网络补丁在NTP禁用时跳过查询；启用NTP时才核对服务与配置 |
 | `systemd: Failed to set watchdog pretimeout_governor to 'panic'` | `aspeed_wdt` 不支持预超时，内核不提供 `pretimeout_governor`（打开 `CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC` 没有用）；`systemd-conf` 里同名的 `40-hardware-watchdog.conf` 覆盖 meta-phosphor 的那个，去掉 `RuntimeWatchdogPreSec` / `RuntimeWatchdogPreGovernor` |
 
 ### 3. 修改网页补丁的建议流程
@@ -700,483 +725,678 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 
 ---
 
-## 九、板卡层实现说明（原 `meta-ceb-gnrd/README.md`）
+## 九、板卡层实现说明
 
-> 本章是板卡层 `meta-ctopai/meta-ceb-gnrd` 的实现说明（原来的层 README，现已译为中文并按最新代码核对），和第六章互为补充：第六章按功能列出现状，本章说明各项的实现方式、涉及的文件和还需要上板确认的事项。逐个信号的状态见同目录的 `port_guide.xlsx`。除非注明，本章内容没有在物理板上验证过，仍需要板子的事项集中在本章末尾的“待确认事项”。
->
-> 参考实现：**meta-ibm/meta-sbp1**（Intel 服务器平台）。构建、QEMU 运行、TFTP 加载和验证方法见第三章到第七章。
+本章按实际代码入口说明工作机制，硬件引脚与地址见 `port_guide.xlsx`。校对日期为 2026-10-14；工作区包含 `DISTRO_VERSION=2.1.0` 的版本调整。代码存在不等于全部硬件场景已经验证。
 
-### 平台功能
+### Flash、启动与升级
 
-#### Flash 布局与升级
+| 分区 | 起点 | 大小 |
+|---|---|---|
+| u-boot | 0x00000000 | 0x000e0000 / 896 KiB |
+| u-boot-env | 0x000e0000 | 0x00020000 / 128 KiB |
+| kernel | 0x00100000 | 0x00900000 / 9 MiB |
+| rofs | 0x00a00000 | 0x02800000 / 40 MiB |
+| rwfs | 0x03200000 | 0x00e00000 / 14 MiB |
 
-* BMC Flash：W25Q512JVFIQ，64 MiB，接在 AST2600 的固件 SPI（FMC）。`FLASH_SIZE = 65536`，`FLASH_RWFS_OFFSET:flash-65536 = "55296"`。
+布局来自 Linux DTS、U-Boot DTS以及 `conf/machine/ceb-gnrd.conf`。`FLASH_SIZE=65536`、`FLASH_RWFS_OFFSET:flash-65536=51200` 的单位是 KiB；镜像生成类在写入各段前检查容量，超限会构建失败。
 
-      u-boot        0x0000000  0xe0000
-      u-boot-env    0x00e0000  0x20000
-      kernel        0x0100000  9 MiB     （FIT：内核、设备树、initramfs）
-      rofs          0x0a00000  44 MiB    （squashfs）
-      rwfs          0x3600000  10 MiB    （jffs2，设置）
+* 默认 `bootcmd=run bootspi`。`run bootnet` 同时加载 `image-kernel` 和 `image-rofs`，根文件系统从 TFTP 加载、写层在 RAM，失败时不回退旧 Flash rootfs。仅手动 `tftpboot fitImage; bootm` 时仍使用本地 rofs。
+* `run netupdate` 更新 kernel/rofs，分别检查 9/40 MiB 边界；不更新 U-Boot、环境和 RWFS。更改布局时必须同步镜像生成、两份设备树与 `ceb-gnrd-env.h`。
+* 默认网络参数为 ipaddr 192.168.185.200/24、gatewayip 192.168.185.1、serverip 192.168.185.84；它们只用于 U-Boot。Linux eth0 默认 DHCP。QEMU的 TFTP serverip 为 192.168.185.1。
+* U-Boot已移除编译默认 ethaddr/eth1addr及缺省补齐，已有保存值仍生效。使用真实板卡生产 MAC；恢复全部默认环境前记录并恢复两路 MAC。更改 DDR/SPL或启动环境默认值，需要更新 U-Boot才能生效。
+* BMC分区升级选择写入 `bmc-partitions.txt`，后端验证后暂存到 `/run/initramfs`，重启时由 initramfs更新。kernel/rofs 成对，U-Boot/环境须显式选择。RWFS重写时按通用与板级白名单恢复设置；日志不在保留列表。
+* BIOS上传包需包含完整 64 MiB镜像。`bios-update.sh` 等待稳定 Host Off、持有升级/Host Flash锁，切换 GPIOM1后显式绑定 SPI-NOR，按 `bios-layout.txt` 和用户区域选择刷写。默认不改 nac0/nac1；选中这些区域需确认。解除绑定和恢复所有权后按现有流程请求主机重新上电。
+* CPLD使用 `ceb-gnrd-cpld-update.py`、`cpld_jtag.py` 和 `ceb-gnrd-jtag.c`。仅接受批准的 `.bit`格式、IDCODE/feature code及 primary大小；primary最大 384 KiB，不写 Golden区。任务最多 10分钟，要求 Host Off；逐页 Flash readback验证通过才报告成功，随后整板 AC power cycle生效。
+* 运行镜像与 Golden镜像的 persist_bit=1 已由板卡负责人确认，并登记在 `cpld-update.json`。`recovery.json` 持久化准确的镜像/Flash哈希及恢复条件，擦除中断后只有匹配的已批准计划才能重试；它不是任意镜像通用解锁。
+* BMC/BIOS/CPLD共用固件升级互斥和重启保护；Host Flash期间阻止Host开机/复位及BMC正常重启。升级进程退出时只释放自己的引用，最后一个引用释放后清理重启保护。
 
-  Linux 和 U-Boot 的设备树必须保持这些偏移；U-Boot 里的 `netupdate`（见下）使用同样的数字。
-* 只有一个镜像区，Web 界面不显示备份镜像。
-* 固件更新包（`*.static.mtd.tar`：image-u-boot、image-kernel、image-rofs、image-rwfs）先暂存到 `/run/initramfs`，BMC 重启时由 initramfs 的更新脚本写入：
-  * kernel 和 rofs 被替换；
-  * rwfs 被重写，只恢复 OpenBMC 白名单（用户和密码、IPMI 密码、网络、DNS、设置）和 `recipes-phosphor/initrdscripts/files/ceb-gnrd-whitelist`（时区、主机名、SSH 主机密钥、网站证书、风扇设置、含网页登录会话的 bmcweb 数据）里的文件，所以网页保持登录；SEL 和事件日志会丢失；
-  * 默认**不**重写 U-Boot（`ceb-gnrd-update-skip-u-boot.sh`；写 U-Boot 时断电会得到一块起不来的板子）；要有意更新它，需要在重启前创建 `/run/initramfs/update-u-boot`；
-  * U-Boot 环境（MAC 地址）不属于更新包。
-* 在 Web 固件页选择 BMC 的 `.static.mtd.tar` 分区更新包后，页面显示分区选择：kernel/rofs 默认选中且必须一起更新；rwfs 默认选中（空镜像则跳过，保留现有 rwfs）；u-boot 和 u-boot-env 默认不选，勾选时必须确认（写 U-Boot 失败可能无法启动，清除环境会丢失保存的 MAC）。选择以 `bmc-partitions.txt` 随更新包传递，固件激活时再次校验，只暂存被选中的分区；整片 `.static.mtd.all.tar` 更新被拒绝。
-* 恢复出厂会清除 rwfs 里的全部内容（MAC 不受影响）。
+### 温度、风扇与告警
 
-#### U-Boot
+* `ceb-gnrd-temp-max.py` 从 hwmon 标签选取 PECI Die/Core和DIMM温度，排除DTS/Tcontrol/Tthrottle/Tjmax/margin等参考值，只发布 CPU_MAX_TEMP和DIMM_MAX_TEMP。
+* 每 2秒采样；读值丢失时保留 `max(70°C, 已发布的较高温度)`，有效采样恢复后使用实测温度；确认 Chassis DC Off后清零。独立监控发现采样超过15秒停滞时采用同样保护并停止systemd watchdog报活。
+* Functional区分真实测量与保护输入，有限保护输入保持Available供PID使用；阈值评估使用真实采样，失读保留已触发告警，DC Off清除Host温度告警。开机/复位过渡只延迟诊断日志，不延迟散热保护。
+* 自动曲线的输入/输出点见 `recipes-phosphor/configuration/entity-manager/ceb-gnrd.json`：CPU 40/50/60/70/80/90°C 对应30/40/50/60/80/100%；DIMM 40/50/60/70/80°C 对应30/40/55/60/100%，下降滞回2°C。PID取两条需求的较高值，区域最低30%。这些配置仍需按实板散热验证。
+* `ceb-gnrd-fan-settings.py` 为六个控制器提供串行操作、快照回滚、持久化与控制重载。网页固定值20–100%、步进10%；IPMI接受10–100%。GetFans要求六个控制器的上下限完整、有限且合法；失败时返回ConfigurationUnavailable。
+* `ceb-gnrd-fan-owner` 取得 GPIOI6并清除复位保持位；`ceb-gnrd-fan-release` 停止时交还CPLD。Host供电的TACH失读只在确认机箱DC Off时抑制，热复位不能按Host逻辑Off撤销散热检查。
+* `ceb-gnrd-alert-led.py` 汇总电压Critical、温度UNR及CPU/DIMM UC、600秒BIOS启动超时和Host watchdog。阈值源暂时消失不当作恢复；故障缓存保留到对应的有效状态明确解除。Host Off清除Host供电传感器的失读状态。
+* BIOS超时在后续POST complete时解除；Host watchdog状态锁存到BMC重启。`enclosure_fault` 映射到GPIOI5的fault LED，告警期间定期重发组状态。
 
-* 启动顺序：`bootcmd` 固定为 `run bootspi`，从本地 SPI Flash 里的 FIT 镜像启动，U-Boot 不会自己通过网络加载系统。TFTP 只在手动操作时使用：`tftpboot 0x83000000 fitImage` 加 `bootm` 用于调试内核（根文件系统仍来自本地 `rofs`），以及下面的 `run netupdate`。
-* 默认网络参数是静态的：192.168.185.200/24，网关 192.168.185.1，服务器 192.168.185.84（Linux 的 `eth0` 已改为 DHCP，二者不再一致；在 `aspeed-common.h` 中由 `0001-ceb-gnrd-board-device-tree-network-and-environment.patch` 设置，该补丁同时登记设备树并把板级环境加入默认环境）。
-* 默认 MAC：`ethaddr=02:26:00:00:00:01`、`eth1addr=02:26:00:00:00:02`（`recipes-bsp/u-boot/files/ceb-gnrd-env.h`）。已保存的环境里缺这两个变量时，`board_late_init()`（`0003-ceb-gnrd-fill-missing-default-mac.patch`）在网卡初始化前补齐并保存一次，已有的非空值不变。真实板卡应写入每板唯一的 MAC。
-* `run netupdate`（变量定义在 `ceb-gnrd-env.h`）通过 TFTP 取 `image-kernel` 和 `image-rofs`，检查大小后用 `sf update` 写入 kernel 和 rofs 分区，不会写 U-Boot、环境和 `rwfs`。
-* 环境保存在 Flash 中，之前保存的环境（例如旧的先走 TFTP 的 `bootcmd`）会盖住新的默认值：第一次要执行 `env default -a; saveenv`，并设置 `ethaddr`。
-* `0002-ceb-gnrd-pass-boot-reset-cause-to-linux.patch` 把启动时的原始复位原因（上电 / 看门狗等）通过设备树 `/chosen` 传给 Linux，供“只在 AC 上电时应用来电恢复策略”使用；只更新 kernel/rofs 而不更新 U-Boot，复位原因会显示 unknown，来电恢复策略会被跳过。
-* U-Boot 只使用 RGMII 口。NC-SI 的 MAC（`&mac2`）在 U-Boot 设备树里禁用：加上 `phy-mode` 后探测会让 U-Boot 崩溃（data abort，不断复位），不加则只打印 “Invalid PHY interface”。
-* 在 QEMU 里 TFTP 服务器是 192.168.185.1（QEMU 的 `tftp=` 选项），不是 192.168.185.84，PHY/`mii` 行为是模拟的（RGMII 时序和 RTL8211FS 延时要在板上确认）。
-* BMC 的 DDR4（SK hynix H5AN8G6NDJR-XNC，1 GiB，单颗 x16）参数在 `recipes-bsp/u-boot/files/ceb-gnrd-ddr4.cfg`；DDR 初始化变化必须更新 U-Boot/SPL，仅更新 kernel/rofs 不会修改已有启动代码。
+### 电源、UID、POST与启动设置
 
-#### BIOS 交互（BIOS 菜单）
+* `power-config-host0.json` 的PowerOk是GPIOV4；PowerOut/ResetOut由x86-power-control独占。实体Power button只通知BMC，实体Reset没有连接BMC，因此IPMI机箱能力查询不假定Power0/Reset0 Enabled可用。
+* UID短按保持定位功能；持续5秒读取实际GPIO后请求正常BMC重启，长按释放不再重复定位，启动时已经按住的旧事件不直接当作新长按。
+* 来电恢复策略默认AlwaysOn，只在已识别AC上电时应用；单独BMC重启保留Host当前状态。未知复位来源不授权自动主机上电。
+* BMC重启原因结合bootstatus与干净关机标记识别；正常shutdown/reboot不因ASPEED watchdog复位机制被直接当作异常watchdog。异常watchdog写入SEL；BMC Ready/正常状态变化按信息级别记录。
+* `ceb-gnrd-health` 为ObjectMapper、EntityManager、bmcweb和ipmid设置Restart/启动限制及OnFailure=Quiesce；本层fan-settings、temp-max、alert-led、boot-progress仅自动重启，不因单次服务失败直接Quiesce。Quiesced自动BMC重启限制为1次，计数保存在RWFS，正常运行15分钟后清零；持久故障留待人工处理。上游未报活的服务不能靠WatchdogSec检测卡死，本层notify服务按各自主循环报活。
+* POST捕获来自port0x80。`phosphor-post-code-manager_%.bbappend` 设置max-boot-cycle-count=1、每轮512条。Host重启边界清理上一轮；服务/BMC重启恢复当前轮；`ceb-gnrd-post-history-limit.py` 检查并迁移历史/元数据。
+* `ceb-gnrd-boot-progress.py` 与网页共用参考码表，按4F/60、90、AD、AF/AE等锚点区分阶段。DXE之前重用的B0–BF按Intel RC参考含义；D*/E*/50/55等未匹配平台子码保留原值，不能只按AMI数值区间断言错误。POST complete表示OSStart，不证明OS已运行。
+* 一次性Boot override由BIOS通过IPMI读取并消费；网页按实际override启用状态显示已消费后的None，刷新时保留尚未保存的表单修改，并避免保存无关设置时重新启用旧目标。None表示不覆盖BIOS自身启动顺序。诊断时读取boot/one_time Enabled及`ipmitool chassis bootparam get 5`，不能只看网页复选框，也不把POST进度当作自动清除override的证明。
 
-* **PLDM over MCTP**（`conf/distro/include/pldm.inc`）：通过 Redfish `Systems/system/Bios` 提供 BIOS 属性表和 setup（菜单）设置，另有 PLDM 传感器和 PLDM 固件更新。需要 BIOS 支持 PLDM。
-* **biosconfig-manager**：通过 BMC 远程查看和修改 BIOS setup 参数（参见 https://github.com/openbmc/bios-settings-mgr）。
-* **phosphor-host-postd + phosphor-post-code-manager**：I/O 端口 0x80 的 BIOS POST 码流水线。AST2600 的 LPC snoop 节点对端口 0x80 使能；POST 捕获要在硬件上验证。LPC snoop 只是监视，不是 eSPI Peripheral I/O 周期的完成路径。
-* **phosphor-software-manager + `flash_bios`**：通过接在 AST2600 SPI1（单线模式）上的 Macronix MX25U51245GMI00（64 MiB）更新主机 BIOS。主机开机时，更新服务会在服务日志里提示，并最多等 30 分钟让主机进入稳定的关机状态，运行中绝不会抢占 BIOS Flash 的控制权。随后它把 GPIOM1（`BMC_BIOS_FLASH_SELECT`）拉高，把 BIOS Flash 切给 BMC，再查找 MTD（必要时重试 SPI-NOR 探测），等 5 秒让 CPLD 把 CPU 置于 S5，然后刷写整颗 `host-bios` MTD。结束后恢复 BIOS 的所有权并发出一次强制关机的电源按钮脉冲，再请求开机。如果主机仍为开机状态，常规的机箱关机请求会产生配置的 8 秒强制脉冲；如果已经是关机/S5，x86-power-control 里受保护的板级方法发出该脉冲，且不会从守护进程那里抢走 GPIO 所有权。要在装配好的板子上确认 GPIO 极性和上电时序。
-  只写被选择的 Flash 区域（`flashrom -l <layout> -i <region>`，同时会跳过没变的块），其他区域内容不变。板级布局固定为 `/usr/share/ceb-gnrd/bios-layout.txt`（descriptor、metadata、pdr、bios、nac1、nac0、reserved，网页上有同一张表）。要写的区域来自更新包里的 `bios-regions.txt`，由网页固件页的复选框添加；没有它时（curl、Redfish 客户端）除 nac0/nac1 外的所有区域都会写。nac0/nac1 保存 CPU 集成网络控制器的设置和 MAC 地址，网页只在确认对话框之后才允许选择。镜像必须是完整的 64 MiB Flash 镜像。
-  每一步都会把百分比写到更新对象的 `ActivationProgress`，bmcweb 把它转成 Redfish 更新任务的 PercentComplete，网页固件页（补丁 0013）显示带步骤名的进度条；数字列在 `bios-update.sh` 里，必须与该补丁里的表一致。
-* **phosphor-ipmi-flash**：通过 BLOB 协议的 IPMI 带内固件更新（启用 `flash_bios` PACKAGECONFIG 时带 host-bios 目标）。
-* **主机/机箱状态管理**：`MACHINE_FEATURES` 包含 `obmc-host-state-mgmt`、`obmc-chassis-state-mgmt`、`obmc-phosphor-chassis-mgmt`、`obmc-phosphor-flash-mgmt`。主机和机箱状态来自 `x86-power-control`（`power-config-host0.json`：PowerOk 为 `BMC_CPU_PWRGD`，PowerOut 为 `BMC_CPU_POWER_BUTTON`，ResetOut 为 `BMC_CPU_RESET`，电源脉冲 200 ms、强制关机 8 s、复位 500 ms）。机器使用 `obmc-bsp-common.inc`（受管服务器），而不是 `obmc-evb-common.inc`。
-* 机箱电源按键输入 `BMC_POWER_BUTTON_INPUT` 只检测：按下时写入 SEL 和日志（`ceb-gnrd-power-button-log`），不触发电源状态切换，也不直通到 CPU 电源按键输出。
-* Redfish 侧需要 BIOS 提供的内容（通过 IPMI 报告的启动进度、通过 Get System Boot Options 的一次性启动设备、SEL 写入、用于系统/CPU/内存清单的 SMBIOS 交接、`Bios` 用的 PLDM）本层都不提供，所以网页里去掉了系统、处理器和内存清单表。
+### 网络、PSU、RTC与串口
 
-#### eSPI 与主机 IPMI（KCS）
+* eth0是MAC2/DT mac1，RTL8211FS-CG地址1，rgmii-id，CPLD驱动PHY reset。eth1是MAC3/DT mac2的NC-SI；U-Boot禁用eth1。
+* networkd生成和迁移物理网卡配置使用硬件Path：eth0=platform-1e680000.ethernet，eth1=platform-1e670000.ethernet；VLAN和其他接口仍按适用名称匹配。禁用网络管理器persist-mac/sync-mac，旧MAC覆盖清理保留IP等设置。
+* NC-SI要求Chassis On、POST complete和NICEnabled，等待5秒再拉起；初始无carrier每30秒重试，三次后每300秒慢恢复。已获取carrier后的网线掉线保留已发现通道，等待内核恢复；状态未知时不主动拉起或重探测。
+* `ceb-gnrd-psu-detect.sh` 启动一次探测i2c-7。未绑定时读取STATUS_WORD，失败才尝试STATUS_BYTE；MFR_MODEL规范化为MEGCRPS800AOP/CRPS800AOP时选megcrps800，否则选generic pmbus。已绑定设备用驱动锁保护的hwmon/debugfs路径，不强制绕过驱动访问PAGE/PEC。
+* Generic PMBus并不保证每家PSU提供相同通道；PSUSensor按实际驱动hwmon标签发布输入/输出电压、功率和温度。换框/换模块后需重启BMC重新检测；没有定时热插拔切换。未配置PSU在位/冗余/阈值告警。
+* NCT3015Y-R在i2c-9/0x6f，作为rtc0；RTC sync最多等待3秒，总启动超时5秒。NTP禁用时网络管理器不请求不存在的timesync服务；启用后需要核对配置与同步结果。
+* 默认SOL配置 `server.ttyS2.conf`，物理UART3，115200；VUART1单独console-id，对应`server.ttyVUART0.conf`。Web可切换来源，IPMI/SSH默认连接物理端点；UART5/ttyS4留给BMC调试。
 
-* 板子把 AST2600 的 eSPI 接到 Xeon 6 主机。GPIOW0–W7 专用于这条连接：`pinctrl_espi_default` 覆盖 W0–W5/W7，另外的 `pinctrl_espialt_default` 覆盖 W6/AD7，二者都由 eSPI 节点选用。Peripheral 和 Virtual Wire 通道已使能（主机是 Intel PCH，总是使用 Virtual Wire），Flash Access 不用。KCS/IPMI、POST 码和 VUART SOL 不需要 OOB（VUART 由 BMC 配置）。
-* 固定版本的 `linux-aspeed`（`c0538446`）没有 AST2600 eSPI 控制器驱动。本板自带一个精简驱动（`0001-soc-aspeed-add-AST2600-eSPI-peripheral-ready-driver.patch`，其 Makefile 一行也在这个补丁里），并使能 `CONFIG_ASPEED_ESPI`。它使能 Peripheral 和 Virtual Wire 通道：置位 Peripheral 与 Virtual Wire 的 Software Ready 以及 slave boot done / status 系统事件（`ESPI098` 的 bit 20 和 bit 23，主机会等待它们），在主机 eSPI 复位时复位该模块并把上述全部重新设置（线路本身、GPIO 和系统事件保持硬件模式，没有软件模式，也没有 Virtual Wire 中断），统计通道错误和中止，记录状态变化（限速），并提供 debugfs 的 `regs` 转储。主机连不上 BMC 时先看 `dmesg | grep -i espi`。该内核没有 `CONFIG_ASPEED_LPC_SIO`，也没有添加。
-* Peripheral I/O 周期在 Peripheral Ready 置位后由 AST2600 硬件完成；`ASPEED_LPC_SNOOP` 只是端口 0x80 的监视器。
-* 主机 IPMI：ASPEED KCS BMC、IPMI 和 raw cdev 选项，`phosphor-ipmi-kcs` 使用默认的 `ipmi-kcs3` 设备。设备树启用 `&kcs3` 并带 `aspeed,lpc-io-reg = <0xca2>`，没有这个属性内核驱动不会探测。KCS 没有配置 SerIRQ，主机轮询状态寄存器。BIOS 必须把它的 BMC KCS 端口设为 0xCA2。
-* GPIOP7（`BMC_HBLED#`）初始为灭。eSPI Peripheral 驱动绑定并置 `SW_READY` 之后，由一个板级服务启用内核 LED 的 heartbeat 触发器。
+### 日志、诊断、证书与保留
 
-#### PECI、温度与风扇控制
+* JFFS2不适合二进制journal的可写mmap，本板journal为RAM存储，限8MiB/8文件。rsyslog将warning及以上写入持久`bmc-system.log`（512KiB、5旧文件），SEL 15KiB/1旧文件，Redfish 64KiB/1旧文件。轮转在写入时执行，保留条数取决于记录大小。
+* `ceb-gnrd-sel-logrotate` 名称保留，但当前定时任务是RWFS空间监控；启动清理限制旧诊断文件，不删除用户设置。SEL事件元数据保留sensor type/number/event type/generator ID；标准`ipmitool event`格式与手动Platform Event兼容。
+* BMC普通重启保留持久日志；升级选择重写RWFS时日志不在白名单。用户、网络、机器ID等由通用白名单保留；板级白名单另含时区、主机名、SSH/HTTPS/CA证书、风扇设置、CPLD recovery和bmcweb持久数据。整片编程器烧录/恢复出厂不等同普通升级保留流程。
+* CA证书以单张文件和hash links为持久化来源；批量上传包仅用于校验/暂存，提交前删除快照。旧bundle按独立文件迁移，不恢复已经删除的CA。普通服务退出保留CA文件；显式Delete/DeleteAll仍删除；批量替换保留事务回滚。
+* `ceb-gnrd-check 1` 对实板进行当前状态只读诊断并保存报告/日志包。检查通过不代替Host侧功能、时序或压力验证；显式CEB_CHECK_CLEAR_LOGS=1才授权删除事件日志。
+* `bmc-hw-dump` 提供只读GPIO/pinmux/I2C/eSPI/KCS/VUART/网络/MTD等转储。原始信号球位来自硬件契约和pinctrl，不应从端口表反推已完成实板验证。
 
-* AST2600 PECI0 用于 BMC_CPU_PECI 连接（封装球 AT29）。内核使能 `CONFIG_PECI`、`CONFIG_PECI_CPU`、`CONFIG_PECI_ASPEED`、`CONFIG_SENSORS_PECI_CPUTEMP`、`CONFIG_SENSORS_PECI_DIMMTEMP`。官方 `peci-cpu` 驱动不认识 Granite Rapids（Xeon 6，CPUID model 0xAD / 0xAE），内核补丁 `0003-peci-add-Granite-Rapids-CPU-and-DIMM-temperature.patch` 为 GNR/GNR-D 增加了 CPU 封装温度（跳过核心掩码）和 DIMM 温度配置：GNR-D 的 PCS 14 提供八个通道的最高温度，不再使用 SPR/EMR 的 DIMM 阈值寄存器。如果 BIOS 使用 CLTT with PECI wire / PECI_UPDATE，PCS 14 返回零，该模式的 DIMMTEMPSTAT MMIO 路径还缺寄存器规范，不能声称已覆盖。读到全零或读取出错时内核温度保持不可用。以上都没有在板上验证：检查 `ls /sys/bus/peci/devices/0-30` 是否有 `peci_cputemp.*` / `peci_dimmtemp.*` 及其读数。IntelCPUSensor 不编译（`PACKAGECONFIG:remove`，`ceb-gnrd.json` 里没有 `XeonCPU` 条目）：IPMI、Redfish 和网页里不会出现逐核或逐 DIMM 的传感器，只有下面的两个最大值。只启用了 AST2600 的 I3C3，DIMM 温度走 PECI，不走 I3C。
-* `ceb-gnrd-temp-max`（Python，dbus-fast）发布两个传感器 `/xyz/openbmc_project/sensors/temperature/CPU_MAX_TEMP` 和 `DIMM_MAX_TEMP`，取内核 `peci_cputemp`（CPU）和 `peci_dimmtemp`（DIMM）hwmon 设备温度的最大值，直接读 sysfs（按标签排除 DTS、Tcontrol、Tthrottle、Tjmax 和 margin 读数）。主机关机时为 0；主机开机但读不到任何温度时为 70 °C（两条风扇曲线在 70 °C 都映射到 60 %，不告警）。只设上限（非严重 / 严重 / 不可恢复）：CPU 90 / 98 / 105 °C，DIMM 80 / 85 / 95 °C。前两级使用 Warning 和 Critical 阈值接口；不可恢复级在一个私有接口（`com.ctopai.CebGnrd.Threshold.NonRecoverable`）上，绝不用 HardShutdown：BMC 不得因为阈值关闭系统，而 phosphor-fan 的 sensor monitor 等服务会在 HardShutdown 告警时给系统断电（该 monitor 也已从镜像里去掉）。服务发出 `ThresholdAsserted` 信号，由 phosphor-sel-logger 转成 SEL 记录；ipmid 的板级补丁把不可恢复值显示为 UNR。发现的源传感器名称会记录日志（`journalctl -u ceb-gnrd-temp-max`），需要在板上核对。
-* 风扇由 `phosphor-pid-control` 按 Entity-Manager 配置（`ceb-gnrd.json`）驱动：6 个风扇 PID 控制器（`Fan0 Control` 到 `Fan5 Control`，输入 SYS_FAN0–5，输出 PWM0–PWM5，限幅 30–100 %），一个区域（MinThermalOutput 30），以及作用在 CPU_MAX_TEMP 和 DIMM_MAX_TEMP 上的两条 stepwise 曲线。曲线点是占位值，等待确认。区域的 fail-safe 故意设为 30 %：能读到的风扇数量不应决定风扇转速，温度传感器才决定（读不到 CPU 或 DIMM 温度：60 %）。6 个风扇没有转速告警，没接风扇的接口读数为 0 RPM。Pid 对象的名字不能与 AspeedFan 对象（SYS_FAN0–5）相同：二者会共用一个 D-Bus 路径，对 Pid 属性的写入会失败。Stepwise 的 `Reading`/`Output` 数组要写成带小数点（`40.0`），因为 pid-control 读不了 Entity-Manager 为 `40` 发布的无符号整数数组。
-* `ceb-gnrd-fan-owner` 在 pid-control 运行且 6 路 PWM/TACH 都存在后，把风扇从 CPLD 交给 BMC（GPIOI6 `BMC_FAN_BMC_OVERRIDE_N`），pid-control 停止时再交回。BMC 复位（看门狗或用户触发）期间必须把风扇交还 CPLD，所以这根脚不能保持：内核对用户态申请的线都会置位 reset tolerance，服务在占住这根线之后用 `devmem` 清除 `0x1e7800ac` 的 bit 6，清不掉就不接管风扇。
-* `ceb-gnrd-fan-settings` 支撑网页的风扇页（逐个或统一的限幅，可选的跨 BMC 重启保留，存放在 `/var/lib/ceb-gnrd`），并每 30 秒把保存的限幅重新应用到 Entity-Manager 的 Pid 对象。自适应模式使用固定限幅（30 % 到 100 %），没有最低转速设置。Entity-Manager 对 Pid 属性的写入会返回 InvalidArgs 但值其实已改变（根因没有深究），所以服务回读该值，一致就接受。这个版本的 bmcweb D-Bus REST 不能传标量参数，所以网页只发一次不带参数的调用，方法名承载整个请求：`ApplyFan<0..5|All><Adaptive|Fixed20..100><Keep|Forget>`。
-* 同样的控制也以两条 IPMI OEM 命令提供（netfn 0x30）：`0x01` 读取（标志字节，然后是 SYS_FAN0..5 各自的 模式/占空比/RPM 低字节/RPM 高字节，共 25 字节，占空比 `0xFF` 表示未知）和 `0x02` 设置（风扇 0-5 或 0xFF、模式、占空比、是否保留；需要 Admin）。它们由 `ceb-gnrd-ipmi-fan` 这个 ipmid provider 实现（由 `ceb-gnrd-ipmi` 引入），并在 `ceb-gnrd-ipmi-whitelist.conf` 里放行。曾在 QEMU 里用 `ceb-gnrd-check` 检查（设置、读回、保留、清除、非法风扇号）；还没有在板上检查。
+### 已知限制与实板确认
 
-#### 启动、ipmid 启动与板级自检
+* 未配置PLDM BIOS属性/更新、SMBIOS系统/CPU/DIMM清单和DCMI；MCTP独立保留。BIOS版本未上报时Web显示N/A。
+* biosconfig-manager提供BMC侧配置服务，实际UEFI BIOS菜单交互仍需BIOS协议与属性上报配合，不能因守护进程已安装就宣称远程Setup可用。
+* 虚拟媒体仅支持本地浏览器ISO；内部菜单切换保持连接，浏览器刷新/关闭会断开。后台标签休眠也可能造成WebSocket断流。独立挂载窗口方案未实现。
+* KVM键释放失败可能造成重复字符，尚未修复；收到ENOLINK时需核对主机视频输出状态。
+* 仍需确认GPIO在异常复位/升级中断时的板级电平、CPLD交接/Golden恢复、不同PSU通道、风扇曲线负载、RGMII/NC-SI时序、RTC断电保持和UART/VUART主机端实际输入输出。
+* D3V0_BAT0应按实际R542/Q39焊接与分压校准。已确认的PHY地址1及当前rgmii-id配置不再列为地址2待猜测。
 
-* AST2600 的 SD/eMMC 控制器在 U-Boot 和 Linux 设备树里都被禁用（EVB 的 include 会启用它们），本板两者都没有。
-* 硬件看门狗：WDT1 只复位 SoC（`aspeed,reset-type = "soc"`，不是整颗芯片，所以 GPIO 保持状态，需上板确认），由 systemd 喂狗（`RuntimeWatchdogSec=120s`）。`aspeed_wdt` 不支持预超时，所以 `systemd-conf` 安装一个与 meta-phosphor 同名的 `40-hardware-watchdog.conf`（/etc 里的优先），只保留 `RuntimeWatchdogSec=120s`，去掉 `RuntimeWatchdogPreSec` / `RuntimeWatchdogPreGovernor=panic`（否则 systemd 每次开机都会提示 “Failed to set watchdog pretimeout_governor”；用空赋值清除会被 systemd 拒绝）。
-* 内核 oops 变成 panic（`CONFIG_PANIC_ON_OOPS`），panic 后 5 秒重启 BMC（`CONFIG_PANIC_TIMEOUT=5`）。启用了 Magic SysRq（串口 BREAK 不能触发），可用 `echo c > /proc/sysrq-trigger` 测试。
-* 服务恢复使用标准的 systemd / OpenBMC 机制（`ceb-gnrd-health`）。本层自己的 fan-settings、temp-max 和 alert-led 服务只加一个 drop-in：`Restart=always` 和启动限制（5 分钟内 5 次），不加别的。systemd 在每次失败时都会执行 `OnFailure=`，包括随后会自动重启的失败（在虚拟机上见过：给 temp-max 发一次 SIGKILL 就让 BMC 进入 Quiesced 并重启），所以它们不能带 `OnFailure=`。对象映射器、Entity-Manager、bmcweb 和 ipmid 加同样的内容，再加 `OnFailure=obmc-bmc-service-quiesce@0.target`，所以它们之一第一次失败时（它也会被重启，但 BMC 无论如何都要重启），phosphor-state-manager 把 BMC 置为 Quiesced；选项 `auto-reboot-on-bmc-quiesce`（`phosphor-state-manager_%.bbappend`）再把它重启。上游对这种重启没有次数限制；`ceb-gnrd-quiesce-reboot-limit.sh`（`phosphor-bmc-quiesce-reboot.service` 的 ExecCondition）限制为最多自动重启 1 次，计数存在读写 Flash 里，开机 15 分钟后由 `ceb-gnrd-quiesce-reboot-clear.timer` 清零。重启后故障仍在，BMC 就停在 Quiesced（并写一条 SEL）等待人工处理。上游守护进程不向 systemd 看门狗报活，所以对它们只能恢复崩溃（进程还在但卡死的情况发现不了）；本层自己的服务是 `Type=notify` 加 `WatchdogSec=`，由主循环报活，卡死会被重启。`ceb-gnrd-wdt-reset-log` 在 `bootstatus` 显示看门狗复位而没有干净关机标记时写一条 SEL（在 U-Boot 里输入 `reset` 也会被记一次）。以上新增部分没有编译，也没有运行验证。
-* `phosphor-ipmi-host` 有一个 drop-in（`10-ceb-gnrd-wait-sensors.conf`），最多等 90 秒，直到 D-Bus 传感器数量连续 8 秒不变。更早启动时，ipmid 会在传感器的阈值接口出现前读取，开机后第一分钟只提供 2 个静态传感器。代价是开机后大约一分钟内 `ipmitool` 不可用。
-* `ceb-gnrd-boot-progress`（`recipes-phosphor/state`）根据端口 0x80 的 POST 码发布主机启动进度（`/xyz/openbmc_project/state/host0` 上的 `xyz.openbmc_project.State.Boot.Progress`），因为上游没有任何组件推导它，主机也不上报。POST 码范围（脚本里的 `STAGES`）参照公开的 AMI Aptio 检查点和 Intel MRC，以 GNR-D BIOS 厂商的 POST 码表为准。IPMI 的 `Boot_Progress` 传感器和网页的离散传感器表会显示它；Redfish 的 `BootProgress` 由 bmcweb 从 x86-power-control 读取，仍为空。
-* POST 码管理保留所有实际收到的码值（包括 `0x00`、重复的 `0x01` 和多字节码），只保留最近 2 轮 BIOS POST、每轮最多 512 条（`0001-ceb-gnrd-post-history-warm-boot-cycle.patch`，旧的 100 槽历史由 `ceb-gnrd-post-history-limit.py` 迁移）；收到主机 `CurrentHostState=Off` 时结束当前一轮，下一条记录开始新一轮；网页上最新在前。
-* `ceb-gnrd-check`（`recipes-phosphor/utils`，安装到 `/usr/bin`）在 BMC 上运行，输出服务、传感器和阈值、IPMI 命令、风扇 OEM 命令、Redfish、RTC 和 MTD 布局的 PASS/FAIL，并把日志打包到 `/tmp/ceb-gnrd-check.tar.gz`（用法见第七章）。
-* `bmc-hw-dump`（`recipes-phosphor/utils/files/bmc-hw-dump.sh`，安装到 `/usr/bin`）是只读转储，记录正在运行的固件如何使用硬件（GPIO、pin mux、I2C、eSPI/KCS/VUART、网络、Flash 等）。把脚本复制到旧的厂商固件上运行，再在本固件上运行 `bmc-hw-dump`，然后在 PC 上用 `sh bmc-hw-dump.sh compare OLD.tar.gz NEW.tar.gz` 对比。转储里的 `ceb-gnrd-checklist.txt` 逐项列出每个 ceb-gnrd 硬件功能的期望值和实际值。
+### IPMI里的板卡版本
 
-#### 与 OpenBMC 惯例保持一致
-
-* x86 平台的设置参照 Intel 参考平台：`obmc-host-ctl` 不是机器特性（它唯一的提供者是 OpenPOWER 的 `obmc-op-control-host`），`VIRTUAL-RUNTIME_obmc-discover-system-state` 是 `x86-power-control`，BMC 启动时由它应用来电恢复策略，且只在 AC 上电启动时应用（`0003-ceb-gnrd-apply-power-restore-only-on-ac-boot.patch`）：BMC 单独复位时保持主机现有状态。策略的出厂默认值是 AlwaysOn（AC 恢复时主机开机），由 `phosphor-settings-manager/settings.override.yml` 设置；读写分区里已经保存的策略（在网页上改过的）会一直保留到恢复出厂。
-* 私有的 D-Bus 名字使用厂商域名：服务和接口为 `com.ctopai.CebGnrd.*`（`FanSettings`、`TempMax`、`Threshold.NonRecoverable`）。风扇设置对象的路径仍是 `/xyz/openbmc_project/ceb_gnrd/fan_settings`，因为 bmcweb 的 D-Bus REST 只提供 `/xyz` 和 `/org` 下的对象路径。
-* 对上游源码的改动都用补丁文件，不用 `sed`：U-Boot（`0001-...` 到 `0003-...`）、内核 Makefile 一行（在 eSPI 补丁里）、ipmitool 的产品名（`0002-ipmitool-add-ceb-gnrd-product-name.patch`）。x86-power-control 和 ipmid 的补丁已对照固定版本的源码重新生成，所以 `patch-fuzz` QA 降级已经消失。ipmitool 的厂商名（IANA 企业编号 6659）仍然来自在 `do_install:append` 里往已安装的 `enterprise-numbers` 数据文件追加的一行，因为该文件不是 ipmitool 源码的一部分。
-* `DISTRO_VERSION` 定义在厂商发行版 `ctopai-openbmc`（`meta-ctopai/conf/distro`）里；`local.conf` 必须选用它（`./setup ceb-gnrd` 会把旧的 `DISTRO ?= "openbmc-phosphor"` 改过来）。板级硬件契约通过 `MACHINE_EXTRA_RDEPENDS` 安装，而不是机器特性。
-* 有意不改的部分：bmcweb 保持 `redfish-updateservice-use-dbus=disabled`，phosphor-software-manager 保持经典更新器（去掉了 `software-update-dbus-interface`，BMC 更新器通过软链接启用）。默认流程用 `Software.Manager` 取代 `xyz.openbmc_project.Software.BMC.Updater`，而这里的 BIOS 更新（`bios-update.sh`、`obmc-flash-host-bios@.service`）建立在经典流程上，所以切换需要重做并在板上测试 BIOS 更新。
-* 以上都没有构建和运行验证。
-
-#### RTC 与日志时间
-
-* NCT3015Y-R 接在 AST2600 的 I2C10（Linux `i2c-9`，地址 `0x6f`），由 `nuvoton,nct3018y` 驱动绑定（与 NCT3015Y 的寄存器兼容性没有在硬件上验证）。AST2600 内部 RTC 没有电池，所以在设备树里禁用，NCT3015Y 是 `rtc0`。
-* BMC 系统时间以及随之而来的 SEL 和 journal 时间戳默认来自 RTC：开机时 `CONFIG_RTC_HCTOSYS`，`ceb-gnrd-rtc-sync` 兜底（最多等 `/dev/rtc0` 3 秒，所以没有 RTC 的机器要等满 3 秒；启动超时 5 秒）。NTP 同步后由 `CONFIG_RTC_SYSTOHC` 写回时间。RTC 要保持 UTC。
-
-#### 板级硬件图
-
-由工作簿导出的硬件图安装为 `/usr/share/ceb-gnrd/ceb-gnrd-hardware-contract.yaml`，记录 16 条 I2C 总线、CPU 的 I3C3 管理总线、AST2600 ADC 引脚 0-15、6 路 PWM/TACH 风扇通道，以及已命名的电源、复位和告警 GPIO。机箱开盖检测使用 AST2600 专用的 CHASI# 入侵输入，经入侵 hwmon 锁存（`0002-hwmon-add-AST2600-chassis-intrusion-driver.patch`）。
-
-* I2C7（Linux `i2c-6`）上 4 个 NST175H-QSPR 温度传感器：进风口 `0x48`、出风口 `0x49`、PCIe `0x4a`、M.2 `0x4b`，只做测量。它们由 Entity-Manager / dbus-sensors（Type `LM75A`）创建，不在设备树里声明（两处都声明会让每次扫描都记录 `Failed to register i2c client lm75a ... (-16)`）。
-* ADC：两个 ADC 引擎都使用 2.5 V 内部参考。`D3V0_BAT0` 按现状读取（R542/Q39 未焊，3 V 电池使输入饱和），直到原理图修正。
-* CRPS 电源：原理图 I2C8（Linux `i2c-7`），PMBus 地址 `0x58`/`0x59`/`0x5a`，装 0 到 2 个模块。设备树不声明 PMBus 节点：`ceb-gnrd-psu-detect` 每 5 秒用 STATUS_BYTE 读取轮询这三个地址，为每个模块创建或删除 pmbus 设备，所以空槽不会产生探测失败日志。Entity-Manager/PSUSensor 发布输入和输出的电压与功率以及 `PSUn_Temp`（pmbus 的 `temp2`）。没有配置在位、冗余或阈值告警。
-* CPU PROM/SMBUS_HOST：`BMC_PROM_SCL/SDA` 在 AST2600 的 I2C15（Linux `i2c-14`），不创建 EEPROM 客户端。
-* 板卡版本：`PCB_VER[2:0]` 作为 GPIO 输入采样，见本章末尾。
-
-#### BMC 网口
-
-* `eth0`：MAC2 配 RTL8211FS-CG，接独立的管理 RJ45，默认 IPv4 DHCP（地址、网关、DNS 由 DHCP 服务器提供，仍可在网页或 IPMI 里改成静态）。RGMII 模式 `rgmii`（PHY 不加延时，RXDLY strap 关闭），PHY 地址按原理图备注为 2（strap 电阻读出来是 1，需上板确认），PHY 复位 RTL8211_SYS_RSTN 由 CPLD 驱动。RGMII 延时仍要在板上检查。
-* `eth1`：MAC3，NC-SI 接 Intel E810（IPMI LAN 通道 2），DHCP。E810 没有待机供电，所以 `ceb-gnrd-ncsi` 在主机关机时让链路保持关闭，机箱电源状态变为 On 时把它拉起，并且因为 E810 可能不会立刻应答，在没有载波时每 30 秒把链路 down/up 一次，最多 3 次。systemd-networkd 自己不改这个接口的管理状态（`ActivationPolicy=manual`）。
-* MAC 地址来自 U-Boot 环境变量 `ethaddr` / `eth1addr`；网络管理服务关闭 `persist-mac` 和 `sync-mac`，不接受通过 D-Bus / Web / Redfish 修改 MAC；`systemd-networkd` 启动前会清掉旧网络配置里的链路 MAC 覆盖（`ceb-gnrd-clear-network-mac.sh`），IP、DHCP、DNS 和静态邻居设置保留。
-
-Linux 和 U-Boot 的设备树保持这个对应关系：phandle `mac1` 是物理 MAC2（RTL8211FS，`mdio1`/`ethphy1`），phandle `mac2` 是物理 MAC3（NCSI3，E810）；物理 MAC1 和 MAC4 被禁用。刷入更新后的镜像后应该只出现这两个设备。
-
-#### 告警、SEL 与系统告警灯
-
-* 一个共用的 LED `BMC_SYS_ALERT_LED`（GPIOI5，内核 LED 名 `fault`）显示四种告警（`ceb-gnrd-alert-led`）。它由 phosphor-led-manager 驱动：服务只置位/清除标准组 `enclosure_fault`（`Asserted` 属性，告警期间每 30 秒重发一次），`led.json` 把该组映射到 `fault` LED。电压阈值告警和温度不可恢复上限（UNR）告警在告警解除时熄灭。CPU_MAX_TEMP 和 DIMM_MAX_TEMP 到达 Upper Critical（98 °C / 85 °C）也点亮，低于阈值且没有其他故障时熄灭；主机 watchdog 超时和 BIOS 启动失败（电源正常后 600 秒内 `BMC_BIOS_BOOT_OK` 没有置位）也点亮。BIOS 启动失败在之后 POST 成功完成时清除（包括主机复位之后）；只有主机 watchdog 超时一直锁存到 BMC 重启。任何一种都会点亮这个灯。服务自己不读任何 GPIO：主机电源状态来自 `xyz.openbmc_project.State.Chassis` 的 `CurrentPowerState`，BIOS 启动 OK 来自 `OperatingSystemState`（`xyz.openbmc_project.State.OperatingSystem`，`/xyz/openbmc_project/state/host0`）；x86-power-control 独占这两根线（`PowerOk` `BMC_CPU_PWRGD`，标准的 `PostComplete` `BMC_BIOS_BOOT_OK`，高有效）。主机开着时 `PostComplete` 的下降沿会启动其状态机的热复位检查并记录一次软复位的重启原因，不发电源脉冲。没有在板上运行过。
-* 四种告警都会写 SEL：电压和温度由 phosphor-sel-logger 的阈值监视器写入（板级补丁 `0001-ceb-gnrd-log-non-recoverable-threshold-events.patch` 让它把私有的 NonRecoverable 接口当作上/下不可恢复处理），watchdog 由它的 watchdog 监视器写入，BIOS 失败由告警服务自己写入。
-* rsyslog 加载 `imjournal`（`recipes-extended/rsyslog/rsyslog_%.bbappend`）：没有它，rsyslog 看不到 `IPMI_SEL_*` 的 journal 字段，`/var/log/ipmi_sel` 一直是空的（即使 sel-logger 记录了事件，SEL 也显示“没有条目”）。
-* 网页的“事件日志”页是 Redfish 事件日志，与 IPMI SEL 是不同的文件：bmcweb 读取 `/var/log/redfish`（行格式 `<时间戳> <MessageId>,<MessageArgs>`，只有它的注册表里存在的消息 ID 才显示），rsyslog 把带 `REDFISH_MESSAGE_ID` 的 journal 条目写进去（`ceb-gnrd-redfish.conf`，与 Intel 参考平台同样的规则；sel-logger 的阈值事件和电源按键消息都带有这个 ID）。没有这条规则，即使 `ipmitool sel list` 有记录，该页也是空的。`redfish` 与 SEL 在同一次 logrotate 里轮转（64k，保留 1 个旧文件）。
-* SEL 是用标准 logrotate 实现的 rollover 日志（`ceb-gnrd-sel-logrotate`）：phosphor-sel-logger 读取 `/var/log/ipmi_sel*`（所有轮转文件），并把下一个记录 ID 保存在自己的文件里，所以 ID 不会重复使用。一个定时器在开机 30 秒后首次、之后每 1 分钟运行 logrotate，`size 15k`、`rotate 1`，即大约保留最新的 100 到 200 条记录，更老的删除（按大小计算，所以条数是近似值，突发的记录最多可在 1 分钟的检查间隔内超出）。`/var/log` 是否能经过重启保留还没有检查。
-* 网页的事件日志通过 sel-logger 的 journal 记录由 SEL 提供数据。
-
-#### IPMI
-
-* `mc info`：Device ID 32，Device Revision 2，Product ID 3346（0x0D12），Manufacturer ID 6659（0x1A03），BMC 上的 ipmitool 显示为 `CTOPAI` / `CEB-GNR-D`（`dev_id.json`，见第六章）。板卡版本是第四个 AUX 固件版本字节。固件版本来自 `DISTRO_VERSION`，定义在厂商发行版 `meta-ctopai/conf/distro/ctopai-openbmc.conf`（`local.conf` 里 `DISTRO = "ctopai-openbmc"`；2.0.0；固件版本从 2.0 开始，`ipmitool mc info` 显示为 2.00）。
-* 传感器：启用了 `dynamic-sensors` 和 `hybrid-sensors`，所以所有 D-Bus 传感器（ADC、温度、风扇、CPU/DIMM 最大值、PSU）都能在 IPMI 里看到，与静态的主机状态传感器并列。
-* 电压阈值（标称 ±15 %）使用 Critical 级别（lower critical / upper critical），这样 ipmitool 能显示；Entity-Manager 里板子名为 “CEB-GNRD”（Redfish 机箱 “CEB_GNRD”）。
-* LAN：`phosphor-ipmi-net` 在 `eth0` 上提供 RMCP+。SOL、用户、通道和会话命令使用标准的 phosphor-host-ipmid provider。
-* DCMI 的电源读数和温度读数没有配置（`power_reading.json` 没有路径，`dcmi_sensors.json` 为空），所以这些命令没有有用的返回。
-* `ipmitool fru gen [文件]`（对 ipmitool 的板级补丁）交互式生成带机箱、板卡和产品信息区的 FRU 镜像（默认 `fru.bin`）：每个提示都显示格式，默认值已经填在输入行里，可以修改，直接回车就保留。用 `ipmitool fru write 0 fru.bin` 写入。FRU 0 是板载 EEPROM（机箱类型 0x17 或 0x11 对应 FRU ID 0）；`ceb-gnrd-fru` 在开机时往空白的 EEPROM 写入默认 FRU，并在每次写入后让 fru-device 重新扫描。
-* SSH 是 dropbear（22 端口）；装了 `openssh-sftp-server` 和 `openssh-scp`，所以 `scp` 在基于 SFTP 的协议和旧协议下都能用。
-
-#### Web 界面
-
-* 语言：英文（`en-US`）和简体中文（`zh-CN`），其余语言被过滤，包括之前保存的选择。`zh-CN.json` 是本层维护的完整翻译。
-* 网页在构建时打补丁（`recipes-phosphor/webui/files`，登记在 `webui-vue_%.bbappend` 里，编号 0001–0030）：语言（0001–0002）、风扇控制页（0003）、移除 SNMP、清除密钥、LDAP 和资源管理电源页（0004）、KVM 全屏（0006）、只保留 BMC 的恢复出厂（0007）、清单只保留系统/BMC/机箱（0008）、移除概览页电源卡（0009）、无备份镜像卡（0010）、只保留 BMC dump（0011）、去掉虚拟 TPM / RTAD 开关（0012）、固件更新进度与 BIOS 刷写区域选择（0013–0014）、传感器分模拟/离散标签（0015）和分页（0017）、POST 码最新在前（0016、0027）、固件更新进度跨页面保留（0018）、恢复出厂措辞（0019）、概览固件卡（0020）、电源操作和实时页面刷新（0021、0024）、事件日志的列和排序（0022、0023、0028）、虚拟媒体会话关闭与读回复分块（0025、0026）、BMC 更新分区选择与更新完成通知（0029、0030）。固件页的 BMC 和 BIOS 都没有备份镜像卡（0010）。
-* bmcweb 使用 `dbus-rest`（风扇页）、`redfish-dump-log`（转储页；不加这个选项，配方会去掉转储路由）和 `redfish-updateservice-use-dbus=disabled` 构建：默认情况下 Manager 的 `FirmwareVersion` 在 `/xyz/openbmc_project/software/bmc/functional` 下查找，而这里用的经典 phosphor-image-updater 发布在 `/xyz/openbmc_project/software/functional`（修改后没有验证）。BMC 转储由 `phosphor-debug-collector` 产生，本平台没有 System dump。此外还加了补丁：删除单条事件日志而不重排 ID、虚拟媒体异步清理和接收背压、服务根返回 BMC 启动 ID（给更新监视使用）。
-* 虚拟媒体：只支持“从浏览器读取镜像文件”（bmcweb 的 `/vm/0/0` WebSocket、jsnbd、nbd，经 vHub 的 USB 大容量存储到主机）。外部服务器（CIFS/HTTPS）模式需要已停止维护的 virtual-media 服务，既不编译也不显示。
-* 固件页的 BIOS 卡片的运行版本显示 `--`；BIOS 版本报告没有实现。
-* 概览页的“电源信息”卡、功率上限以及任何需要 DCMI 电源支持的内容都已移除。
-
-#### VGA 显示输出与 KVM
-
-* AST2600 GFX DAC 输出提供 CPU 的 VGA 显示通路（`CONFIG_DRM_ASPEED_GFX`、`&gfx`、GPIOL6/VGAHS 和 GPIOL7/VGAVS）。DDC 引脚是固定功能。
-* 单独的 `CONFIG_VIDEO_ASPEED` / `&video` 通路（保留内存 `video_engine_memory`）为 KVM 采集主机视频；镜像带有 `obmc-ikvm` 和 bmcweb 的 KVM 端点。AST2600 的 USB2A D+/D- 接到主机 VL805 的 USB 端口 4：vHub 工作在设备模式（`pinctrl_usb2ad_default`），EHCI 主机模式禁用，由 configfs HID 提供键盘和鼠标。
-
-#### 主机串口 SOL
-
-* SOL 使用 AST2600 的 VUART1：主机看到的是 COM1（I/O `0x3F8`），经 eSPI Peripheral 通道，所以是双向的（设备树里的 `&vuart1`，`CONFIG_SERIAL_8250_ASPEED_VUART`）。`obmc-console` 使用 `ttyVUART0`（来自 `udev-aspeed-vuart` 的软链接，VUART1 在 `0x1E787000`）作为 `OBMC_CONSOLE_HOST_TTY`，配置为 `server.ttyVUART0.conf`（默认的 socket 名，bmcweb 和 IPMI SOL 才能连上）。BIOS 的串口重定向必须设为 COM1。
-* 为什么用 VUART：BIOS 检测到 AST2600 的 SuperIO，把 COM1 路由到 eSPI 并一直轮询行状态寄存器 `0x3FD`；后面没有可用的 COM1 时该寄存器读出 `00`（“发送器非空”），BIOS 就卡死。运行中的 VUART 会正确应答这个寄存器。必须有东西读取 VUART 的数据（obmc-console 会读），否则缓冲区满了，寄存器又变回“非空”，BIOS 可能再次卡死。
-* UART3 RX（`GPIOL5/RXD3`，只收）仍保持复用，但不再是 SOL 的来源。网页 SOL 页是原版的（可以输入）；旧的只读补丁 `0005` 已经移除。
-* AST2600 的 SuperIO（I/O `0x2E/0x2F`）保持启用：BIOS 能找到它并把 COM1 路由到 VUART。（`SCU510[3]` 可以禁用它，但只有上电复位才能清除这一位，而且 BIOS 之后可能完全无法使用 COM1。）
-* UART5（`ttyS4`，115200 波特，球 C8/D8）是本地的 BMC 调试控制台，U-Boot 和 Linux 都用它。
-
-#### FRU EEPROM 访问
-
-* **fru-device**（entity-manager）探测 I2C 上的 FRU EEPROM 并发布到 D-Bus。
-* **phosphor-ipmi-fru** 接到原理图 I2C11（Linux `i2c-10`）上的 FM24C08D，地址块 `0x50`–`0x53`，1 KiB，页大小 16 字节。原理图显示 `BMC_FRU_WP`（封装球 D21，GPIOG6）有下拉，所以默认允许写入。
-* IPMI 的 FRU 读写命令（`0003-ceb-gnrd-fru-area-is-the-whole-eeprom.patch`）把整颗 EEPROM 当作一个 FRU 区，兼容 fru-device；fru-device 另有两个补丁：允许写入与 EEPROM 等大的镜像（`0001-...`），写入后回读校验，成功才返回成功（`0002-...`）。
-* `ceb-gnrd-yaml-config.bb` 提供 FRU 的 YAML 映射文件（`IPMI_FRU_YAML` / `IPMI_FRU_PROP_YAML`）；实体 ID 和实例都是 0。
-
-### 待确认事项
-
-下面这些都需要板子（或者在等你的决定）：
-
-* eSPI Peripheral 通道的启动和 BIOS 的 KCS 端口（0xCA2）。
-* PHY 地址 2、RGMII 延时，以及真实板子上的 U-Boot/Linux 网络。
-* 主机上电后 NC-SI 链路的时序（重试间隔和次数都是猜的）。
-* PSU STATUS_BYTE 探测、把 `temp2` 当作 PSU 温度、PSU 传感器命名。
-* CPU 和 DIMM 温度的 PECI hwmon 标签和数值（由 `ceb-gnrd-temp-max` 读取并记录日志）和风扇 PWM 对象名。
-* 风扇曲线温度（占位值）、IANA 厂商编号（0x1A03，按给定值）、固件版本规则。
-* 各种告警的 SEL 记录、SEL rollover、以 RTC 为时间源、SOL 输出和 KVM 在真实硬件上的检查。
-* 没有实现：BIOS 版本报告（sbp1 基于 coreboot 的 `bios-version` 不适用于 UEFI BIOS）、基于 SMBIOS 的清单和 DCMI。
-* `D3V0_BAT0` 在 R542/Q39 焊上之后的缩放。
-
-### IPMI 里的板卡版本
-
-三个 `PCB_VER[2:0]` strap 输入作为 GPIO 输入采样。它们的原始逻辑电平把板卡版本编码为 `(PCB_VER2 << 2) | (PCB_VER1 << 1) | PCB_VER0`，得到 0 到 7 的值。`ipmitool mc info` 把这个值放在 AUX 固件版本字段的第四个（最后一个）字节里，前三个 AUX 字节不变。`CFG_VER0` 是另一个配置 strap，`CFG_VER1` 保留，二者都不计入 PCB 版本。
-
-AST2600 是 ASPEED 公司的 ARM 架构服务管理 SoC，更多信息见[这里](http://aspeedtech.com/server_ast2600/)。
-
+PCB_VER[2:0]的原始电平编码为 `(PCB_VER2 << 2) | (PCB_VER1 << 1) | PCB_VER0`，值0–7，置于IPMI AUX固件版本第四个字节；CFG_VER0不计入PCB版本。相关GPIO名称与球位见端口表。
 
 ## 十、代码目录与文件清单（`meta-ceb-gnrd`）
 
-本章列出 `meta-ctopai/meta-ceb-gnrd` 层下每个目录和文件的用途与目的。路径均相对于该层根目录。命名约定：`ceb-gnrd-*.bb` 是本板自有的 Yocto 配方，`*_%.bbappend` 是对上游配方的追加，`files/` 下是配方引用的源文件，`NNNN-*.patch` 是对上游源码的补丁（按编号顺序应用）。补丁的"目的"一栏取自补丁标题。
+路径均相对于 `meta-ctopai/meta-ceb-gnrd/`。以下索引按当前工作区文件校对；未引用的草稿补丁不表示已经进入构建。配方的 `SRC_URI` 决定补丁和源文件是否参与构建。
 
-### 10.1 目录总览
+### `conf/`
 
-| 目录 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `conf/` | 层配置、机器定义、模板配置（`oe-init-build-env` 使用）。 |
-| `recipes-bsp/u-boot/` | U-Boot 板级支持：设备树、DDR4 参数、网络与环境变量默认值、复位原因传递。 |
-| `recipes-kernel/linux/` | Linux 内核：板级设备树、内核配置片段、AST2600 eSPI/机箱入侵驱动、PECI GNR 支持及若干稳定性补丁。 |
-| `recipes-core/systemd/` | systemd 与网络：eth0/eth1(NC-SI) 网络配置、看门狗、日志与 coredump 限额、启动时清理遗留 MAC。 |
-| `recipes-extended/rsyslog/` | rsyslog：Redfish 事件日志转发与限额配置。 |
-| `recipes-connectivity/jsnbd/` | 虚拟媒体 NBD 代理（jsnbd）的稳定性修复。 |
-| `recipes-devtools/qemu/` | 让 OpenBMC 自己构建的 qemu-system-native 带上本板的 QEMU 板级模型补丁。 |
-| `recipes-x86/chassis/` | x86-power-control：主机上电/复位/强制关机 GPIO 与电源恢复策略。 |
-| `recipes-phosphor/` | 本板所有 Phosphor/OpenBMC 应用层定制，按功能分子目录（见下文）。 |
-| `tools/` | 开发辅助工具：QEMU 硬件模拟器及其补丁、教程构建脚本。不进入镜像。 |
+| `conf/layer.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `conf/machine/ceb-gnrd.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `conf/templates/default/bblayers.conf.sample` | 开发资料或配方数据 |
+| `conf/templates/default/conf-notes.txt` | 开发资料或配方数据 |
+| `conf/templates/default/local.conf.sample` | 开发资料或配方数据 |
 
-`recipes-phosphor/` 子目录：
+### `recipes-bsp/u-boot/`
 
-| 子目录 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `buttons/` | 电源/复位/UID 按键的 GPIO 定义及按键日志。 |
-| `configuration/` | 硬件契约、entity-manager 板卡配置（传感器、FRU、风扇 PWM）和 FRU/IPMI 的 YAML 映射。 |
-| `console/` | obmc-console：主机串口（VUART）控制台配置。 |
-| `dump/`、`logging/` | 转储与事件日志容量限制（rwfs 仅 10 MiB）。 |
-| `fans/` | 风扇控制权移交、风扇设置 D-Bus 服务、CPU/DIMM 最大温度传感器。 |
-| `flash/` | BMC/BIOS 固件更新：分区选择、BIOS 刷写脚本和布局表。 |
-| `fru/` | 板载 FRU EEPROM 默认内容初始化与重扫描。 |
-| `health/` | 服务重启策略、重启次数限制、看门狗复位日志。 |
-| `images/`、`packagegroups/` | 镜像内容和软件包分组。 |
-| `initrdscripts/` | 初始化文件系统：固件更新时跳过 U-Boot、更新白名单。 |
-| `interfaces/` | bmcweb（Web/Redfish 后端）补丁和构建选项。 |
-| `ipmi/` | IPMI 命令集：ipmid 补丁、ipmitool 补丁、传感器/FRU 映射、白名单、风扇 OEM 命令、I2C 白名单。 |
-| `leds/` | 告警 LED、eSPI 心跳 LED 及 LED 组定义。 |
-| `network/` | NC-SI 链路管理。 |
-| `psu/` | PSU 在位探测。 |
-| `rtc/` | RTC 与系统时间同步。 |
-| `sel-logger/` | IPMI SEL 日志及其轮转与清理。 |
-| `sensors/` | dbus-sensors 补丁与配置选择。 |
-| `settings/` | 默认设置（来电开机策略、SOL）。 |
-| `state/` | 状态管理、启动进度、POST 码历史。 |
-| `utils/` | 自检与硬件转储工具。 |
-| `watchdog/` | 主机看门狗动作 systemd 单元。 |
-| `webui/` | Web 界面（webui-vue）补丁、中文语言包。 |
+| `recipes-bsp/u-boot/files/0001-ceb-gnrd-board-device-tree-network-and-environment.patch` | ceb-gnrd: board device tree, default network and environment |
+| `recipes-bsp/u-boot/files/0002-ceb-gnrd-pass-boot-reset-cause-to-linux.patch` | aspeed: pass the original reset cause to Linux |
+| `recipes-bsp/u-boot/files/0003-ceb-gnrd-fill-missing-default-mac.patch` | ceb-gnrd: migrate network boot defaults before NIC probe |
+| `recipes-bsp/u-boot/files/0004-ceb-gnrd-reserve-32m-vga-before-ddr-init.patch` | ram: aspeed: allow a board VGA reservation before DDR init |
+| `recipes-bsp/u-boot/files/0005-ceb-gnrd-sync-runtime-network-after-env-migration.patch` | ceb-gnrd: synchronize runtime IPs after environment migration |
+| `recipes-bsp/u-boot/files/0006-ceb-gnrd-simplify-network-boot-environment.patch` | ceb-gnrd: use standard network variables for TFTP boot |
+| `recipes-bsp/u-boot/files/0007-ceb-gnrd-network-boot-rootfs-migration.patch` | CEB-GNRD: migrate factory bootnet to TFTP rootfs |
+| `recipes-bsp/u-boot/files/ast2600-ceb-gnrd.dts` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-bsp/u-boot/files/ceb-gnrd-ddr4.cfg` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-bsp/u-boot/files/ceb-gnrd-env.h` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-bsp/u-boot/files/ceb-gnrd-network.cfg` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-bsp/u-boot/u-boot-aspeed-sdk_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.2 `conf/`
+### `recipes-connectivity/jsnbd/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `conf/layer.conf` | 层注册：层名、优先级、依赖层、`BBFILES` 匹配规则。 |
-| `conf/machine/ceb-gnrd.conf` | 机器定义：AST2600 SoC、内核设备树名、U-Boot 配置、Flash 分区与镜像布局、包含的功能（PECI、eSPI 等）。 |
-| `conf/templates/default/bblayers.conf.sample` | 新建 build 目录时的默认层列表。 |
-| `conf/templates/default/local.conf.sample` | 新建 build 目录时的默认 `local.conf`（机器、发行版）。 |
-| `conf/templates/default/conf-notes.txt` | `oe-init-build-env` 后在终端显示的构建提示。 |
+| `recipes-connectivity/jsnbd/files/0001-stop-reaping-on-echild-and-serialize-gadget-cleanup.patch` | nbd-proxy: handle ECHILD and finish setup before teardown |
+| `recipes-connectivity/jsnbd/files/0002-nbd-client-explicit-default-export.patch` | nbd-proxy: specify the default export for NBD 3.27 |
+| `recipes-connectivity/jsnbd/files/state_hook` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-connectivity/jsnbd/jsnbd_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.3 `recipes-bsp/u-boot/`
+### `recipes-core/busybox/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `u-boot-aspeed-sdk_%.bbappend` | 把本板的补丁、设备树、配置片段加入 U-Boot 构建。 |
-| `files/ast2600-ceb-gnrd.dts` | U-Boot 使用的板级设备树（Flash、网络 PHY、串口等）。 |
-| `files/ceb-gnrd-ddr4.cfg` | DDR4 内存相关的 U-Boot 配置。 |
-| `files/ceb-gnrd-network.cfg` | U-Boot 网络驱动与命令的配置开关。 |
-| `files/ceb-gnrd-env.h` | 默认环境变量：默认 MAC、`netupdate`（TFTP 更新 kernel/rofs 的命令）。 |
-| `files/0001-ceb-gnrd-board-device-tree-network-and-environment.patch` | 加入板级设备树、默认网络和环境变量。 |
-| `files/0002-ceb-gnrd-pass-boot-reset-cause-to-linux.patch` | 把原始复位原因（上电/看门狗/外部）传给 Linux，供复位日志使用。 |
-| `files/0003-ceb-gnrd-fill-missing-default-mac.patch` | 已保存的环境里缺 MAC 变量时，在网卡探测前补上默认值。 |
+| `recipes-core/busybox/busybox_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-core/busybox/files/ceb-gnrd-netboot.cfg` | 板级硬件、运行配置或接口数据；以文件内容为准 |
 
-### 10.4 `recipes-kernel/linux/`
+### `recipes-core/systemd/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `linux-aspeed_%.bbappend` | 把配置片段、设备树和下列补丁加入内核构建，并在 `do_configure` 里安装板级 dts。 |
-| `files/aspeed-ceb-gnrd.dts` | 本板内核设备树：GPIO 命名、I2C 总线设备、PWM/风扇、PECI、eSPI、NC-SI 网络、Flash 分区。 |
-| `files/espi-peci.cfg` | 内核配置片段：启用 PECI、eSPI 及相关 hwmon 选项。 |
-| `files/0001-soc-aspeed-add-AST2600-eSPI-peripheral-ready-driver.patch` | 新增 AST2600 eSPI 外设通道使能驱动（主机侧 I/O 就绪）。 |
-| `files/0002-hwmon-add-AST2600-chassis-intrusion-driver.patch` | 新增 AST2600 机箱入侵锁存 hwmon 驱动。 |
-| `files/0003-peci-add-Granite-Rapids-CPU-and-DIMM-temperature.patch` | 为 peci-cputemp/dimmtemp 增加 GNR/GNR-D（表按 EMR 抄写，待实机验证）。 |
-| `files/0004-pmbus-ratelimit-optional-device-probe-message.patch` | PMBus 状态寄存器不可读的警告限速，避免刷屏。 |
-| `files/0005-usb-gadget-hid-classify-endpoint-shutdown.patch` | USB HID gadget 端点关闭时的取消请求不再按错误处理。 |
-| `files/0006-ncsi-accept-initial-deselect-response.patch` | NC-SI 发现阶段在 package 注册前接受 deselect 响应。 |
+| `recipes-core/systemd/files/0001-hostnamed-allow-networkd-transient-hostname-without-polkit.patch` | hostnamed: allow networkd transient hostname without polkit |
+| `recipes-core/systemd/files/10-ceb-gnrd-eth0.network` | 开发资料或配方数据 |
+| `recipes-core/systemd/files/20-ceb-gnrd-boot-mac.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-core/systemd/files/20-ceb-gnrd-eth1-ncsi.network` | 开发资料或配方数据 |
+| `recipes-core/systemd/files/40-hardware-watchdog.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-core/systemd/files/50-ceb-gnrd-console.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-core/systemd/files/60-ceb-gnrd-coredump-limits.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-core/systemd/files/60-ceb-gnrd-journal-limits.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-core/systemd/files/60-ceb-gnrd-pstore-limits.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-core/systemd/files/ceb-gnrd-clear-network-mac.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-core/systemd/systemd-conf_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-core/systemd/systemd_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.5 `recipes-core/`、`recipes-extended/`、`recipes-connectivity/`、`recipes-devtools/`
+### `recipes-devtools/qemu/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `recipes-core/systemd/systemd_%.bbappend`、`systemd-conf_%.bbappend` | 安装下列 systemd 配置片段与网络文件。 |
-| `recipes-core/systemd/files/10-ceb-gnrd-eth0.network` | eth0（RJ45，MAC2/RGMII）网络配置，默认 IPv4 DHCP。 |
-| `recipes-core/systemd/files/20-ceb-gnrd-eth1-ncsi.network` | eth1（NC-SI 共享网口）网络配置。 |
-| `recipes-core/systemd/files/20-ceb-gnrd-boot-mac.conf` | networkd 启动前执行清理脚本（drop-in）。 |
-| `recipes-core/systemd/files/ceb-gnrd-clear-network-mac.sh` | 清除旧配置里的链路 MAC 覆盖，保留 IP/DHCP/DNS 设置，使 MAC 以 U-Boot 环境为准。 |
-| `recipes-core/systemd/files/40-hardware-watchdog.conf` | 让 systemd 喂硬件看门狗，系统卡死时自动复位 BMC。 |
-| `recipes-core/systemd/files/50-ceb-gnrd-console.conf` | sysctl：常规网络/I2C 内核消息只进 ring buffer/journal，不与串口登录输入交错（错误仍显示，`dmesg -n 8` 可恢复）。 |
-| `recipes-core/systemd/files/60-ceb-gnrd-coredump-limits.conf` | 限制 coredump 大小（rwfs 只有 10 MiB）。 |
-| `recipes-core/systemd/files/60-ceb-gnrd-journal-limits.conf` | 限制 journal 占用空间。 |
-| `recipes-extended/rsyslog/rsyslog_%.bbappend` | 安装 rsyslog 配置。 |
-| `recipes-extended/rsyslog/files/ceb-gnrd-redfish.conf` | 把日志转为 Redfish 事件日志格式。 |
-| `recipes-extended/rsyslog/files/rsyslog-override.conf` | rsyslog 服务的 drop-in 覆盖。 |
-| `recipes-connectivity/jsnbd/jsnbd_%.bbappend` | 应用 nbd-proxy 补丁并安装状态钩子。 |
-| `recipes-connectivity/jsnbd/files/state_hook` | 虚拟媒体状态变化时的钩子脚本。 |
-| `recipes-connectivity/jsnbd/files/0001-stop-reaping-on-echild-and-serialize-gadget-cleanup.patch` | 处理 ECHILD，并保证 gadget 配置完成后再拆除，避免竞态。 |
-| `recipes-connectivity/jsnbd/files/0002-nbd-client-explicit-default-export.patch` | 适配 NBD 3.27，显式指定默认 export。 |
-| `recipes-devtools/qemu/qemu-system-native_%.bbappend` | 把 `tools/qemu/patches` 的板级模型补丁加入 OpenBMC 自己构建的 QEMU。 |
+| `recipes-devtools/qemu/qemu-system-native_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.6 `recipes-x86/chassis/`（主机电源控制）
+### `recipes-extended/rsyslog/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `x86-power-control_%.bbappend` | 应用补丁并安装 `power-config-host0.json`。 |
-| `files/power-config-host0.json` | 电源/复位按钮、PowerOK、SIO 等 GPIO 线名与极性、超时参数。 |
-| `files/0001-ceb-gnrd-add-force-power-button-off-method.patch` | 提供主机已关机时的强制关机脉冲方法（主机在 S5 收不到 PowerOK 时用）。 |
-| `files/0002-ceb-gnrd-own-bus-name-for-the-exported-buttons.patch` | 按键对象使用独立 bus name，避免与 buttons 守护进程冲突。 |
-| `files/0003-ceb-gnrd-apply-power-restore-only-on-ac-boot.patch` | 来电恢复策略只在 AC 上电启动时执行，BMC 单独复位不触发开/关机。 |
+| `recipes-extended/rsyslog/files/ceb-gnrd-redfish.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-extended/rsyslog/files/ceb-gnrd-rotate-log.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-extended/rsyslog/files/ceb-gnrd-system-errors.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-extended/rsyslog/files/rsyslog-override.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-extended/rsyslog/rsyslog_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.7 `recipes-phosphor/buttons/`、`console/`、`dump/`、`logging/`、`images/`、`packagegroups/`、`initrdscripts/`
+### `recipes-kernel/linux/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `buttons/obmc-phosphor-buttons_%.bbappend` | 安装按键 GPIO 定义。 |
-| `buttons/files/gpio_defs.json` | 电源键、复位键、UID 键的 GPIO 线名映射。 |
-| `buttons/ceb-gnrd-power-button-log.bb` + `files/ceb-gnrd-power-button-log.{sh,service}` | 记录电源键按下/释放到日志，便于排查。 |
-| `buttons/files/10-ceb-gnrd-wait-buttons.conf`、`ceb-gnrd-wait-buttons.sh` | 等按键 D-Bus 对象就绪后再启动 button-handler，避免竞态导致 UID 键失效。 |
-| `console/obmc-console_%.bbappend`、`files/server.ttyVUART0.conf` | 把主机串口（VUART0）作为 SOL 控制台。 |
-| `dump/phosphor-debug-collector_%.bbappend` | 限制 BMC 转储的单个和总大小（rwfs 容量）。 |
-| `logging/phosphor-logging_%.bbappend` | 事件日志条数上限设为 64。 |
-| `images/obmc-phosphor-image.bbappend` | 让静态镜像打包等待 fitImage 部署，避免 sstate 清理后缺 `image-kernel`。 |
-| `packagegroups/packagegroup-ceb-gnrd-apps.bb` | 本板应用软件包组。 |
-| `packagegroups/packagegroup-obmc-apps.bbappend` | 按 Intel 服务器板的需要调整 OpenBMC 应用包组（entity-manager、dbus-sensors、POST 码、BIOS 更新、状态管理等）。 |
-| `initrdscripts/obmc-phosphor-initfs.bbappend` | 向初始化文件系统安装下面两个文件。 |
-| `initrdscripts/files/ceb-gnrd-update-skip-u-boot.sh` | 固件更新时不覆盖 U-Boot 区。 |
-| `initrdscripts/files/ceb-gnrd-whitelist` | 更新期间需要保留的文件/分区白名单。 |
+| `recipes-kernel/linux/files/0001-soc-aspeed-add-AST2600-eSPI-peripheral-ready-driver.patch` | soc: aspeed: add AST2600 eSPI peripheral I/O enablement |
+| `recipes-kernel/linux/files/0002-hwmon-add-AST2600-chassis-intrusion-driver.patch` | hwmon: add AST2600 chassis intrusion latch support |
+| `recipes-kernel/linux/files/0003-peci-add-Granite-Rapids-CPU-and-DIMM-temperature.patch` | peci: add GNR and GNR-D package and DIMM temperature profiles |
+| `recipes-kernel/linux/files/0004-pmbus-ratelimit-optional-device-probe-message.patch` | hwmon: pmbus: rate-limit unavailable status-register warning |
+| `recipes-kernel/linux/files/0005-usb-gadget-hid-classify-endpoint-shutdown.patch` | usb: gadget: hid: classify cancelled IN requests |
+| `recipes-kernel/linux/files/0006-ncsi-accept-initial-deselect-response.patch` | ncsi: accept discovery deselect replies before package registration |
+| `recipes-kernel/linux/files/0007-peci-retry-response-in-progress.patch` | peci: retry response-in-progress completion code |
+| `recipes-kernel/linux/files/0008-hwmon-add-megcrps800-psu-driver.patch` | hwmon: add MEG-CRPS800AOP telemetry driver |
+| `recipes-kernel/linux/files/0009-ncsi-retry-empty-discovery-on-start.patch` | ncsi: retry discovery after an empty initial probe |
+| `recipes-kernel/linux/files/0010-spi-aspeed-select-data-width-for-user-writes.patch` | spi: aspeed: select data bus width for user-mode writes |
+| `recipes-kernel/linux/files/0011-ncsi-handle-idle-work-and-report-invalid-responses.patch` | ncsi: tolerate idle work and describe rejected responses |
+| `recipes-kernel/linux/files/0012-spi-nor-detect-board-bios-on-explicit-bind.patch` | spi-nor: auto-detect CEB-GNRD BIOS only after explicit driver binding |
+| `recipes-kernel/linux/files/aspeed-ceb-gnrd.dts` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-kernel/linux/files/ceb-gnrd-jtag.c` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-kernel/linux/files/espi-peci.cfg` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-kernel/linux/linux-aspeed_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.8 `recipes-phosphor/configuration/`（配置与硬件契约）
+### `recipes-phosphor/bios/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `entity-manager_%.bbappend` | 安装 `ceb-gnrd.json` 并应用 entity-manager 补丁。 |
-| `entity-manager/ceb-gnrd.json` | 板卡描述：温度传感器、ADC 电压、PSU、风扇 PWM/转速、FRU EEPROM、板级 Inventory。 |
-| `entity-manager/0001-ceb-gnrd-fru-device-allow-eeprom-sized-write.patch` | fru-device 允许写入与 EEPROM 等大的 FRU 镜像。 |
-| `entity-manager/0002-ceb-gnrd-verify-fru-eeprom-write.patch` | 写 EEPROM 后回读校验，成功才返回成功。 |
-| `entity-manager/0003-ceb-gnrd-skip-static-platform-inventory-events.patch` | 跳过无法识别的静态平台 Inventory 事件，避免噪声。 |
-| `ceb-gnrd-hardware-contract.bb`、`files/ceb-gnrd-hardware-contract.yaml` | 硬件契约：把原理图里的信号、地址、极性固化为文本，作为代码与板卡之间的对照依据。 |
-| `ceb-gnrd-yaml-config.bb` | 安装 phosphor-ipmi-host 使用的 YAML 映射文件。 |
-| `ceb-gnrd-yaml-config/ceb-gnrd-ipmi-fru.yaml` | IPMI FRU 到 D-Bus 对象的映射。 |
-| `ceb-gnrd-yaml-config/ceb-gnrd-ipmi-fru-properties.yaml` | FRU 字段到 Inventory 属性的映射。 |
+| `recipes-phosphor/bios/biosconfig-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/bios/files/0001-ceb-gnrd-bound-bios-attribute-storage.patch` | Bound persistent storage on CEB-GNRD |
 
-### 10.9 `recipes-phosphor/fans/`
+### `recipes-phosphor/buttons/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `ceb-gnrd-fan-services.bb` | 风扇控制权移交服务（owner/release）。 |
-| `files/ceb-gnrd-fan-owner.service`、`ceb-gnrd-fan-owner.sh` | 开机后由 BMC 接管风扇：持有 `BMC_FAN_BMC_OVERRIDE_N` 并清除其 reset tolerance，确保 BMC 任何复位期间控制权自动回 CPLD。 |
-| `files/ceb-gnrd-fan-release.sh` | 停止服务时释放风扇控制权给 CPLD。 |
-| `ceb-gnrd-fan-settings.bb`、`files/ceb-gnrd-fan-settings.{py,service}`、`com.ctopai.CebGnrd.FanSettings.conf` | 风扇设置 D-Bus 服务（`ApplyFan*`），Web 风扇页通过它调速；`.conf` 是 D-Bus 访问策略。 |
-| `ceb-gnrd-temp-max.bb`、`files/ceb-gnrd-temp-max.{py,service}`、`com.ctopai.CebGnrd.TempMax.conf` | 读取 PECI hwmon，合成 CPU_MAX_TEMP / DIMM_MAX_TEMP 传感器（含阈值），Web 与 ipmitool 只显示这两个最大值。 |
-| `files/10-ceb-gnrd-temp-max.conf` | temp-max 服务的启动顺序/依赖 drop-in。 |
+| `recipes-phosphor/buttons/ceb-gnrd-power-button-log.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/buttons/files/0001-ceb-gnrd-uid-long-press-bmc-reboot.patch` | buttons: reboot BMC after a physical UID hold of five seconds |
+| `recipes-phosphor/buttons/files/10-ceb-gnrd-wait-buttons.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/buttons/files/ceb-gnrd-power-button-log.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/buttons/files/ceb-gnrd-power-button-log.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/buttons/files/ceb-gnrd-wait-buttons.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/buttons/files/gpio_defs.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/buttons/obmc-phosphor-buttons_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.10 `recipes-phosphor/flash/`、`fru/`、`health/`
+### `recipes-phosphor/certificate/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `flash/phosphor-software-manager_%.bbappend` | 应用固件更新补丁，安装 BIOS 刷写脚本。 |
-| `flash/phosphor-software-manager/0001-ceb-gnrd-bmc-update-partition-selection.patch` | 固件更新只暂存所选的 BMC 分区。 |
-| `flash/phosphor-software-manager/bios-update.sh` | BIOS 升级：切换 `BMC_BIOS_FLASH_SELECT`、刷写、恢复（仅升级期间改变该引脚）。 |
-| `flash/phosphor-software-manager/bios-layout.txt` | BIOS Flash 区域布局表。 |
-| `flash/phosphor-software-manager/obmc-flash-host-bios@.service` | 调用 bios-update.sh 的 systemd 模板单元。 |
-| `fru/ceb-gnrd-fru.bb` | 安装 FRU 初始化与重扫描。 |
-| `fru/files/ceb-gnrd-fru-init.{sh,service}` | EEPROM 空白时写入默认 FRU（CTOPAI / CEB-GNR-D / 93-XXXX-XX）。 |
-| `fru/files/ceb-gnrd-fru-rescan.{sh,service}` | 写入 FRU 3 秒后让 fru-device 重扫，使新内容立即可见。 |
-| `fru/files/default-fru.bin` | 默认 FRU 镜像（144 字节）。 |
-| `health/ceb-gnrd-health.bb` | 安装健康保护相关文件。 |
-| `health/files/10-ceb-gnrd-restart*.conf` | 关键服务异常退出后的自动重启策略 drop-in。 |
-| `health/files/10-ceb-gnrd-reboot-limit.conf`、`ceb-gnrd-quiesce-reboot-limit.sh` | 限制连续自动重启次数，达到上限进入静默状态，避免无限重启循环。 |
-| `health/files/ceb-gnrd-quiesce-reboot-clear.{service,timer}` | 稳定运行一段时间后清除重启计数。 |
-| `health/files/ceb-gnrd-wdt-reset-log.{sh,service}` | 开机时根据复位原因记录看门狗复位日志。 |
+| `recipes-phosphor/certificate/files/0001-ceb-gnrd-bound-certificate-storage.patch` | Bound persistent storage on CEB-GNRD |
+| `recipes-phosphor/certificate/files/0002-ceb-gnrd-transactional-authority-replacement.patch` | certificates: stage and validate complete authority replacements |
+| `recipes-phosphor/certificate/files/0003-ceb-gnrd-use-individual-authorities-as-persistent-store.patch` | Use individual authority certificates as the persistent store |
+| `recipes-phosphor/certificate/phosphor-certificate-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.11 `recipes-phosphor/interfaces/`（bmcweb）
+### `recipes-phosphor/configuration/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `bmcweb_%.bbappend` | 打开 dbus-rest 与 Dump 日志服务，关闭 DBus 更新路径以适配经典 image-updater，上传体积上限 80 MiB，应用下列补丁。 |
-| `files/0001-ceb-gnrd-delete-single-file-event-log.patch` | 支持删除单条事件日志而不重排 ID。 |
-| `files/0002-ceb-gnrd-async-virtual-media-proxy-cleanup.patch` | 虚拟媒体回收 nbd-proxy 不再阻塞 Web 事件循环。 |
-| `files/0003-ceb-gnrd-virtual-media-receive-backpressure.patch` | 虚拟媒体先排空代理写入再读新消息（背压）。 |
-| `files/0004-ceb-gnrd-report-boot-id-for-update-monitor.patch` | ServiceRoot 返回 BMC 启动 ID，Web 据此识别更新后重启。 |
+| `recipes-phosphor/configuration/ceb-gnrd-hardware-contract.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/configuration/ceb-gnrd-yaml-config.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/configuration/ceb-gnrd-yaml-config/ceb-gnrd-ipmi-fru-properties.yaml` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/configuration/ceb-gnrd-yaml-config/ceb-gnrd-ipmi-fru.yaml` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/configuration/entity-manager/0001-ceb-gnrd-fru-device-allow-eeprom-sized-write.patch` | fru-device: allow a FRU image as large as the EEPROM |
+| `recipes-phosphor/configuration/entity-manager/0002-ceb-gnrd-verify-fru-eeprom-write.patch` | fru-device: verify EEPROM writes before reporting success |
+| `recipes-phosphor/configuration/entity-manager/0003-ceb-gnrd-skip-static-platform-inventory-events.patch` | inventory: skip unidentified static CEB-GNRD platform events |
+| `recipes-phosphor/configuration/entity-manager/0004-ceb-gnrd-megcrps800-schema.patch` | configuration: accept MEGCRPS800 PSU type |
+| `recipes-phosphor/configuration/entity-manager/0005-ceb-gnrd-classify-busy-fru-scan-addresses.patch` | fru-device: classify driver-owned addresses as normal scan skips |
+| `recipes-phosphor/configuration/entity-manager/0006-ceb-gnrd-gpio-presence-empty-discovery.patch` | gpio-presence: treat an empty initial configuration scan as discovery |
+| `recipes-phosphor/configuration/entity-manager/0007-ceb-gnrd-generic-crps-schema.patch` | configuration: accept externally managed CRPS PSU slots |
+| `recipes-phosphor/configuration/entity-manager/ceb-gnrd.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/configuration/entity-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/configuration/files/ceb-gnrd-hardware-contract.yaml` | 板级硬件、运行配置或接口数据；以文件内容为准 |
 
-### 10.12 `recipes-phosphor/ipmi/`
+### `recipes-phosphor/console/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `phosphor-ipmi-host_%.bbappend` | 应用 ipmid 补丁。 |
-| `phosphor-ipmi-config.bbappend`、`phosphor-ipmi-config/dev_id.json` | Get Device ID 返回内容（ID 32、版本、厂商 6659、产品 3346）。 |
-| `phosphor-ipmi-fru_%.bbappend`、`phosphor-ipmi-fru/obmc/eeproms/system/chassis/motherboard` | 旧 FRU 提供者的 EEPROM 路径映射（主板 FRU）。 |
-| `ipmitool_%.bbappend` | 应用 ipmitool 补丁。 |
-| `files/0001-ceb-gnrd-report-board-revision-in-mc-info.patch` | `mc info` 的 AUX 最后一字节报告 PCB 版本。 |
-| `files/0002-ceb-gnrd-show-upper-non-recoverable-threshold.patch` | 传感器列表显示 UNR 阈值。 |
-| `files/0003-ceb-gnrd-fru-area-is-the-whole-eeprom.patch` | ipmid FRU 命令以整颗 EEPROM 为 FRU 区，兼容 fru-device。 |
-| `files/0001-ipmitool-fru-add-gen-command.patch` | `ipmitool fru gen` 交互式生成 FRU（带默认值，可编辑）。 |
-| `files/0002-ipmitool-add-ceb-gnrd-product-name.patch` | ipmitool 识别 CEB-GNR-D 产品名。 |
-| `files/10-ceb-gnrd-wait-sensors.conf` | ipmid 等传感器服务就绪后再启动。 |
-| `ceb-gnrd-ipmi-sensors/config.yaml` | IPMI 传感器号/类型/缩放到 D-Bus 传感器路径的映射。 |
-| `ceb-gnrd-ipmi-sensor-inventory-native.bb` | 把传感器映射转成 ipmid 使用的 inventory 数据（native）。 |
-| `ceb-gnrd-ipmi-fru-read-inventory-native.bb` | 旧的 FRU 读取清单；FRU 现已走 fru-device 路径，可能不再使用。 |
-| `ceb-gnrd-ipmi-whitelist-native.bb`、`files/ceb-gnrd-ipmi-whitelist.conf` | IPMI 命令白名单，只放行本板需要的 netfn/cmd。 |
-| `ceb-gnrd-ipmi-fan.bb`、`files/ceb-gnrd-ipmi-fan/{fan_oem.cpp,meson.build}` | 风扇 OEM IPMI 命令实现。 |
-| `ceb-gnrd-ipmi-i2c.bb`、`files/generate_i2c_allowlist.py` | 生成并安装 Master Write-Read 命令可访问的 I2C 总线/地址白名单。 |
+| `recipes-phosphor/console/files/server.ttyS2.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/console/files/server.ttyVUART0.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/console/obmc-console_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.13 `recipes-phosphor/leds/`、`network/`、`psu/`、`rtc/`
+### `recipes-phosphor/dump/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `leds/phosphor-led-manager_%.bbappend`、`ceb-gnrd-led-manager-config-native.bb`、`files/led.json` | LED 组定义（告警、状态）。 |
-| `leds/ceb-gnrd-alert-led.bb`、`files/ceb-gnrd-alert-led.{py,service}` | 根据传感器告警/严重事件驱动告警 LED。 |
-| `leds/ceb-gnrd-espi-heartbeat.bb`、`files/ceb-gnrd-espi-heartbeat.service` | eSPI 通信心跳指示。 |
-| `leds/files/wait-for-espi-driver.sh` | 等 eSPI 驱动就绪再启动心跳。 |
-| `network/phosphor-network_%.bbappend` | 网络默认配置。 |
-| `network/ceb-gnrd-ncsi.bb`、`files/ceb-gnrd-ncsi.service`、`manage-ncsi-link.sh` | 主机上电后管理 NC-SI 链路（重试间隔与次数待实机确认）。 |
-| `psu/ceb-gnrd-psu-detect.bb`、`files/ceb-gnrd-psu-detect.{sh,service}` | 探测 PSU 在位并通知 entity-manager。 |
-| `rtc/ceb-gnrd-rtc-sync.bb`、`files/ceb-gnrd-rtc-sync.service` | 以 RTC（NCT3015Y）为时间源，与系统时间同步。 |
+| `recipes-phosphor/dump/files/0001-ceb-gnrd-collect-chassis-interface-and-ram-sol.patch` | dreport: select Chassis interface and collect board RAM console logs |
+| `recipes-phosphor/dump/phosphor-debug-collector_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.14 `recipes-phosphor/sel-logger/`、`sensors/`、`settings/`、`state/`、`utils/`、`watchdog/`
+### `recipes-phosphor/fans/`
 
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `sel-logger/phosphor-sel-logger_%.bbappend` | 应用 SEL 补丁，安装日志轮转。 |
-| `sel-logger/files/0001-ceb-gnrd-log-non-recoverable-threshold-events.patch` | 记录 UNR/LNR 阈值事件到 SEL。 |
-| `sel-logger/ceb-gnrd-sel-logrotate.bb`、`files/ceb-gnrd-ipmi-sel.logrotate`、`ceb-gnrd-sel-logrotate.{service,timer}` | SEL 日志按计划轮转，控制 rwfs 占用。 |
-| `sel-logger/files/ceb-gnrd-log-storage-cleanup.{sh,service}` | 迁移旧版 core/journal 预算，清理遗留 core 文件。 |
-| `sensors/dbus-sensors_%.bbappend` | 去掉 intelcpusensor（CPU 温度改由 temp-max 提供），应用补丁。 |
-| `sensors/files/0001-reuse-i2c-device-by-config-path-and-guard-psu-io.patch` | 按配置路径复用 I2C 设备，并保护 PSU I/O。 |
-| `settings/phosphor-settings-manager_%.bbappend`、`phosphor-settings-manager/settings.override.yml` | 默认设置：来电开机（AlwaysOn，延时 0）、SOL 使能。 |
-| `state/phosphor-state-manager_%.bbappend` | 开启 BMC 进入 Quiesced 后自动重启（次数由 health 限制）。 |
-| `state/ceb-gnrd-boot-progress.bb`、`files/ceb-gnrd-boot-progress.{py,service}` | 根据 POST 码/eSPI 状态更新 BootProgress。 |
-| `state/phosphor-post-code-manager_%.bbappend` | POST 码管理定制，应用补丁与限额。 |
-| `state/files/0001-ceb-gnrd-post-history-warm-boot-cycle.patch` | POST 码保留全部取值，并用主机事件区分启动轮次。 |
-| `state/files/60-ceb-gnrd-post-history.conf`、`ceb-gnrd-post-history-limit.py` | 将旧的 100 槽 POST 环缩为 2 槽（rwfs 容量）。 |
-| `utils/ceb-gnrd-check.bb`、`files/ceb-gnrd-check.{py,sh}` | 有界的固件自检（元数据检查，不代表端到端成功）。 |
-| `utils/files/bmc-hw-dump.sh` | 只读转储 BMC 硬件使用情况，用于对比厂商固件与新固件。 |
-| `watchdog/phosphor-watchdog_%.bbappend`、`phosphor-watchdog/*.service` | 主机看门狗超时动作（复位/关机/循环）对应的 systemd 单元。 |
+| `recipes-phosphor/fans/ceb-gnrd-fan-services.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/fans/ceb-gnrd-fan-settings.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/fans/ceb-gnrd-temp-max.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/fans/files/0001-ceb-gnrd-ignore-fan-tach-failures-while-host-off.patch` | pid: skip host-powered tach failures while host is off |
+| `recipes-phosphor/fans/files/0002-ceb-gnrd-deduplicate-failsafe-state-logs.patch` | pid: separate sensor diagnostics from zone failsafe transitions |
+| `recipes-phosphor/fans/files/0003-ceb-gnrd-quiet-fan-logs-during-host-transitions.patch` | pid: quiet transient telemetry logs and report zone transitions once |
+| `recipes-phosphor/fans/files/0004-ceb-gnrd-use-dc-power-for-thermal-gating.patch` | pid: distinguish actual chassis power-off from host reset states |
+| `recipes-phosphor/fans/files/10-ceb-gnrd-temp-max.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/fans/files/ceb-gnrd-fan-owner.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/fans/files/ceb-gnrd-fan-owner.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/fans/files/ceb-gnrd-fan-release.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/fans/files/ceb-gnrd-fan-settings.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/fans/files/ceb-gnrd-fan-settings.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/fans/files/ceb-gnrd-temp-max.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/fans/files/ceb-gnrd-temp-max.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/fans/files/com.ctopai.CebGnrd.FanSettings.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/fans/files/com.ctopai.CebGnrd.TempMax.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/fans/phosphor-pid-control_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-### 10.15 `recipes-phosphor/webui/`
+### `recipes-phosphor/flash/`
 
-`webui-vue_%.bbappend` 按编号顺序注册所有补丁；`files/zh-CN.json` 为简体中文语言包。
-
-| 补丁 | 目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| 0001 limit-webui-languages | 界面语言只保留英文和中文。 |
-| 0002 add-simplified-chinese-locale | 新增简体中文语言。 |
-| 0003 add-fan-control-page | 新增风扇控制页。 |
-| 0004 remove-resource-management-power | 移除 SNMP Alerts、Key clear、LDAP 和资源管理。 |
-| 0006 kvm-full-screen | KVM 增加全屏按钮。 |
-| 0007 factory-reset-bmc-only | 恢复出厂只提供 BMC 复位。 |
-| 0008 inventory-supported-tables-only | 清单页只保留有后端数据的表。 |
-| 0009 remove-overview-power-card | 概览页移除电源信息卡。 |
-| 0010 firmware-single-bank | 固件页移除备份镜像卡片。 |
-| 0011 dumps-bmc-only | 转储页只保留 BMC 转储。 |
-| 0012 policies-remove-vtpm-rtad | 策略页移除 vTPM、RTAD 开关。 |
-| 0013 firmware-update-progress | 固件更新进度与 BIOS 刷写区域选择。 |
-| 0014 firmware-cards-side-by-side | BMC 与 BIOS 卡片并排，更新表单加宽。 |
-| 0015 sensors-discrete-table | 传感器分模拟/离散两个标签页。 |
-| 0016 post-codes-newest-first | POST 码最新在前。 |
-| 0017 sensors-pagination | 模拟传感器表分页。 |
-| 0018 firmware-progress-survives-page-change | 离开固件页后回来仍保留更新进度。 |
-| 0019 factory-reset-bmc-wording | 恢复出厂页去掉服务器相关措辞与关机警告。 |
-| 0020 overview-firmware-card | 概览固件卡只显示运行版本，去掉备份与系统固件版本。 |
-| 0021 refresh-server-power-operation-state | 等待电源操作时刷新电源状态。 |
-| 0022 event-log-explicit-columns | 事件日志移除不支持的状态列、避免空字段。 |
-| 0023 event-log-actions-heading | 事件日志操作列加标题。 |
-| 0024 refresh-live-status-pages | 传感器等实时页面自动刷新。 |
-| 0025 close-virtual-media-websocket-on-stop | 停止时关闭虚拟媒体会话并取消挂起读取。 |
-| 0026 chunk-virtual-media-read-replies | NBD 回复拆成有界 WebSocket 消息。 |
-| 0027 post-code-table-sort-api | POST 码表改用当前排序 API。 |
-| 0028 event-logs-newest-first | 事件日志默认最新在前。 |
-| 0029 bmc-update-partition-selection | BMC 分区选择，并需引导程序显式确认。 |
-| 0030 bmc-update-completion-notification | 识别 BMC 重启并保留更新完成通知。 |
+| `recipes-phosphor/flash/ceb-gnrd-cpld-update.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/flash/ceb-gnrd-cpld-update/files/ceb-gnrd-cpld-update.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/flash/ceb-gnrd-cpld-update/files/ceb-gnrd-cpld-update.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/flash/ceb-gnrd-cpld-update/files/com.ctopai.CebGnrd.CpldUpdate.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/flash/ceb-gnrd-cpld-update/files/cpld-update.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/flash/ceb-gnrd-cpld-update/files/cpld_jtag.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/flash/phosphor-software-manager/0001-ceb-gnrd-bmc-update-partition-selection.patch` | static: stage only selected CEB-GNRD BMC partitions |
+| `recipes-phosphor/flash/phosphor-software-manager/0002-ceb-gnrd-lock-bmc-staging-against-other-updaters.patch` | static: serialize BMC staging with BIOS and CPLD programming |
+| `recipes-phosphor/flash/phosphor-software-manager/0003-ceb-gnrd-share-firmware-reboot-guard.patch` | update: share reboot protection across activations and programmers |
+| `recipes-phosphor/flash/phosphor-software-manager/10-ceb-gnrd-reboot-guard-cleanup.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/flash/phosphor-software-manager/bios-layout.txt` | 开发资料或配方数据 |
+| `recipes-phosphor/flash/phosphor-software-manager/bios-update.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/flash/phosphor-software-manager/obmc-flash-host-bios@.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/flash/phosphor-software-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
 
-> 编号 0005 当前没有对应文件。
+### `recipes-phosphor/fru/`
 
-### 10.16 `tools/`（开发辅助，不进入镜像）
-
-| 文件 | 用途与目的 |
+| 文件 | 用途 / 配置入口 |
 |---|---|
-| `tools/expand-to-tutorial-build.py` | 把本层、父层配置和 quick-start.md 展开到 `.tutorial-build/ceb-gnrd/`（git 忽略的临时目录），用于教程构建。 |
-| `tools/qemu/README.md` | QEMU 模拟器使用说明与补丁清单。 |
-| `tools/qemu/run-qemu.sh` | 启动 ceb-gnrd 镜像（ast2600-evb），挂载各 I2C 器件、双 Flash、网络并打开浏览器控制面板（http://localhost:8800）。 |
-| `tools/qemu/build-qemu.sh` | 没有 Yocto 环境时，单独构建带补丁的 QEMU。 |
-| `tools/qemu/host-sim.py` | 模拟主机的控制台/浏览器面板后端，显示 BMC 与主机间信号。 |
-| `tools/qemu/host_io.py` | 主机侧 eSPI 传统 I/O 与 USB 枚举的模拟。 |
-| `tools/qemu/panel.html` | 模拟器浏览器控制面板的页面。 |
-| `tools/qemu/panel_services.py` | 面板的 VGA 画面选择与虚拟媒体 USB 检查。 |
-| `tools/qemu/log-sink.py` | 排空模拟器日志 FIFO，保留当前和一份备份各 8 MiB。 |
-| `tools/qemu/diagnose-bmc.sh`、`diagnose-web.sh`、`diagnose-virtual-media.sh` | 只读诊断脚本（固件整体、Web 后端、虚拟媒体挂载失败后）。 |
-| `tools/qemu/kvm/{os,post,test-pattern}.jpg` | 模拟 VGA 的静态画面（系统、POST、测试图）。 |
-| `tools/qemu/EVENTLOG-DELETE-FIX.md`、`FAN-OWNER-GLOB-FIX.md`、`GUI-HEARTBEAT-RESET.md`、`VUART-STARTUP-FIX.md` | 模拟器相关问题的修复记录。 |
-| `tools/qemu/patches/0001`–`0026` | QEMU 板级模型补丁：SCU 时钟、PWM 风扇转速、bmc-host-sim 模拟主机、ADC 可设电压、GPIO 电平保持与 reset tolerance、CRPS PSU、PECI 响应与 GNR-D 温度、NCT3015Y RTC、VUART 与 80h POST 码、视频引擎、eSPI/USB/机箱集成、复位原因保留、AT24C 大小处理、ftgmac100 NC-SI 配置。编号有两个 0020（ADC 位宽、强制关机脉冲），按文件名顺序应用。 |
+| `recipes-phosphor/fru/ceb-gnrd-fru.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/fru/files/ceb-gnrd-fru-init.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/fru/files/ceb-gnrd-fru-init.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/fru/files/ceb-gnrd-fru-rescan.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/fru/files/ceb-gnrd-fru-rescan.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/fru/files/default-fru.bin` | 开发资料或配方数据 |
+
+### `recipes-phosphor/health/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/health/ceb-gnrd-health.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/health/files/10-ceb-gnrd-reboot-limit.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/health/files/10-ceb-gnrd-restart-own.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/health/files/10-ceb-gnrd-restart.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/health/files/ceb-gnrd-quiesce-reboot-clear.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/health/files/ceb-gnrd-quiesce-reboot-clear.timer` | systemd 服务/定时器定义 |
+| `recipes-phosphor/health/files/ceb-gnrd-quiesce-reboot-limit.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/health/files/ceb-gnrd-wdt-reset-log.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/health/files/ceb-gnrd-wdt-reset-log.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+
+### `recipes-phosphor/images/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/images/obmc-phosphor-image.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/initrdscripts/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/initrdscripts/files/0001-ceb-gnrd-tftp-rootfs-for-network-boot.patch` | CEB-GNRD: select TFTP rootfs and RAM overlay for bootnet |
+| `recipes-phosphor/initrdscripts/files/ceb-gnrd-netboot.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/initrdscripts/files/ceb-gnrd-update-skip-u-boot.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/initrdscripts/files/ceb-gnrd-whitelist` | 开发资料或配方数据 |
+| `recipes-phosphor/initrdscripts/obmc-phosphor-initfs.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/interfaces/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/interfaces/bmcweb_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/interfaces/files/0001-ceb-gnrd-delete-single-file-event-log.patch` | eventlog: support single file-entry deletion without shifting IDs |
+| `recipes-phosphor/interfaces/files/0002-ceb-gnrd-async-virtual-media-proxy-cleanup.patch` | virtual-media: reap nbd-proxy without blocking the web loop |
+| `recipes-phosphor/interfaces/files/0003-ceb-gnrd-virtual-media-receive-backpressure.patch` | virtual-media: drain proxy writes before reading more messages |
+| `recipes-phosphor/interfaces/files/0004-ceb-gnrd-report-boot-id-for-update-monitor.patch` | service root: report BMC boot ID for update monitoring |
+| `recipes-phosphor/interfaces/files/0005-ceb-gnrd-allow-same-origin-kvm-fullscreen.patch` | http: allow same-origin KVM fullscreen |
+| `recipes-phosphor/interfaces/files/0006-ceb-gnrd-fix-bmcweb-state-directory.patch` | bmcweb: clear invalid state directory in root mode |
+| `recipes-phosphor/interfaces/files/0007-ceb-gnrd-bound-persistent-session-storage.patch` | bound persistent sessions and event subscription payloads |
+| `recipes-phosphor/interfaces/files/0008-ceb-gnrd-cpld-update-interlock.patch` | update: serialize CPLD programming with Web BMC/BIOS uploads |
+| `recipes-phosphor/interfaces/files/0009-ceb-gnrd-fix-dbus-rest-method-arguments.patch` | dbus-rest: convert scalar method arguments and extract data array |
+| `recipes-phosphor/interfaces/files/0010-ceb-gnrd-cpld-bit-json-upload-limit.patch` | dbus-rest: allow bounded CPLD bitstream JSON uploads |
+| `recipes-phosphor/interfaces/files/0011-ceb-gnrd-existing-image-build-info.patch` | managers: expose existing os-release build identifiers |
+
+### `recipes-phosphor/inventory/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/inventory/ceb-gnrd-bmc-inventory.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/inventory/files/0001-ceb-gnrd-bound-inventory-cache.patch` | Bound persistent storage on CEB-GNRD |
+| `recipes-phosphor/inventory/files/10-ceb-gnrd-bmc-inventory.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/inventory/files/ceb-gnrd-bmc-inventory.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/inventory/files/ceb-gnrd-bmc-inventory.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/inventory/files/ceb-gnrd-wait-bmc-inventory.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/inventory/files/com.ctopai.CebGnrd.BmcInventory.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/inventory/phosphor-inventory-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/ipmi/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/ipmi/ceb-gnrd-ipmi-fan.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/ipmi/ceb-gnrd-ipmi-fru-read-inventory-native.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/ipmi/ceb-gnrd-ipmi-i2c.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/ipmi/ceb-gnrd-ipmi-sensor-inventory-native.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/ipmi/ceb-gnrd-ipmi-sensors/config.yaml` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/ipmi/ceb-gnrd-ipmi-whitelist-native.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/ipmi/files/0001-ceb-gnrd-report-board-revision-in-mc-info.patch` | apphandler: expose CEB-GNRD PCB revision in mc info AUX byte |
+| `recipes-phosphor/ipmi/files/0001-ceb-gnrd-stable-rmcp-bmc-guid.patch` | net-ipmi: use the same stable BMC GUID as local IPMI and Redfish |
+| `recipes-phosphor/ipmi/files/0001-ipmitool-fru-add-gen-command.patch` | fru: add an interactive gen command |
+| `recipes-phosphor/ipmi/files/0002-ceb-gnrd-show-upper-non-recoverable-threshold.patch` | sensors: show the upper non-recoverable threshold |
+| `recipes-phosphor/ipmi/files/0002-ipmitool-add-ceb-gnrd-product-name.patch` | strings: add the CEB-GNR-D product name |
+| `recipes-phosphor/ipmi/files/0003-ceb-gnrd-fru-area-is-the-whole-eeprom.patch` | storagecommands: make the FRU commands work with FruDevice for a whole EEPROM |
+| `recipes-phosphor/ipmi/files/0004-ceb-gnrd-ipmi-version-and-system-guid.patch` | ipmi: guard version lookup and provide an unset host GUID fallback |
+| `recipes-phosphor/ipmi/files/0005-ceb-gnrd-compatible-chassis-and-optional-vr.patch` | ipmi: support x86 button masking and optional chassis resources |
+| `recipes-phosphor/ipmi/files/0006-ceb-gnrd-platform-event-channel-and-metadata.patch` | ipmi: parse platform events by channel and retain raw SEL metadata |
+| `recipes-phosphor/ipmi/files/0007-ceb-gnrd-report-front-panel-masking-unsupported.patch` | ipmi: report unmaskable board front-panel buttons |
+| `recipes-phosphor/ipmi/files/0008-ceb-gnrd-report-live-non-recoverable-alarms.patch` | ipmi: report live UNR alarm, event support and recovery |
+| `recipes-phosphor/ipmi/files/10-ceb-gnrd-wait-sensors.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/ipmi/files/ceb-gnrd-ipmi-fan/fan_oem.cpp` | 开发资料或配方数据 |
+| `recipes-phosphor/ipmi/files/ceb-gnrd-ipmi-fan/meson.build` | 开发资料或配方数据 |
+| `recipes-phosphor/ipmi/files/ceb-gnrd-ipmi-whitelist.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/ipmi/files/ceb-gnrd-wait-sensors.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/ipmi/files/generate_i2c_allowlist.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/ipmi/ipmitool_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/ipmi/phosphor-ipmi-config.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/ipmi/phosphor-ipmi-config/dev_id.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/ipmi/phosphor-ipmi-fru/obmc/eeproms/system/chassis/motherboard` | 开发资料或配方数据 |
+| `recipes-phosphor/ipmi/phosphor-ipmi-fru_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/ipmi/phosphor-ipmi-host_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/ipmi/phosphor-ipmi-net_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/leds/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/leds/ceb-gnrd-alert-led.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/leds/ceb-gnrd-espi-heartbeat.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/leds/ceb-gnrd-led-manager-config-native.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/leds/files/0001-led-accept-supported-short-names-without-warning.patch` | led: log supported short names at debug level |
+| `recipes-phosphor/leds/files/ceb-gnrd-alert-led.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/leds/files/ceb-gnrd-alert-led.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/leds/files/ceb-gnrd-espi-heartbeat.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/leds/files/led.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/leds/files/wait-for-espi-driver.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/leds/phosphor-led-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/leds/phosphor-led-sysfs_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/logging/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/logging/files/0001-ceb-gnrd-bound-event-entry-storage.patch` | Bound variable-length persistent data on CEB-GNRD |
+| `recipes-phosphor/logging/files/0002-ceb-gnrd-journal-event-severity.patch` | logging: preserve committed event severity in journal |
+| `recipes-phosphor/logging/phosphor-logging_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/network/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/network/ceb-gnrd-ncsi.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/network/files/0001-ceb-gnrd-preserve-ncsi-manual-activation.patch` | network: preserve manual activation for host-powered NC-SI |
+| `recipes-phosphor/network/files/0002-ceb-gnrd-skip-timesyncd-query-when-ntp-disabled.patch` | network: skip timesyncd server query when NTP is disabled |
+| `recipes-phosphor/network/files/0003-ceb-gnrd-match-physical-networks-by-hardware-path.patch` | network: match board physical NICs by verified hardware path |
+| `recipes-phosphor/network/files/ceb-gnrd-ncsi.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/network/files/manage-ncsi-link.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/network/phosphor-network_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/packagegroups/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/packagegroups/packagegroup-ceb-gnrd-apps.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/packagegroups/packagegroup-obmc-apps.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/pldm/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/pldm/pldm_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/psu/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/psu/ceb-gnrd-psu-detect.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/psu/files/ceb-gnrd-psu-detect.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/psu/files/ceb-gnrd-psu-detect.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/psu/files/psusensor-psu-detect.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+
+### `recipes-phosphor/rtc/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/rtc/ceb-gnrd-rtc-sync.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/rtc/files/ceb-gnrd-rtc-sync.service` | systemd 服务/定时器定义 |
+
+### `recipes-phosphor/sel-logger/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/sel-logger/ceb-gnrd-sel-logrotate.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/sel-logger/files/0001-ceb-gnrd-log-non-recoverable-threshold-events.patch` | threshold monitor: log non-recoverable threshold events |
+| `recipes-phosphor/sel-logger/files/0002-ceb-gnrd-bound-sel-file-at-write-time.patch` | rsyslog: rotate SEL in the writer before it grows indefinitely |
+| `recipes-phosphor/sel-logger/files/0003-ceb-gnrd-preserve-platform-event-metadata.patch` | sel: persist original platform event sensor and event identifiers |
+| `recipes-phosphor/sel-logger/files/ceb-gnrd-log-storage-cleanup.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/sel-logger/files/ceb-gnrd-log-storage-cleanup.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/sel-logger/files/ceb-gnrd-sel-logrotate.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/sel-logger/files/ceb-gnrd-sel-logrotate.timer` | systemd 服务/定时器定义 |
+| `recipes-phosphor/sel-logger/files/ceb-gnrd-storage-budget.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/sel-logger/phosphor-sel-logger_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/sensors/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/sensors/dbus-sensors_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/sensors/files/0001-reuse-i2c-device-by-config-path-and-guard-psu-io.patch` | sensors: reuse I2C devices by configuration path and guard PSU I/O |
+| `recipes-phosphor/sensors/files/0002-ceb-gnrd-megcrps800-psu.patch` | psu: consume externally managed MEGCRPS800 devices |
+| `recipes-phosphor/sensors/files/0003-ceb-gnrd-gate-chassis-adc-and-delayed-alarms.patch` | sensors: gate initial chassis samples and recheck delayed alarms |
+| `recipes-phosphor/sensors/files/0004-ceb-gnrd-persistent-intrusion-enable.patch` | intrusion: persist opt-in chassis monitoring |
+| `recipes-phosphor/sensors/files/0005-fan-use-resolved-pwm-enable-path.patch` | fan: derive enable path from the resolved PWM file |
+| `recipes-phosphor/sensors/files/0006-psu-log-filtered-devices-at-debug-level.patch` | psu: log unsupported scanned devices at debug level |
+| `recipes-phosphor/sensors/files/0007-psu-log-cancelled-poll-timer-at-debug-level.patch` | psu: treat cancelled polling timers as normal lifecycle events |
+| `recipes-phosphor/sensors/files/0008-fan-log-unmatched-inputs-at-debug-level.patch` | fan: log unmatched scanned inputs at debug level |
+| `recipes-phosphor/sensors/files/0009-psu-log-unmatched-devices-at-debug-level.patch` | psu: log unmatched discovered devices at debug level |
+| `recipes-phosphor/sensors/files/0010-hwmon-temp-skip-peci-auxiliary-devices.patch` | hwmon-temp: skip PECI auxiliary devices before I2C parsing |
+| `recipes-phosphor/sensors/files/0011-guard-optional-mode-and-intrusion-discovery.patch` | sensors: fix SpecialMode interface and optional discovery |
+| `recipes-phosphor/sensors/files/0012-psu-recover-cleared-grouped-alarms.patch` | psu: recover grouped alarms when the last source clears |
+| `recipes-phosphor/sensors/files/0013-ceb-gnrd-consume-auto-selected-crps-driver.patch` | psu: consume CRPS devices selected during startup |
+
+### `recipes-phosphor/settings/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/settings/files/0001-ceb-gnrd-bound-persistent-setting-text.patch` | Bound variable-length persistent data on CEB-GNRD |
+| `recipes-phosphor/settings/phosphor-settings-manager/settings.override.yml` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/settings/phosphor-settings-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/state/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/state/ceb-gnrd-boot-progress.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/state/files/0001-ceb-gnrd-post-history-warm-boot-cycle.patch` | post codes: preserve all values and use host events for cycles |
+| `recipes-phosphor/state/files/0001-ceb-gnrd-recognize-clean-watchdog-reboots.patch` | state: recognize orderly software reboots performed by watchdog |
+| `recipes-phosphor/state/files/0002-ceb-gnrd-block-bmc-reboot-during-host-flash.patch` | state: interlock BMC reboots with BIOS and CPLD programming |
+| `recipes-phosphor/state/files/0002-ceb-gnrd-post-history-latest-cycle-only.patch` | post codes: discard previous archives when the next cycle starts |
+| `recipes-phosphor/state/files/0003-ceb-gnrd-post-history-resume-current-cycle.patch` | post codes: preserve the current host cycle across BMC and service restarts |
+| `recipes-phosphor/state/files/60-ceb-gnrd-post-history.conf` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/state/files/ami-aptio-v-post-codes.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/state/files/ceb-gnrd-boot-progress.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/state/files/ceb-gnrd-boot-progress.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/state/files/ceb-gnrd-post-history-limit.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/state/phosphor-post-code-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+| `recipes-phosphor/state/phosphor-state-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/users/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/users/files/0001-ceb-gnrd-bound-ldap-persistent-config.patch` | Bound variable-length persistent data on CEB-GNRD |
+| `recipes-phosphor/users/phosphor-user-manager_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/utils/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/utils/ceb-gnrd-check.bb` | 板级配方及依赖/安装配置 |
+| `recipes-phosphor/utils/files/bmc-hw-dump.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/utils/files/ceb-gnrd-check.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `recipes-phosphor/utils/files/ceb-gnrd-check.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+
+### `recipes-phosphor/watchdog/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/watchdog/phosphor-watchdog/phosphor-watchdog-host-cycle.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/watchdog/phosphor-watchdog/phosphor-watchdog-host-poweroff.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/watchdog/phosphor-watchdog/phosphor-watchdog-host-reset.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/watchdog/phosphor-watchdog/phosphor-watchdog.service` | systemd 服务/定时器定义 |
+| `recipes-phosphor/watchdog/phosphor-watchdog_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-phosphor/webui/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-phosphor/webui/files/0001-ceb-gnrd-limit-webui-languages.patch` | ceb-gnrd: limit web UI languages to English and Chinese |
+| `recipes-phosphor/webui/files/0002-ceb-gnrd-add-simplified-chinese-locale.patch` | ceb-gnrd: add simplified Chinese WebUI locale |
+| `recipes-phosphor/webui/files/0003-ceb-gnrd-add-fan-control-page.patch` | ceb-gnrd: add WebUI fan speed control page |
+| `recipes-phosphor/webui/files/0004-ceb-gnrd-remove-resource-management-power.patch` | webui: remove SNMP Alerts, Key clear, LDAP and Resource management |
+| `recipes-phosphor/webui/files/0006-ceb-gnrd-kvm-full-screen.patch` | webui: add a full screen button to the KVM console |
+| `recipes-phosphor/webui/files/0007-ceb-gnrd-factory-reset-bmc-only.patch` | webui: factory reset page only offers the BMC reset |
+| `recipes-phosphor/webui/files/0008-ceb-gnrd-inventory-supported-tables-only.patch` | webui: keep only the inventory tables that have a backend |
+| `recipes-phosphor/webui/files/0009-ceb-gnrd-remove-overview-power-card.patch` | overview: remove the power information card |
+| `recipes-phosphor/webui/files/0010-ceb-gnrd-firmware-single-bank.patch` | firmware: remove the backup image cards |
+| `recipes-phosphor/webui/files/0011-ceb-gnrd-dumps-bmc-only.patch` | dumps: offer BMC dump only |
+| `recipes-phosphor/webui/files/0012-ceb-gnrd-policies-remove-vtpm-rtad.patch` | policies: remove the Virtual TPM and RTAD switches |
+| `recipes-phosphor/webui/files/0013-ceb-gnrd-firmware-update-progress.patch` | firmware: update progress, BIOS flash region selection |
+| `recipes-phosphor/webui/files/0014-ceb-gnrd-firmware-cards-side-by-side.patch` | firmware: BMC and BIOS cards side by side, wider update form |
+| `recipes-phosphor/webui/files/0015-ceb-gnrd-sensors-discrete-table.patch` | sensors: analog and discrete sensors on two tabs |
+| `recipes-phosphor/webui/files/0016-ceb-gnrd-post-codes-newest-first.patch` | post codes: newest first |
+| `recipes-phosphor/webui/files/0017-ceb-gnrd-sensors-pagination.patch` | sensors: paginate the analog sensor table |
+| `recipes-phosphor/webui/files/0018-ceb-gnrd-firmware-progress-survives-page-change.patch` | firmware: keep the update progress when the page is left |
+| `recipes-phosphor/webui/files/0019-ceb-gnrd-factory-reset-bmc-wording.patch` | factory reset: no server wording, no shutdown warning |
+| `recipes-phosphor/webui/files/0020-ceb-gnrd-overview-firmware-card.patch` | overview: firmware card without backup and system firmware version |
+| `recipes-phosphor/webui/files/0021-ceb-gnrd-refresh-server-power-operation-state.patch` | webui: refresh power state while waiting for server operations |
+| `recipes-phosphor/webui/files/0022-ceb-gnrd-event-log-explicit-columns.patch` | Event logs: remove unsupported status columns and avoid empty fields |
+| `recipes-phosphor/webui/files/0023-ceb-gnrd-event-log-actions-heading.patch` | Event logs: label the actions column |
+| `recipes-phosphor/webui/files/0024-ceb-gnrd-refresh-live-status-pages.patch` | webui: refresh live sensors and status views |
+| `recipes-phosphor/webui/files/0025-ceb-gnrd-close-virtual-media-websocket-on-stop.patch` | webui: close virtual media sessions and cancel pending reads |
+| `recipes-phosphor/webui/files/0026-ceb-gnrd-chunk-virtual-media-read-replies.patch` | virtual-media: split NBD replies into bounded WebSocket messages |
+| `recipes-phosphor/webui/files/0027-ceb-gnrd-post-code-table-sort-api.patch` | post codes: use current table sorting API |
+| `recipes-phosphor/webui/files/0028-ceb-gnrd-event-logs-newest-first.patch` | event logs: default to newest first with current table API |
+| `recipes-phosphor/webui/files/0029-ceb-gnrd-bmc-update-partition-selection.patch` | firmware: select BMC partitions with explicit bootloader confirmation |
+| `recipes-phosphor/webui/files/0030-ceb-gnrd-bmc-update-completion-notification.patch` | firmware: recognize BMC reboot and retain completion notification |
+| `recipes-phosphor/webui/files/0031-ceb-gnrd-sol-source-selection.patch` | SOL: use physical UART in output-only mode |
+| `recipes-phosphor/webui/files/0032-ceb-gnrd-kvm-restore-fullscreen-layout.patch` | webui: restore KVM layout after leaving fullscreen |
+| `recipes-phosphor/webui/files/0033-ceb-gnrd-chassis-intrusion-switch.patch` | inventory: add persistent chassis intrusion switch |
+| `recipes-phosphor/webui/files/0034-ceb-gnrd-timezone-ui-language.patch` | webui: format timezone names using the UI locale |
+| `recipes-phosphor/webui/files/0035-ceb-gnrd-boot-checkpoint-details.patch` | webui: show BIOS boot checkpoints and raw POST codes |
+| `recipes-phosphor/webui/files/0036-ceb-gnrd-colored-navigation-icons.patch` | ceb-gnrd: use colored function icons in primary navigation |
+| `recipes-phosphor/webui/files/0037-ceb-gnrd-refresh-confirmed-time-mode.patch` | ceb-gnrd: reflect confirmed Manual/NTP mode after saving |
+| `recipes-phosphor/webui/files/0038-ceb-gnrd-colored-openbmc-logos.patch` | ceb-gnrd: use blue and green OpenBMC logos throughout WebUI |
+| `recipes-phosphor/webui/files/0039-ceb-gnrd-responsive-date-time-settings.patch` | webui: bound date-time loading and avoid fixed NTP-stop wait |
+| `recipes-phosphor/webui/files/0040-ceb-gnrd-cpld-firmware-update.patch` | webui: add CPLD firmware updates through guarded JTAG service |
+| `recipes-phosphor/webui/files/0041-ceb-gnrd-ami-post-code-descriptions.patch` | webui: interpret AMI Aptio V POST codes and boot progress |
+| `recipes-phosphor/webui/files/0042-ceb-gnrd-post-code-sequence-context.patch` | webui: interpret reused POST codes within each boot cycle |
+| `recipes-phosphor/webui/files/0043-ceb-gnrd-post-code-concise-descriptions.patch` | webui: keep POST descriptions to documented meanings |
+| `recipes-phosphor/webui/files/0044-ceb-gnrd-post-code-export-json-array.patch` | webui: export all POST logs as one JSON array |
+| `recipes-phosphor/webui/files/0045-ceb-gnrd-firmware-upload-hints.patch` | firmware: disable update until a package is selected and show formats |
+| `recipes-phosphor/webui/files/0046-ceb-gnrd-post-code-source-context.patch` | webui: distinguish AMI and Intel reference POST meanings by sequence |
+| `recipes-phosphor/webui/files/0047-ceb-gnrd-firmware-hints-above-upload.patch` | firmware: put package format guidance above Add file |
+| `recipes-phosphor/webui/files/0048-ceb-gnrd-date-time-input-alignment.patch` | date-time: align manual inputs and separate timezone text |
+| `recipes-phosphor/webui/files/0049-ceb-gnrd-post-code-latest-cycle-only.patch` | post code logs: expose only the latest host boot cycle |
+| `recipes-phosphor/webui/files/0050-ceb-gnrd-firmware-upload-mutual-exclusion.patch` | firmware: disable uploads mutually during BMC BIOS or CPLD updates |
+| `recipes-phosphor/webui/files/0051-ceb-gnrd-firmware-upload-labels.patch` | firmware: use firmware format guidance without an image file heading |
+| `recipes-phosphor/webui/files/0052-ceb-gnrd-cpld-update-firmware-heading.patch` | firmware: add matching update firmware heading above CPLD upload |
+| `recipes-phosphor/webui/files/0053-ceb-gnrd-overview-existing-build-info.patch` | overview: show running-image build ID and Git version |
+| `recipes-phosphor/webui/files/0054-ceb-gnrd-bios-missing-version-na.patch` | firmware: show N/A for an unavailable BIOS version |
+| `recipes-phosphor/webui/files/0055-ceb-gnrd-hide-overview-source-version.patch` | overview: remove source version text from firmware card |
+| `recipes-phosphor/webui/files/0056-ceb-gnrd-virtual-media-survives-navigation.patch` | virtual-media: retain browser mounts across menu navigation |
+| `recipes-phosphor/webui/files/0057-ceb-gnrd-consumed-boot-override.patch` | webui: refresh consumed boot overrides and save only edits |
+| `recipes-phosphor/webui/files/0058-ceb-gnrd-fix-event-export-and-fan-load-status.patch` | webui: encode event JSON arrays and clear recovered fan load errors |
+| `recipes-phosphor/webui/files/0059-ceb-gnrd-fan-speed-ten-percent-steps.patch` | webui: offer fixed fan speed in ten percent steps |
+| `recipes-phosphor/webui/files/zh-CN.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-phosphor/webui/webui-vue_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `recipes-x86/chassis/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `recipes-x86/chassis/files/0001-ceb-gnrd-add-force-power-button-off-method.patch` | x86-power-control: expose force-off pulse while host is off |
+| `recipes-x86/chassis/files/0002-ceb-gnrd-own-bus-name-for-the-exported-buttons.patch` | x86-power-control: do not share the Chassis.Buttons bus name |
+| `recipes-x86/chassis/files/0003-ceb-gnrd-apply-power-restore-only-on-ac-boot.patch` | power-control: apply restore policies only on AC boot |
+| `recipes-x86/chassis/files/0004-ceb-gnrd-log-dc-events-on-chassis-transitions.patch` | power-control: log DC events on chassis transitions |
+| `recipes-x86/chassis/files/0005-ceb-gnrd-report-forced-warm-reset-state.patch` | power control: report forced warm reset to host-state consumers |
+| `recipes-x86/chassis/files/0006-ceb-gnrd-block-host-start-during-firmware-programming.patch` | power: block software start and reset during host flash programming |
+| `recipes-x86/chassis/files/power-config-host0.json` | 板级硬件、运行配置或接口数据；以文件内容为准 |
+| `recipes-x86/chassis/x86-power-control_%.bbappend` | 上游配方的板级追加；列出实际源文件和补丁 |
+
+### `tools/`
+
+| 文件 | 用途 / 配置入口 |
+|---|---|
+| `tools/bmc-hw-dump.md` | 开发资料或配方数据 |
+| `tools/expand-to-tutorial-build.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/EVENTLOG-DELETE-FIX.md` | 开发资料或配方数据 |
+| `tools/qemu/FAN-OWNER-GLOB-FIX.md` | 开发资料或配方数据 |
+| `tools/qemu/GUI-HEARTBEAT-RESET.md` | 开发资料或配方数据 |
+| `tools/qemu/README.md` | 开发资料或配方数据 |
+| `tools/qemu/VUART-STARTUP-FIX.md` | 开发资料或配方数据 |
+| `tools/qemu/build-qemu.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/diagnose-bmc.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/diagnose-virtual-media.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/diagnose-web.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/host-sim.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/host_io.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/kvm/os.jpg` | 开发资料或配方数据 |
+| `tools/qemu/kvm/post.jpg` | 开发资料或配方数据 |
+| `tools/qemu/kvm/test-pattern.jpg` | 开发资料或配方数据 |
+| `tools/qemu/log-sink.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/panel.html` | 开发资料或配方数据 |
+| `tools/qemu/panel_services.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/qemu/patches/0001-aspeed-scu-report-the-AST2600-AHB-clock-HCLK.patch` | aspeed/scu: report the AST2600 AHB clock (HCLK) |
+| `tools/qemu/patches/0002-aspeed-pwm-model-the-fan-tachometers-and-wire-the-co.patch` | aspeed/pwm: model the fan tachometers and wire the controller on AST2600 |
+| `tools/qemu/patches/0003-hw-misc-add-bmc-host-sim-a-simulated-host-behind-the.patch` | hw/misc: add bmc-host-sim, a simulated host behind the Aspeed BMC GPIOs |
+| `tools/qemu/patches/0004-aspeed-adc-settable-input-voltages.patch` | aspeed/adc: settable input voltages |
+| `tools/qemu/patches/0005-aspeed-gpio-keep-pin-levels-and-reset-tolerant-outpu.patch` | aspeed/gpio: keep pin levels and reset tolerant outputs across a reset |
+| `tools/qemu/patches/0006-hw-sensor-add-crps-psu-a-generic-CRPS-PMBus-power-su.patch` | hw/sensor: add crps-psu, a generic CRPS PMBus power supply |
+| `tools/qemu/patches/0007-aspeed-peci-answer-as-an-Intel-CPU-at-address-0x30.patch` | aspeed/peci: answer as an Intel CPU at address 0x30 |
+| `tools/qemu/patches/0008-bmc-host-sim-the-CPU-answers-PECI-only-while-the-hos.patch` | bmc-host-sim: the CPU answers PECI only while the host is on |
+| `tools/qemu/patches/0009-hw-rtc-add-the-Nuvoton-NCT3018Y-NCT3015Y-I2C-RTC.patch` | hw/rtc: add the Nuvoton NCT3018Y/NCT3015Y I2C RTC |
+| `tools/qemu/patches/0010-aspeed-AST2600-VUART-and-LPC-snoop-port-80h-POST-cod.patch` | aspeed: AST2600 VUART and LPC snoop (port 80h POST codes) |
+| `tools/qemu/patches/0011-bmc-host-sim-POST-codes-on-port-80h-during-POST.patch` | bmc-host-sim: POST codes on port 80h during POST |
+| `tools/qemu/patches/0012-aspeed-read-only-fan-speed-PWM-duty-and-POST-code-pr.patch` | aspeed: read-only fan speed, PWM duty and POST code properties |
+| `tools/qemu/patches/0013-aspeed-gpio-a-pin-switched-to-output-drives-the-last.patch` | aspeed/gpio: a pin switched to output drives the last written value |
+| `tools/qemu/patches/0014-aspeed-AST2600-video-engine-with-a-still-picture-for.patch` | aspeed: AST2600 video engine with a still picture for the BMC KVM |
+| `tools/qemu/patches/0015-aspeed-gpio-read-only-gpio-dir-N-properties.patch` | aspeed/gpio: read-only gpio-dir[N] properties |
+| `tools/qemu/patches/0016-aspeed-video-signal-a-mode-detection-when-the-input-.patch` | aspeed/video: signal a mode detection when the input appears |
+| `tools/qemu/patches/0017-aspeed-adc-compensation-mode-always-reads-half-scale.patch` | aspeed/adc: compensation mode always reads half scale |
+| `tools/qemu/patches/0018-aspeed-integrate-espi-usb-chassis-and-video.patch` | aspeed: integrate host eSPI, USB vHub, chassis and VGA models |
+| `tools/qemu/patches/0019-aspeed-peci-model-GNR-D-channel-temperatures.patch` | aspeed/peci: model GNR-D package and channel temperatures |
+| `tools/qemu/patches/0020-aspeed-adc-keep-the-channel-values-to-10-bits.patch` | aspeed/adc: keep the channel values to 10 bits |
+| `tools/qemu/patches/0020-bmc-host-sim-consume-force-off-pulse-while-off.patch` | bmc-host-sim: do not boot on release of an off-state force pulse |
+| `tools/qemu/patches/0021-aspeed-fix-video-detection-and-usb-ep0-handshakes.patch` | aspeed: preserve no-signal detection and USB EP0 handshakes |
+| `tools/qemu/patches/0022-aspeed-remove-unrealized-legacy-vuart.patch` | aspeed: remove the replaced legacy VUART child |
+| `tools/qemu/patches/0023-bmc-host-sim-add-board-reset-button.patch` | bmc-host-sim: add board reset button independent of BMC GPIO |
+| `tools/qemu/patches/0024-aspeed-preserve-power-on-and-watchdog-reset-causes.patch` | aspeed: model power-on and watchdog reset event logs |
+| `tools/qemu/patches/0025-at24c-separate-backing-size-from-address-space.patch` | at24c: allow aligned backing for byte-addressed 256-byte blocks |
+| `tools/qemu/patches/0026-ftgmac100-ceb-gnrd-rtl8211-and-intel-ncsi.patch` | ftgmac100: add opt-in RTL8211FS and Intel NC-SI test profiles |
+| `tools/qemu/run-qemu.sh` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/tests/test_cpld_bit_update.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/tests/test_cpld_jtag_transport.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
+| `tools/tests/test_fan_failure_recovery.py` | 板级实现或辅助程序；服务安装入口见所在配方 |
