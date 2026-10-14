@@ -69,9 +69,24 @@ next_attempt=0
 retries=0
 interface_missing=0
 had_carrier=0
+query_paused=0
 while :; do
     read_gate
     now=$(monotonic_seconds)
+    # Unknown is a query outage, not a confirmed host or management transition.
+    # Keep carrier and retry history so recovery cannot reprobe a known channel.
+    if [ "$gate" = unknown ]; then
+        if [ "$query_paused" -eq 0 ]; then
+            logger -p user.info -t ceb-gnrd-ncsi "host/POST state unavailable; NC-SI initialization paused"
+            query_paused=1
+        fi
+        sleep 1
+        continue
+    fi
+    if [ "$query_paused" -eq 1 ]; then
+        logger -p user.info -t ceb-gnrd-ncsi "state queries recovered; resuming NC-SI management"
+        query_paused=0
+    fi
     if [ "$gate" != "$last_gate" ]; then
         last_gate=$gate
         retries=0
@@ -86,7 +101,6 @@ while :; do
             off) logger -p user.info -t ceb-gnrd-ncsi "host off; disabling $IFACE and stopping initialization" ;;
             disabled) logger -p user.info -t ceb-gnrd-ncsi "$IFACE administratively disabled; stopping initialization" ;;
             post) logger -p user.info -t ceb-gnrd-ncsi "waiting for BIOS POST complete; disabling $IFACE" ;;
-            unknown) logger -p user.info -t ceb-gnrd-ncsi "host/POST state unavailable; NC-SI initialization paused" ;;
         esac
     fi
 
@@ -99,13 +113,6 @@ while :; do
         continue
     fi
     interface_missing=0
-
-    # Missing D-Bus state never authorizes an up/reprobe. Preserve an existing
-    # link across a temporary service outage, until state is known again.
-    if [ "$gate" = unknown ]; then
-        sleep 1
-        continue
-    fi
 
     if [ "$gate" != ready ]; then
         # Off or POST withdrawal immediately lowers an active interface.

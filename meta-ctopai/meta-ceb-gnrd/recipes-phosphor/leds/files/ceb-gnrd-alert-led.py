@@ -30,6 +30,8 @@ LED_GROUP_INTERFACE = "xyz.openbmc_project.Led.Group"
 LED_REASSERT_SECONDS = 30
 STATE_DIR = "/run/ceb-gnrd-alert-led"
 WATCHDOG_LATCH = os.path.join(STATE_DIR, "watchdog-timeout")
+WATCHDOG_ALARM = threading.Event()
+WATCHDOG_LATCH_RETRY_SECONDS = 30
 BOOT_LATCH = os.path.join(STATE_DIR, "bios-boot-timeout")
 SENSOR_ALARM_CACHE = os.path.join(STATE_DIR, "sensor-alarms.json")
 BOOT_TIMEOUT_SECONDS = 600
@@ -426,6 +428,7 @@ def bios_boot_ok():
 
 def watchdog_monitor():
     while True:
+        proc = None
         try:
             proc = subprocess.Popen(
                 ["busctl", "--system", "--match=" + WATCHDOG_MATCH, "monitor"],
@@ -436,13 +439,31 @@ def watchdog_monitor():
             )
             for line in proc.stdout:
                 if "member=Timeout" in line or "Member=Timeout" in line:
-                    os.makedirs(STATE_DIR, exist_ok=True)
-                    with open(WATCHDOG_LATCH, "w", encoding="ascii") as latch:
-                        latch.write("watchdog timeout\n")
-                    LOG.error("Host watchdog timeout latched system alert")
-            proc.wait()
+                    # Latch before any filesystem operation. The main loop
+                    # persists this alarm and retries failures independently.
+                    if not WATCHDOG_ALARM.is_set():
+                        WATCHDOG_ALARM.set()
+                        LOG.error("Host watchdog timeout latched system alert")
+            LOG.warning("Watchdog signal monitor exited: %s", proc.wait())
         except (OSError, subprocess.SubprocessError) as exc:
             LOG.warning("Watchdog signal monitor failed: %s", exc)
+        finally:
+            if proc is not None:
+                # Always reap the old monitor before launching its replacement.
+                try:
+                    if proc.poll() is None:
+                        try:
+                            proc.terminate()
+                        except ProcessLookupError:
+                            pass  # The monitor exited between poll and signal.
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                finally:
+                    if proc.stdout is not None:
+                        proc.stdout.close()
         time.sleep(2)
 
 
@@ -474,6 +495,10 @@ def main():
     boot_deadline = None
     boot_failed = os.path.exists(BOOT_LATCH)
     watchdog_failed = os.path.exists(WATCHDOG_LATCH)
+    watchdog_latch_saved = watchdog_failed
+    if watchdog_failed:
+        WATCHDOG_ALARM.set()
+    watchdog_latch_retry_at = 0.0
     # One shared system alert LED. Voltage, temperature upper non-recoverable,
     # and CPU / DIMM Upper Critical alarms follow the sensors. The LED goes out
     # when all fault sources clear. BIOS boot failure clears on a successful
@@ -545,7 +570,22 @@ def main():
                 if not sel_add("Chassis intrusion detected", INTRUSION_SENSOR_TYPE, INTRUSION_SEL_DATA):
                     status = intrusion_last  # retry on the next cycle
             intrusion_last = status
-        watchdog_failed = watchdog_failed or os.path.exists(WATCHDOG_LATCH)
+        watchdog_failed = (watchdog_failed or WATCHDOG_ALARM.is_set()
+                           or os.path.exists(WATCHDOG_LATCH))
+        if watchdog_failed:
+            WATCHDOG_ALARM.set()
+            now = time.monotonic()
+            if not watchdog_latch_saved and now >= watchdog_latch_retry_at:
+                watchdog_latch_retry_at = now + WATCHDOG_LATCH_RETRY_SECONDS
+                try:
+                    os.makedirs(STATE_DIR, exist_ok=True)
+                    with open(WATCHDOG_LATCH, "w", encoding="ascii") as latch:
+                        latch.write("watchdog timeout\n")
+                except OSError as exc:
+                    LOG.warning("Unable to persist watchdog timeout latch; "
+                                "alarm remains active, retrying: %s", exc)
+                else:
+                    watchdog_latch_saved = True
         voltage_state = any_alarm(VOLTAGE_ROOT, voltage_alarm_property,
                                   host_off=power_good is False)
         if voltage_state is not None:
