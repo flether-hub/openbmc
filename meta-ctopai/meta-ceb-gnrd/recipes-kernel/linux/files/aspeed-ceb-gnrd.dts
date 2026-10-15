@@ -164,8 +164,10 @@
     snoop-ports = <0x80>;
 };
 
-/* AST2600 dedicated CHASI# latch; publishes intrusion0_alarm via hwmon. */
+/* Cover switch: low = closed/normal, high = open/alarm. Read CHASI# raw
+ * level rather than its active-low history latch. */
 &chassis {
+    aspeed,intrusion-active-high;
     status = "okay";
 };
 

@@ -195,6 +195,8 @@ interfaces:
       source: AST2600 dedicated intrusion input CHASI#
       package_ball: AB21
       interface: AST2600 hwmon intrusion latch (intrusion0_alarm)
+      polarity: cover closed is low (normal); cover open is high (alarm)
+      status_source: CHAI10 bit 4 raw CHASI# level via aspeed,intrusion-active-high; not bit 2 active-low history latch
       driver: CONFIG_SENSORS_ASPEED_CHASSIS
       device_tree: backported aspeed,ast2600-chassis node enabled (SoC CHASI IRQ 149)
       status: enabled-hwmon-latch-and-dbus-sensor
