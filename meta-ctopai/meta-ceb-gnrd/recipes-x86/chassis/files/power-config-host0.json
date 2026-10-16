@@ -31,6 +31,7 @@
         "ResetPulseMs": 500,
         "PowerCycleMs": 5000,
         "PowerOKWatchdogMs": 8000,
+        "ACRestorePowerOKWatchdogMs": 60000,
         "GracefulPowerOffS": 300,
         "PowerOffSaveMs": 7000,
         "DbusGetPropertyRetry": 1000

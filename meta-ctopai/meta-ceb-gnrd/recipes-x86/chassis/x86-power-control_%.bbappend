@@ -8,6 +8,7 @@ SRC_URI:append = " \
     file://0004-ceb-gnrd-log-dc-events-on-chassis-transitions.patch \
     file://0005-ceb-gnrd-report-forced-warm-reset-state.patch \
     file://0006-ceb-gnrd-block-host-start-during-firmware-programming.patch \
+    file://0007-ceb-gnrd-ac-restore-power-good-timeout.patch \
     "
 
 EXTRA_OEMESON:append = " \

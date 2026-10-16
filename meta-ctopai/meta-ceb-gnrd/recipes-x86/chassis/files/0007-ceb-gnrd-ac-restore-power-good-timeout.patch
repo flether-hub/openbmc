@@ -1,0 +1,92 @@
+Subject: [PATCH] power: use a separate Power Good timeout for AC restore
+
+The board can take 27 seconds to assert CPU Power Good after an AC restore
+request. The normal eight-second watchdog reports a failed power-on before
+the cold-start sequence completes. Give AlwaysOn and Restore requests a
+separate 60-second budget, retaining the normal watchdog for manual On,
+physical button events and power cycles. Preserve expiry failure reporting.
+
+Use a distinct internal event rather than a persistent mode flag so a
+later ordinary request cannot inherit the AC restore timeout. Existing
+AC-boot gating remains responsible for authorizing restore policies.
+
+Upstream-Status: Inappropriate [CEB-GNRD AC power sequencing]
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -156,6 +156,7 @@
+     {"PowerCycleMs", 5000},
+     {"SioPowerGoodWatchdogMs", 1000},
+     {"PowerOKWatchdogMs", 8000},
++    {"ACRestorePowerOKWatchdogMs", 60000},
+     {"GracefulPowerOffS", (5 * 60)},
+     {"WarmResetCheckMs", 500},
+     {"PowerOffSaveMs", 7000},
+@@ -352,6 +353,7 @@
+     powerOKWatchdogTimerExpired,
+     sioPowerGoodWatchdogTimerExpired,
+     gracefulPowerOffTimerExpired,
++    acRestorePowerOnRequest,
+     powerOnRequest,
+     powerOffRequest,
+     powerCycleRequest,
+@@ -396,6 +398,8 @@
+             return "SIO power good watchdog timer expired";
+         case Event::gracefulPowerOffTimerExpired:
+             return "graceful power-off timer expired";
++        case Event::acRestorePowerOnRequest:
++            return "AC restore power-on request";
+         case Event::powerOnRequest:
+             return "power-on request";
+         case Event::powerOffRequest:
+@@ -1092,7 +1096,7 @@
+     if (powerRestorePolicy ==
+         "xyz.openbmc_project.Control.Power.RestorePolicy.Policy.AlwaysOn")
+     {
+-        sendPowerControlEvent(Event::powerOnRequest);
++        sendPowerControlEvent(Event::acRestorePowerOnRequest);
+         setRestartCauseProperty(getRestartCause(RestartCause::powerPolicyOn));
+     }
+     else if (powerRestorePolicy ==
+@@ -1101,7 +1105,7 @@
+         if (wasPowerDropped())
+         {
+             lg2::info("Power was dropped, restoring Host On state");
+-            sendPowerControlEvent(Event::powerOnRequest);
++            sendPowerControlEvent(Event::acRestorePowerOnRequest);
+             setRestartCauseProperty(
+                 getRestartCause(RestartCause::powerPolicyRestore));
+         }
+@@ -1443,11 +1447,13 @@
+     });
+ }
+ 
+-static void powerOKWatchdogTimerStart()
+-{
+-    lg2::info("power OK watchdog timer started");
+-    powerOKWatchdogTimer.expires_after(
+-        std::chrono::milliseconds(TimerMap["PowerOKWatchdogMs"]));
++static void powerOKWatchdogTimerStart(bool acRestore = false)
++{
++    const int timeoutMs = TimerMap[acRestore ? "ACRestorePowerOKWatchdogMs"
++                                          : "PowerOKWatchdogMs"];
++    lg2::info("power OK watchdog timer started ({TIMEOUT_MS} ms, AC restore: {AC_RESTORE})",
++              "TIMEOUT_MS", timeoutMs, "AC_RESTORE", acRestore);
++    powerOKWatchdogTimer.expires_after(std::chrono::milliseconds(timeoutMs));
+     powerOKWatchdogTimer.async_wait([](const boost::system::error_code ec) {
+         if (ec)
+         {
+@@ -1817,8 +1823,11 @@
+             powerOKWatchdogTimerStart();
+             setPowerState(PowerState::waitForPowerOK);
+             break;
++        case Event::acRestorePowerOnRequest:
+         case Event::powerOnRequest:
+-            powerOKWatchdogTimerStart();
++            // Only the AC restore request gets the cold-start power budget.
++            // No persistent flag can leak this timeout into a later manual On.
++            powerOKWatchdogTimerStart(event == Event::acRestorePowerOnRequest);
+             setPowerState(PowerState::waitForPowerOK);
+             powerOn();
+             break;

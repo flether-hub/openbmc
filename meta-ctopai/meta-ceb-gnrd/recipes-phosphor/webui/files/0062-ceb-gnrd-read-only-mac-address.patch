@@ -1,0 +1,149 @@
+Subject: [PATCH] network: display MAC addresses without an edit action
+
+CEB-GNRD provisions MAC addresses through U-Boot and disables persist-mac
+in phosphor-network. Remove the unsupported editor and its modal wiring
+while retaining the actual MAC address display for each interface.
+
+Upstream-Status: Inappropriate [CEB-GNRD network provisioning policy]
+
+diff --git a/src/views/Settings/Network/NetworkInterfaceSettings.vue b/src/views/Settings/Network/NetworkInterfaceSettings.vue
+--- a/src/views/Settings/Network/NetworkInterfaceSettings.vue
++++ b/src/views/Settings/Network/NetworkInterfaceSettings.vue
+@@ -36,15 +36,6 @@
+           <dl class="text-nowrap">
+             <dt>
+               {{ $t('pageNetwork.macAddress') }}
+-              <b-button
+-                variant="link"
+-                class="p-1"
+-                @click="initMacAddressModal()"
+-              >
+-                <icon-edit
+-                  :title="$t('pageNetwork.modal.editMacAddressTitle')"
+-                />
+-              </b-button>
+             </dt>
+             <dd>
+               {{ dataFormatter(macAddress) }}
+@@ -58,29 +49,21 @@
+ 
+ <script>
+ import eventBus from '@/eventBus';
+-import BVToastMixin from '@/components/Mixins/BVToastMixin';
+-import IconEdit from '@carbon/icons-vue/es/edit/16';
+ import PageSection from '@/components/Global/PageSection';
+ import DataFormatterMixin from '@/components/Mixins/DataFormatterMixin';
+ import { mapState } from 'vuex';
+-import { useModal } from 'bootstrap-vue-next';
+ 
+ export default {
+   name: 'Ipv4Table',
+   components: {
+-    IconEdit,
+     PageSection,
+   },
+-  mixins: [BVToastMixin, DataFormatterMixin],
++  mixins: [DataFormatterMixin],
+   props: {
+     tabIndex: {
+       type: Number,
+       default: 0,
+     },
+-  },
+-  setup() {
+-    const bvModal = useModal();
+-    return { bvModal };
+   },
+   data() {
+     return {
+@@ -115,9 +98,6 @@
+       this.fqdn = this.ethernetData[this.selectedInterface].FQDN;
+       this.macAddress = this.ethernetData[this.selectedInterface].MACAddress;
+     },
+-    initMacAddressModal() {
+-      eventBus.$emit('show-mac-address-modal');
+-    },
+   },
+ };
+ </script>
+diff --git a/src/views/Settings/Network/Network.vue b/src/views/Settings/Network/Network.vue
+--- a/src/views/Settings/Network/Network.vue
++++ b/src/views/Settings/Network/Network.vue
+@@ -43,11 +43,6 @@
+       :hostname="currentHostname"
+       @ok="saveSettings"
+     />
+-    <modal-mac-address
+-      v-model="showMacAddressModal"
+-      :mac-address="currentMacAddress"
+-      @ok="saveSettings"
+-    />
+     <modal-default-gateway
+       v-model="showDefaultGatewayModal"
+       :default-gateway="ipv6DefaultGateway"
+@@ -61,7 +56,6 @@
+ import BVToastMixin from '@/components/Mixins/BVToastMixin';
+ import DataFormatterMixin from '@/components/Mixins/DataFormatterMixin';
+ import LoadingBarMixin, { loading } from '@/components/Mixins/LoadingBarMixin';
+-import ModalMacAddress from './ModalMacAddress.vue';
+ import ModalDefaultGateway from './ModalDefaultGateway.vue';
+ import ModalHostname from './ModalHostname.vue';
+ import ModalIpv4 from './ModalIpv4.vue';
+@@ -80,7 +74,6 @@
+   name: 'Network',
+   components: {
+     ModalHostname,
+-    ModalMacAddress,
+     ModalDefaultGateway,
+     ModalIpv4,
+     ModalIpv6,
+@@ -101,7 +94,6 @@
+   data() {
+     return {
+       currentHostname: '',
+-      currentMacAddress: '',
+       defaultGateway: '',
+       ipv6DefaultGateway: '',
+       loading,
+@@ -110,7 +102,6 @@
+       tabsRenderKey: 0,
+       showHostnameModal: false,
+       showDefaultGatewayModal: false,
+-      showMacAddressModal: false,
+     };
+   },
+   computed: {
+@@ -174,7 +165,6 @@
+ 
+     // Listen for modal show events from child components
+     eventBus.$on('show-hostname-modal', this.handleShowHostnameModal);
+-    eventBus.$on('show-mac-address-modal', this.handleShowMacAddressModal);
+     eventBus.$on(
+       'show-default-gateway-modal',
+       this.handleShowDefaultGatewayModal,
+@@ -182,7 +172,6 @@
+   },
+   beforeUnmount() {
+     eventBus.$off('show-hostname-modal', this.handleShowHostnameModal);
+-    eventBus.$off('show-mac-address-modal', this.handleShowMacAddressModal);
+     eventBus.$off(
+       'show-default-gateway-modal',
+       this.handleShowDefaultGatewayModal,
+@@ -191,9 +180,6 @@
+   methods: {
+     handleShowHostnameModal() {
+       this.showHostnameModal = true;
+-    },
+-    handleShowMacAddressModal() {
+-      this.showMacAddressModal = true;
+     },
+     handleShowDefaultGatewayModal() {
+       this.showDefaultGatewayModal = true;
+@@ -208,7 +194,6 @@
+       if (!settings) return;
+       this.defaultGateway = settings.defaultGateway;
+       this.currentHostname = settings.hostname;
+-      this.currentMacAddress = settings.macAddress;
+       this.ipv6DefaultGateway = settings.ipv6DefaultGateway;
+     },
+     getTabIndex(selectedIndex) {

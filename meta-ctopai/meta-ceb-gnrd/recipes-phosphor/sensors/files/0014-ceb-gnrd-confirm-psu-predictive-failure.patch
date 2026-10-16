@@ -1,0 +1,87 @@
+Subject: [PATCH] psu: reconfirm predictive warnings before asserting events
+
+A PSU can report warnings as all AC inputs disappear while the BMC runs
+briefly on hold-up power. Require ten seconds of valid, asserted polls
+before publishing a PredictiveFailure. A clear, an ineligible power state
+or any read/parse failure cancels the pending confirmation. Use the normal
+asynchronous poll loop and a monotonic deadline; never emit from a timer
+without a fresh hardware read.
+
+Deassertions remain immediate and do not emit recovery for warnings that
+were never asserted. Failure, FanFault, ACLost and ConfigureError retain
+their existing timing. Pending predictions are volatile across BMC boots.
+
+Upstream-Status: Inappropriate [CEB-GNRD PSU warning confirmation policy]
+
+diff --git a/src/psu/PSUEvent.hpp b/src/psu/PSUEvent.hpp
+--- a/src/psu/PSUEvent.hpp
++++ b/src/psu/PSUEvent.hpp
+@@ -26,8 +26,10 @@
+ #include <sdbusplus/asio/object_server.hpp>
+ 
+ #include <array>
++#include <chrono>
+ #include <cstddef>
+ #include <memory>
++#include <optional>
+ #include <set>
+ #include <string>
+ #include <vector>
+@@ -63,6 +65,9 @@
+ 
+   private:
+     int value = 0;
++    // A prediction must be present on valid polls for the full interval.
++    std::optional<std::chrono::steady_clock::time_point> predictionSince;
++    static constexpr auto predictionConfirmTime = std::chrono::seconds(10);
+     size_t errCount{0};
+     std::string path;
+     std::string eventName;
+diff --git a/src/psu/PSUEvent.cpp b/src/psu/PSUEvent.cpp
+--- a/src/psu/PSUEvent.cpp
++++ b/src/psu/PSUEvent.cpp
+@@ -206,6 +206,11 @@
+ void PSUSubEvent::handleResponse(const boost::system::error_code& err,
+                                  size_t bytesTransferred)
+ {
++    if (err)
++    {
++        // A failed read cannot confirm that a pending warning persisted.
++        predictionSince.reset();
++    }
+     if (err == boost::asio::error::operation_aborted)
+     {
+         return;
+@@ -229,6 +234,7 @@
+             std::from_chars(buffer.data(), bufferEnd, nvalue);
+         if (ret.ec != std::errc())
+         {
++            predictionSince.reset();
+             errCount++;
+         }
+         else
+@@ -286,6 +292,24 @@
+ // deasserted.
+ void PSUSubEvent::updateValue(const int& newValue)
+ {
++    if (eventName == "PredictiveFailure" && newValue != 0 && value == 0)
++    {
++        const auto now = std::chrono::steady_clock::now();
++        if (!predictionSince)
++        {
++            predictionSince = now;
++            return;
++        }
++        if (now - *predictionSince < predictionConfirmTime)
++        {
++            return;
++        }
++        // This successful poll reconfirms the warning after ten seconds.
++        // Only now update the group, health state and persistent event log.
++    }
++    // A clear or an ineligible read cancels an unconfirmed prediction.
++    predictionSince.reset();
++
+     // Take no action if value already equal
+     // Same semantics as Sensor::updateValue(const double&)
+     if (newValue == value)

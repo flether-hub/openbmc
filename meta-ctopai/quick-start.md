@@ -766,7 +766,8 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 
 * `power-config-host0.json` 的PowerOk是GPIOV4；PowerOut/ResetOut由x86-power-control独占。实体Power button只通知BMC，实体Reset没有连接BMC，因此IPMI机箱能力查询不假定Power0/Reset0 Enabled可用。
 * UID短按保持定位功能；持续5秒读取实际GPIO后请求正常BMC重启，长按释放不再重复定位，启动时已经按住的旧事件不直接当作新长按。
-* 来电恢复策略默认AlwaysOn，只在已识别AC上电时应用；单独BMC重启保留Host当前状态。未知复位来源不授权自动主机上电。
+* 来电恢复策略默认AlwaysOn，只在已识别AC上电时应用；单独BMC重启保留Host当前状态。未知复位来源不授权自动主机上电。AC恢复策略触发的自动开机等待Power Good最多60秒（`ACRestorePowerOKWatchdogMs=60000`）；普通开机和电源循环仍使用8秒（`PowerOKWatchdogMs=8000`）。超时仍记录上电失败。
+* PSU“预测故障”（`PredictiveFailure`）须连续有效采样保持10秒，且复查仍告警后才更新健康状态和记录事件；恢复、读取失败或供电状态不适用时取消待确认告警。已确认告警恢复时立即解除。严重故障、风扇故障及AC丢失事件不使用此延迟。整机AC断电后若BMC在确认前掉电，则不会记录待确认的预测故障；余电持续超过10秒时仍可能记录。
 * BMC重启原因结合bootstatus与干净关机标记识别；正常shutdown/reboot不因ASPEED watchdog复位机制被直接当作异常watchdog。异常watchdog写入SEL；BMC Ready/正常状态变化按信息级别记录。
 * `ceb-gnrd-health` 为ObjectMapper、EntityManager、bmcweb和ipmid设置Restart/启动限制及OnFailure=Quiesce；本层fan-settings、temp-max、alert-led、boot-progress仅自动重启，不因单次服务失败直接Quiesce。Quiesced自动BMC重启限制为1次，计数保存在RWFS，正常运行15分钟后清零；持久故障留待人工处理。上游未报活的服务不能靠WatchdogSec检测卡死，本层notify服务按各自主循环报活。
 * POST捕获来自port0x80。`phosphor-post-code-manager_%.bbappend` 设置max-boot-cycle-count=1、每轮512条。Host重启边界清理上一轮；服务/BMC重启恢复当前轮；`ceb-gnrd-post-history-limit.py` 检查并迁移历史/元数据。

@@ -18,6 +18,7 @@ SRC_URI:append:ceb-gnrd = " \
     file://0011-guard-optional-mode-and-intrusion-discovery.patch \
     file://0012-psu-recover-cleared-grouped-alarms.patch \
     file://0013-ceb-gnrd-consume-auto-selected-crps-driver.patch \
+    file://0014-ceb-gnrd-confirm-psu-predictive-failure.patch \
     "
 
 PACKAGECONFIG:append:ceb-gnrd = " \
