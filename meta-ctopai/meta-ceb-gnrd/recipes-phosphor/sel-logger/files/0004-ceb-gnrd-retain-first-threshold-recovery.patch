@@ -1,0 +1,86 @@
+Subject: [PATCH] sel: retain threshold recovery after logger restart
+
+Use an unknown/asserted/deasserted cache rather than treating a missing
+process-local assertion as proof that a recovery is invalid. The first
+transition received after startup is logged in either direction; later
+identical states are deduplicated. Sensor producers already emit changes.
+Only advance the cache after metadata lookup and record submission.
+Applies to the board's private non-recoverable thresholds as well.
+
+Upstream-Status: Pending
+
+--- a/include/threshold_event_monitor.hpp
++++ b/include/threshold_event_monitor.hpp
+@@ -16,7 +16,6 @@
+ 
+ #pragma once
+ #include <boost/container/flat_map.hpp>
+-#include <boost/container/flat_set.hpp>
+ #include <sdbusplus/bus/match.hpp>
+ #include <sel_logger.hpp>
+ #include <sensorutils.hpp>
+@@ -41,10 +40,11 @@
+     std::shared_ptr<sdbusplus::asio::connection> conn)
+ {
+     auto thresholdAssertMatcherCallback = [conn](sdbusplus::message_t& msg) {
+-        // This static set of std::pair<path, event> tracks asserted events to
+-        // avoid duplicate logs or deasserts logged without an assert
+-        static boost::container::flat_set<std::pair<std::string, std::string>>
+-            assertedEvents;
++        // No cached state means unknown, not deasserted. A sensor may have
++        // asserted before this logger started, so its first recovery signal
++        // must still reach SEL/Redfish. Suppress only repeated known states.
++        static boost::container::flat_map<
++            std::pair<std::string, std::string>, bool> lastEventStates;
+         std::vector<uint8_t> eventData(selEvtDataMaxSize,
+                                        selEvtDataUnspecified);
+ 
+@@ -69,24 +69,10 @@
+         // Check the asserted events to determine if we should log this event
+         std::pair<std::string, std::string> pathAndEvent(
+             std::string(msg.get_path()), event);
+-        if (assert)
+-        {
+-            // For asserts, add the event to the set and only log it if it's new
+-            if (assertedEvents.insert(pathAndEvent).second == false)
+-            {
+-                // event is already in the set
+-                return;
+-            }
+-        }
+-        else
+-        {
+-            // For deasserts, remove the event and only log the deassert if it
+-            // was asserted
+-            if (assertedEvents.erase(pathAndEvent) == 0)
+-            {
+-                // asserted event was not in the set
+-                return;
+-            }
++        const auto previous = lastEventStates.find(pathAndEvent);
++        if (previous != lastEventStates.end() && previous->second == assert)
++        {
++            return;
+         }
+ 
+         // Set the IPMI threshold event type based on the event details from the
+@@ -327,12 +313,18 @@
+             conn->call(AddToLog);
+         }
+ #else
+-        selAddSystemRecord(
++        const auto recordId = selAddSystemRecord(
+             conn, journalMsg, std::string(msg.get_path()), eventData, assert,
+             selBMCGenID, "REDFISH_MESSAGE_ID=%s", redfishMessageID.c_str(),
+             "REDFISH_MESSAGE_ARGS=%.*s,%f,%f", sensorName.length(),
+             sensorName.data(), assertValue, thresholdVal);
++        if (recordId == selInvalidRecID)
++        {
++            return;
++        }
+ #endif
++        // Metadata lookup failures must not suppress a later valid signal.
++        lastEventStates[pathAndEvent] = assert;
+     };
+     sdbusplus::match thresholdAssertMatcher(
+         static_cast<sdbusplus::bus_t&>(*conn),

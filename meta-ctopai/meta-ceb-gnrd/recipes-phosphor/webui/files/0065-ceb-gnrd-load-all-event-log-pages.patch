@@ -1,0 +1,133 @@
+Subject: [PATCH] event-log: load all pages before publishing the collection
+
+Follow Members@odata.nextLink so records after the first 1000 entries are
+available to the event page, health summary and export. Keep the previous
+complete list if any page fails, deduplicate boundary entries and reject
+pagination loops. A newer load invalidates older in-flight traversals.
+
+Upstream-Status: Inappropriate [CEB-GNRD event log integration]
+
+--- a/src/store/modules/Logs/EventLogStore.js
++++ b/src/store/modules/Logs/EventLogStore.js
+@@ -27,6 +27,7 @@
+   state: {
+     allEvents: [],
+     loadedEvents: false,
++    loadSequence: 0,
+   },
+   getters: {
+     allEvents: (state) => state.allEvents,
+@@ -35,48 +36,76 @@
+       getHealthStatus(state.allEvents, state.loadedEvents),
+   },
+   mutations: {
++    beginLoad: (state) => {
++      state.loadSequence += 1;
++    },
+     setAllEvents: (state, allEvents) => (
+       (state.allEvents = allEvents), (state.loadedEvents = true)
+     ),
+   },
+   actions: {
+-    async getEventLogData({ commit }) {
+-      return await api
+-        .get(
+-          `${await this.dispatch('global/getSystemPath')}/LogServices/EventLog/Entries`,
+-        )
+-        .then(({ data: { Members = [] } = {} }) => {
+-          const eventLogs = Members.map((log) => {
+-            const {
+-              Id,
+-              Severity,
+-              Created,
+-              EntryType,
+-              Message,
+-              Name,
+-              Modified,
+-              Resolved,
+-              AdditionalDataURI,
+-            } = log;
+-            return {
+-              id: Id,
+-              severity: Severity,
+-              date: new Date(Created),
+-              type: EntryType,
+-              description: Message,
+-              name: Name,
+-              modifiedDate: new Date(Modified),
+-              uri: log['@odata.id'],
+-              filterByStatus: Resolved ? 'Resolved' : 'Unresolved',
+-              status: Resolved, //true or false
+-              additionalDataUri: AdditionalDataURI,
+-            };
+-          });
+-          commit('setAllEvents', eventLogs);
+-        })
+-        .catch((error) => {
+-          console.log('Event Log Data:', error);
+-        });
++    async getEventLogData({ commit, state }) {
++      commit('beginLoad');
++      const sequence = state.loadSequence;
++      try {
++        const systemPath = await this.dispatch('global/getSystemPath');
++        let next = `${systemPath}/LogServices/EventLog/Entries`;
++        const visited = new Set();
++        const members = new Map();
++        while (next) {
++          if (sequence !== state.loadSequence) return;
++          if (visited.has(next)) {
++            throw new Error('Event log pagination repeated a page');
++          }
++          visited.add(next);
++          const { data } = await api.get(next);
++          if (sequence !== state.loadSequence) return;
++          if (!Array.isArray(data?.Members)) {
++            throw new Error('Event log page has no Members array');
++          }
++          for (const log of data.Members) {
++            const key = log['@odata.id'] || log.Id;
++            if (!key) throw new Error('Event log entry has no identity');
++            // Rotation or deletion between pages can repeat a boundary entry.
++            members.set(key, log);
++          }
++          next = data['Members@odata.nextLink'];
++          if (next != null && typeof next !== 'string') {
++            throw new Error('Event log page has an invalid next link');
++          }
++        }
++        const eventLogs = Array.from(members.values(), (log) => {
++          const {
++            Id,
++            Severity,
++            Created,
++            EntryType,
++            Message,
++            Name,
++            Modified,
++            Resolved,
++            AdditionalDataURI,
++          } = log;
++          return {
++            id: Id,
++            severity: Severity,
++            date: new Date(Created),
++            type: EntryType,
++            description: Message,
++            name: Name,
++            modifiedDate: new Date(Modified),
++            uri: log['@odata.id'],
++            filterByStatus: Resolved ? 'Resolved' : 'Unresolved',
++            status: Resolved, //true or false
++            additionalDataUri: AdditionalDataURI,
++          };
++        });
++        // Publish only a complete traversal from the newest request. A later
++        // page failure must not replace the last complete list with a prefix.
++        if (sequence === state.loadSequence) commit('setAllEvents', eventLogs);
++      } catch (error) {
++        if (sequence === state.loadSequence) console.log('Event Log Data:', error);
++      }
+     },
+     async deleteAllEventLogs({ dispatch }, data) {
+       return await api

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "reference": {
     "title": "AMI Aptio V BIOS POST Codes for Supermicro Motherboards",
     "revision": "1.0b",
@@ -8,7 +8,7 @@
     "aptioDate": "2024-04-20",
     "pages": "7-12",
     "updateDocument": "ami-aptio-v-post-codes.md",
-    "updateDate": "2026-10-12",
+    "updateDate": "2026-10-19",
     "url": "https://www.supermicro.com/manuals/other/AMI_AptioV_BIOS_POST_Codes_for_SM_Motherboards.pdf",
     "contextSources": [
       {
@@ -20,6 +20,23 @@
         "title": "Intel support article 000055207",
         "url": "https://www.intel.com/content/www/us/en/support/articles/000055207/server-products/server-boards.html",
         "scope": "E8 memory-not-detected example for S2600WFT only"
+      },
+      {
+        "title": "Granite Rapids-D Processor BIOS Writer's Guide",
+        "document": "762471",
+        "revision": "0.9",
+        "date": "2025-02",
+        "pages": "36-39",
+        "scope": "Port 80h routing and 0x80-0x83 decode; not a checkpoint value table"
+      },
+      {
+        "title": "CEB-GNRD BIOS source definitions supplied by project",
+        "date": "2026-10-19",
+        "scope": "Six supplied symbol/value definitions; BIOS, RC and BKC revisions were not provided",
+        "paths": [
+          "Intel/ServerPlatformPkg/Library/PlatformPostCodeMapLib/PlatformPostCodeMapLib.c",
+          "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h"
+        ]
       }
     ]
   },
@@ -1740,6 +1757,18 @@
     "unresolved": {
       "en": "Source undetermined",
       "zh": "来源未确定"
+    },
+    "gnrdDefinition": {
+      "en": "Project BIOS source reference",
+      "zh": "项目 BIOS 源码参考"
+    },
+    "sequenceUnresolved": {
+      "en": "Boot phase not established from the available sequence",
+      "zh": "现有序列尚未确定启动阶段"
+    },
+    "earlyExitConflict": {
+      "en": "Early sequence: do not interpret this byte as a confirmed ExitBootServices transition",
+      "zh": "当前为早期序列，不能据此认定已执行 ExitBootServices"
     }
   },
   "intelMemory": {
@@ -1792,17 +1821,29 @@
       "en": "Configuring the DDR memory map"
     },
     "BC": {
-      "zh": "配置 RAS",
-      "en": "Configuring memory RAS"
+      "en": "Configure memory RAS (reliability, availability and serviceability)",
+      "zh": "配置内存 RAS（可靠性、可用性与可维护性）"
     },
     "BF": {
-      "zh": "MRC 完成",
-      "en": "MRC completed"
+      "en": "MRC start/stop checkpoint; the byte alone does not distinguish start from stop",
+      "zh": "MRC 开始/结束检查点；单个码无法区分开始或结束"
+    },
+    "7E": {
+      "en": "Memory initialization pipeline synchronization",
+      "zh": "内存初始化流水线同步"
+    },
+    "C6": {
+      "en": "DIMM information processing",
+      "zh": "DIMM 信息处理"
+    },
+    "CE": {
+      "en": "Late memory initialization",
+      "zh": "内存初始化后期"
     }
   },
   "readingGuidance": {
-    "zh": "按同一启动轮次的接收顺序解读。通过 4F/60、90、AD、AF/AE 跟踪阶段，早期 AA/AF 不表示已进入 OS。Intel RC 参考含义不是 GNR-D 项目码表；未匹配的子码保留为未匹配。",
-    "en": "Read in receive order within each boot cycle. Track phases using 4F/60, 90, AD and AF/AE; early AA/AF do not indicate OS entry. Intel RC reference meanings are not the GNR-D project code table. Unmatched subcodes remain unmatched."
+    "zh": "按同一启动轮次的接收顺序解读；优先显示项目提供的源码定义，其他 Intel RC 含义仍为跨平台参考。BF 表示 MRC 开始/结束，AF 是 ExitBootServices 检查点，两者均不能单独证明启动成功。Port 80h 是 I/O 地址，不是代码 0x80 的含义；当前仅采集该端口，不能据一个字节还原完整的多字节 FSP 码。",
+    "en": "Interpret receive order within each boot cycle. Project-supplied source definitions take priority; other Intel RC meanings remain cross-platform references. BF is an MRC start/stop checkpoint and AF is ExitBootServices; neither alone proves successful boot. Port 80h is an I/O address, not a definition of code 0x80. Only that port is captured; one byte cannot reconstruct a full multibyte FSP code."
   },
   "sequenceRules": {
     "earlyAmiProgress": [
@@ -1833,5 +1874,79 @@
       "AE",
       "AF"
     ]
+  },
+  "gnrdCodes": {
+    "7E": {
+      "phase": "Intel MRC",
+      "kind": "checkpoint",
+      "symbol": "CHECKPOINT_MAJOR_PIPE_SYNC",
+      "description": {
+        "en": "Memory initialization pipeline synchronization",
+        "zh": "内存初始化流水线同步"
+      },
+      "sourcePath": "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h",
+      "basis": "project-supplied-source-definition",
+      "versionScope": "BIOS/RC/BKC revision not supplied"
+    },
+    "AF": {
+      "phase": "UEFI",
+      "kind": "checkpoint",
+      "symbol": "DXE_EXIT_BOOT_SERVICES",
+      "description": {
+        "en": "ExitBootServices checkpoint; does not prove the operating system has started successfully",
+        "zh": "退出 UEFI 引导服务检查点；不代表操作系统已成功启动"
+      },
+      "sourcePath": "Intel/ServerPlatformPkg/Library/PlatformPostCodeMapLib/PlatformPostCodeMapLib.c",
+      "basis": "project-supplied-source-definition",
+      "versionScope": "BIOS/RC/BKC revision not supplied"
+    },
+    "BC": {
+      "phase": "Intel MRC",
+      "kind": "checkpoint",
+      "symbol": "CHECKPOINT_MAJOR_RAS_CONFIG",
+      "description": {
+        "en": "Configure memory RAS (reliability, availability and serviceability)",
+        "zh": "配置内存 RAS（可靠性、可用性与可维护性）"
+      },
+      "sourcePath": "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h",
+      "basis": "project-supplied-source-definition",
+      "versionScope": "BIOS/RC/BKC revision not supplied"
+    },
+    "BF": {
+      "phase": "Intel MRC",
+      "kind": "checkpoint",
+      "symbol": "CHECKPOINT_MAJOR_MRC_START_STOP",
+      "description": {
+        "en": "MRC start/stop checkpoint; the byte alone does not distinguish start from stop",
+        "zh": "MRC 开始/结束检查点；单个码无法区分开始或结束"
+      },
+      "sourcePath": "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h",
+      "basis": "project-supplied-source-definition",
+      "versionScope": "BIOS/RC/BKC revision not supplied"
+    },
+    "C6": {
+      "phase": "Intel MRC",
+      "kind": "checkpoint",
+      "symbol": "CHECKPOINT_MAJOR_DIMM_INFO",
+      "description": {
+        "en": "DIMM information processing",
+        "zh": "DIMM 信息处理"
+      },
+      "sourcePath": "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h",
+      "basis": "project-supplied-source-definition",
+      "versionScope": "BIOS/RC/BKC revision not supplied"
+    },
+    "CE": {
+      "phase": "Intel MRC",
+      "kind": "checkpoint",
+      "symbol": "CHECKPOINT_MAJOR_MEM_LATE",
+      "description": {
+        "en": "Late memory initialization",
+        "zh": "内存初始化后期"
+      },
+      "sourcePath": "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h",
+      "basis": "project-supplied-source-definition",
+      "versionScope": "BIOS/RC/BKC revision not supplied"
+    }
   }
 }

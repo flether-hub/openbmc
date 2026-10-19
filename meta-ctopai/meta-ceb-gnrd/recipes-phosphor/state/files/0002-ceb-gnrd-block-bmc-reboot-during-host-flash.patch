@@ -12,11 +12,12 @@ Upstream-Status: Inappropriate [CEB-GNRD update policy]
 diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
 --- a/bmc_state_manager.cpp
 +++ b/bmc_state_manager.cpp
-@@ -18,12 +18,60 @@
+@@ -18,12 +18,62 @@
  #include <filesystem>
  #include <fstream>
  #include <iostream>
 +#include <fcntl.h>
++#include <cerrno>
 +#include <memory>
 +#include <string>
 +#include <sys/file.h>
@@ -45,7 +46,8 @@ diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
 +        {
 +            throw sdbusplus::xyz::openbmc_project::Common::Error::Unavailable();
 +        }
-+        if (flock(fd, LOCK_SH | LOCK_NB) != 0)
++        if (flock(fd, LOCK_SH | LOCK_NB) != 0 ||
++            access("/run/ceb-gnrd-bios-flash-held", F_OK) == 0 || errno != ENOENT)
 +        {
 +            close(fd);
 +            fd = -1;
@@ -73,7 +75,7 @@ diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
  
  // When you see server:: you know we're referencing our base class
  namespace server = sdbusplus::server::xyz::openbmc_project::state;
-@@ -148,9 +196,6 @@
+@@ -148,9 +198,6 @@
          // This signals external Redfish clients to cease communication.
          // To avoid generating event logs which are intended for the
          // BMC startup process, call the sdbusplus class directly.
@@ -83,7 +85,7 @@ diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
  
          auto method =
              this->bus.new_method_call(SYSTEMD_SERVICE, SYSTEMD_OBJ_PATH,
-@@ -162,7 +207,13 @@
+@@ -162,7 +209,13 @@
          catch (const sdbusplus::exception_t& e)
          {
              info("Error in HardReboot: {ERROR}", "ERROR", e);
@@ -98,7 +100,7 @@ diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
      }
      else
      {
-@@ -188,19 +239,30 @@
+@@ -188,19 +241,30 @@
          // This signals external Redfish clients to cease communication.
          // To avoid generating event logs which are intended for the
          // BMC startup process, call the sdbusplus class directly.
@@ -140,7 +142,7 @@ diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
      }
      return;
  }
-@@ -214,6 +276,24 @@
+@@ -214,6 +278,24 @@
  
      // Read the msg and populate each variable
      msg.read(newStateID, newStateObjPath, newStateUnit, newStateResult);
@@ -165,7 +167,7 @@ diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
  
      if ((newStateUnit == obmcQuiesceTarget) && (newStateResult == signalDone) &&
          (getUnitState(newStateUnit) == activeState))
-@@ -253,7 +333,34 @@
+@@ -253,7 +335,34 @@
          }
      }
  

@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-CHECK_REVISION = '20261010-journal-ram-ncsi-manual'
+CHECK_REVISION = '20261019-power-gated-sensor-checks'
 OUT = Path('/tmp/ceb-gnrd-check')
 FILE_LIMIT = 256 * 1024
 REPORT_LIMIT = 2 * 1024 * 1024
@@ -340,7 +340,7 @@ def ipmi_sensors_fans():
             kind = item.get('Type')
             name = item.get('Name')
             if kind in ('ADC', 'LM75A', 'AspeedFan') and name:
-                expected[name] = item.get('PowerState') == 'ChassisOn'
+                expected[name] = item.get('PowerState') in ('On', 'ChassisOn', 'BiosPost')
             elif kind in ('pmbus', 'MEGCRPS800'):
                 dev = Path(f'/sys/bus/i2c/devices/{item["Bus"]}-{int(item["Address"], 0):04x}')
                 if not (dev / 'driver').exists():
@@ -350,7 +350,10 @@ def ipmi_sensors_fans():
                 for key, label in item.items():
                     if key.endswith('_Name'):
                         expected[label] = False
-        expected.update({'SYS_FAN' + str(i): False for i in range(6)})
+        # Keep requiring all six fan SDRs even if configuration is incomplete,
+        # but do not override their host-power gating with an always-on check.
+        for i in range(6):
+            expected.setdefault('SYS_FAN' + str(i), True)
         for name, needs_host in expected.items():
             # IPMI SDR names are limited to 16 characters (e.g. PSU voltages).
             rows = [line for line in text.splitlines() if line.split('|')[0].strip() == name[:16]]

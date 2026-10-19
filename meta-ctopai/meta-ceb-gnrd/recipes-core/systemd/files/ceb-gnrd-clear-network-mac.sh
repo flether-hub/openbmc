@@ -5,8 +5,13 @@
 # Migrate managed physical NIC matches to the board's verified udev ID_PATH.
 set -eu
 
+candidate=
 pending=
-trap 'if [ -n "$pending" ]; then rm -f "$pending"; fi' EXIT
+cleanup() {
+    if [ -n "$candidate" ]; then rm -f "$candidate"; fi
+    if [ -n "$pending" ]; then rm -f "$pending"; fi
+}
+trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 for config in /etc/systemd/network/00-bmc-eth0.network \
@@ -21,8 +26,11 @@ for config in /etc/systemd/network/00-bmc-eth0.network \
             hardware_path=platform-1e670000.ethernet
             ;;
     esac
-    pending=$(mktemp "${config}.XXXXXX")
-    cp -p "$config" "$pending"
+    # /run is RAM-backed: an already migrated configuration must not need
+    # writable space on rwfs just to start or restart the network service.
+    if [ -z "$candidate" ]; then
+        candidate=$(mktemp /run/ceb-gnrd-network-migration.XXXXXX)
+    fi
     awk -v ncsi="$ncsi" -v hardware_path="$hardware_path" '
         function finish_match() {
             if (match_section) print "Path=" hardware_path
@@ -55,12 +63,17 @@ for config in /etc/systemd/network/00-bmc-eth0.network \
             if (!seen_match) print "\n[Match]\nPath=" hardware_path
             if (ncsi && !seen_link) print "\n[Link]\nActivationPolicy=manual"
         }
-    ' "$config" > "$pending"
-    if cmp -s "$pending" "$config"; then
-        rm -f "$pending"
-        pending=
+    ' "$config" > "$candidate"
+    if cmp -s "$candidate" "$config"; then
         continue
     fi
+    # A required migration must succeed before networkd starts, especially
+    # when an old NC-SI policy would raise the interface before host POST.
+    # Stage beside the destination for an atomic rename and preserve its
+    # ownership and permissions. A failed copy/write leaves it untouched.
+    pending=$(mktemp "${config}.XXXXXX")
+    cp -p "$config" "$pending"
+    cat "$candidate" > "$pending"
     mv -f "$pending" "$config"
     pending=
     echo "CEB-GNRD: repaired hardware match / boot MAC / NC-SI activation policy in $config"

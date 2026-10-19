@@ -14,9 +14,14 @@ FLASH_OWNERSHIP_SELECTED=0
 REBOOT_GUARD_HELD=0
 BIOS_SPI_DEVICE=""
 readonly BIOS_SPI_COMPATIBLE="ctopai,ceb-gnrd-host-bios"
+readonly OWNERSHIP_MARKER=/run/ceb-gnrd-bios-flash-held
+readonly OWNER_SERVICE=ceb-gnrd-bios-flash-owner.service
+RECOVER_ONLY=0
 
-if [[ $# -ne 1 || ! -d "$1" ]]; then
-    echo "Usage: $0 <directory-containing-BIOS-image>" >&2
+if [[ $# -eq 1 && "$1" == --recover-ownership ]]; then
+    RECOVER_ONLY=1
+elif [[ $# -ne 1 || ! -d "$1" ]]; then
+    echo "Usage: $0 <directory-containing-BIOS-image> | --recover-ownership" >&2
     exit 2
 fi
 
@@ -41,6 +46,14 @@ if [[ -e /run/initramfs/bmc-partitions.txt ||
       -e /run/initramfs/ceb-gnrd-update-incomplete ]]; then
     echo "ERROR: BMC firmware update is staged; restart the BMC before updating BIOS." >&2
     exit 1
+fi
+if [[ -e "$OWNERSHIP_MARKER" && "$RECOVER_ONLY" == 0 ]]; then
+    echo "ERROR: BIOS ownership recovery required: bios-update.sh --recover-ownership" >&2
+    exit 1
+fi
+if [[ "$RECOVER_ONLY" == 1 && ! -d "$OWNERSHIP_MARKER" ]]; then
+    echo "No pending BIOS ownership recovery."
+    exit 0
 fi
 
 # Progress for the web page: the image directory is /tmp/images/<version id>, and the
@@ -141,71 +154,73 @@ wait_for_host_off() {
     return 1
 }
 
-IMAGE_FILE=$(find "$1" -type f \( -iname '*.fd' -o -iname '*.bin' \) -print -quit)
-if [[ -z "$IMAGE_FILE" ]]; then
-    echo "ERROR: BIOS image (.FD/.BIN) not found in $1" >&2
-    exit 1
-fi
-if (( $(stat -c %s "$IMAGE_FILE") != EXPECTED_FLASH_SIZE )); then
-    echo "ERROR: $IMAGE_FILE is $(stat -c %s "$IMAGE_FILE") bytes; a full $EXPECTED_FLASH_SIZE-byte flash image is required." >&2
-    exit 1
-fi
-
-# Flash regions.  The layout of the board's BIOS flash is fixed (flashrom format,
-# "start:end name", hex): /usr/share/ceb-gnrd/bios-layout.txt.  The regions to
-# write come from bios-regions.txt in the package (one name per line, added by the
-# web firmware page); without it every region except nac0/nac1 is written.
-# nac0/nac1 hold the configuration of the CPU's integrated network controller,
-# including its MAC addresses, which a full image would overwrite.  Regions not
-# selected keep their current content.
-readonly LAYOUT_FILE=/usr/share/ceb-gnrd/bios-layout.txt
-readonly DEFAULT_SKIPPED_REGIONS="nac0 nac1"
-if [[ ! -r "$LAYOUT_FILE" ]]; then
-    echo "ERROR: BIOS flash layout $LAYOUT_FILE not found." >&2
-    exit 1
-fi
-LAYOUT_REGIONS=()
-while read -r range name _; do
-    [[ -z "${range:-}" || "$range" == \#* ]] && continue
-    start=-1; end=-1
-    if [[ "$range" =~ ^([0-9a-fA-F]+):([0-9a-fA-F]+)$ ]]; then
-        start=$(( 16#${BASH_REMATCH[1]} )); end=$(( 16#${BASH_REMATCH[2]} ))
-    fi
-    if (( start < 0 || start > end || end >= EXPECTED_FLASH_SIZE )) ||
-        [[ ! "${name:-}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-        echo "ERROR: bad line in $LAYOUT_FILE: $range ${name:-}" >&2
+if (( ! RECOVER_ONLY )); then
+    IMAGE_FILE=$(find "$1" -type f \( -iname '*.fd' -o -iname '*.bin' \) -print -quit)
+    if [[ -z "$IMAGE_FILE" ]]; then
+        echo "ERROR: BIOS image (.FD/.BIN) not found in $1" >&2
         exit 1
     fi
-    LAYOUT_REGIONS+=("$name")
-done < "$LAYOUT_FILE"
-if (( ${#LAYOUT_REGIONS[@]} == 0 )); then
-    echo "ERROR: $LAYOUT_FILE lists no regions." >&2
-    exit 1
-fi
-SELECTED_REGIONS=()
-if [[ -f "$1/bios-regions.txt" ]]; then
-    while read -r name _; do
-        [[ -z "${name:-}" || "$name" == \#* ]] && continue
-        if [[ " ${LAYOUT_REGIONS[*]} " != *" $name "* ]]; then
-            echo "ERROR: region '$name' in bios-regions.txt is not in $LAYOUT_FILE" >&2
+    if (( $(stat -c %s "$IMAGE_FILE") != EXPECTED_FLASH_SIZE )); then
+        echo "ERROR: $IMAGE_FILE is $(stat -c %s "$IMAGE_FILE") bytes; a full $EXPECTED_FLASH_SIZE-byte flash image is required." >&2
+        exit 1
+    fi
+
+    # Flash regions.  The layout of the board's BIOS flash is fixed (flashrom format,
+    # "start:end name", hex): /usr/share/ceb-gnrd/bios-layout.txt.  The regions to
+    # write come from bios-regions.txt in the package (one name per line, added by the
+    # web firmware page); without it every region except nac0/nac1 is written.
+    # nac0/nac1 hold the configuration of the CPU's integrated network controller,
+    # including its MAC addresses, which a full image would overwrite.  Regions not
+    # selected keep their current content.
+    readonly LAYOUT_FILE=/usr/share/ceb-gnrd/bios-layout.txt
+    readonly DEFAULT_SKIPPED_REGIONS="nac0 nac1"
+    if [[ ! -r "$LAYOUT_FILE" ]]; then
+        echo "ERROR: BIOS flash layout $LAYOUT_FILE not found." >&2
+        exit 1
+    fi
+    LAYOUT_REGIONS=()
+    while read -r range name _; do
+        [[ -z "${range:-}" || "$range" == \#* ]] && continue
+        start=-1; end=-1
+        if [[ "$range" =~ ^([0-9a-fA-F]+):([0-9a-fA-F]+)$ ]]; then
+            start=$(( 16#${BASH_REMATCH[1]} )); end=$(( 16#${BASH_REMATCH[2]} ))
+        fi
+        if (( start < 0 || start > end || end >= EXPECTED_FLASH_SIZE )) ||
+            [[ ! "${name:-}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "ERROR: bad line in $LAYOUT_FILE: $range ${name:-}" >&2
             exit 1
         fi
-        SELECTED_REGIONS+=("$name")
-    done < "$1/bios-regions.txt"
-else
+        LAYOUT_REGIONS+=("$name")
+    done < "$LAYOUT_FILE"
+    if (( ${#LAYOUT_REGIONS[@]} == 0 )); then
+        echo "ERROR: $LAYOUT_FILE lists no regions." >&2
+        exit 1
+    fi
+    SELECTED_REGIONS=()
+    if [[ -f "$1/bios-regions.txt" ]]; then
+        while read -r name _; do
+            [[ -z "${name:-}" || "$name" == \#* ]] && continue
+            if [[ " ${LAYOUT_REGIONS[*]} " != *" $name "* ]]; then
+                echo "ERROR: region '$name' in bios-regions.txt is not in $LAYOUT_FILE" >&2
+                exit 1
+            fi
+            SELECTED_REGIONS+=("$name")
+        done < "$1/bios-regions.txt"
+    else
+        for name in "${LAYOUT_REGIONS[@]}"; do
+            [[ " $DEFAULT_SKIPPED_REGIONS " == *" $name "* ]] || SELECTED_REGIONS+=("$name")
+        done
+    fi
+    if (( ${#SELECTED_REGIONS[@]} == 0 )); then
+        echo "ERROR: no BIOS flash region selected." >&2
+        exit 1
+    fi
+    echo "BIOS flash layout: $LAYOUT_FILE (${LAYOUT_REGIONS[*]})"
+    echo "Regions to write: ${SELECTED_REGIONS[*]}"
     for name in "${LAYOUT_REGIONS[@]}"; do
-        [[ " $DEFAULT_SKIPPED_REGIONS " == *" $name "* ]] || SELECTED_REGIONS+=("$name")
+        [[ " ${SELECTED_REGIONS[*]} " == *" $name "* ]] || echo "Region kept unchanged: $name"
     done
 fi
-if (( ${#SELECTED_REGIONS[@]} == 0 )); then
-    echo "ERROR: no BIOS flash region selected." >&2
-    exit 1
-fi
-echo "BIOS flash layout: $LAYOUT_FILE (${LAYOUT_REGIONS[*]})"
-echo "Regions to write: ${SELECTED_REGIONS[*]}"
-for name in "${LAYOUT_REGIONS[@]}"; do
-    [[ " ${SELECTED_REGIONS[*]} " == *" $name "* ]] || echo "Region kept unchanged: $name"
-done
 
 # Power-control rejects software On/Reset/Cycle requests while this lock is
 # held. Acquire before checking Off so no new request races flash selection.
@@ -236,14 +251,9 @@ find_bios_mtd() {
     return 1
 }
 
-reprobe_bios_spi_nor() {
-    local driver_dir=/sys/bus/spi/drivers/spi-nor
+find_bios_spi_device() {
     local device
     local matches=()
-    [[ -w "$driver_dir/bind" ]] || {
-        echo "ERROR: SPI-NOR driver binding is unavailable." >&2
-        return 1
-    }
     # This board-only compatible has no automatic driver match. Never touch
     # another SPI device, particularly the BMC's own FMC boot flash.
     for device in /sys/bus/spi/devices/spi*; do
@@ -256,6 +266,12 @@ reprobe_bios_spi_nor() {
         return 1
     }
     BIOS_SPI_DEVICE=${matches[0]}
+}
+
+reprobe_bios_spi_nor() {
+    local driver_dir=/sys/bus/spi/drivers/spi-nor
+    [[ -w "$driver_dir/bind" ]] || return 1
+    find_bios_spi_device || return 1
     [[ ! -e "$BIOS_SPI_DEVICE/driver" ]] || {
         echo "ERROR: BIOS SPI device is already bound; refusing concurrent access." >&2
         return 1
@@ -266,7 +282,11 @@ reprobe_bios_spi_nor() {
 }
 
 release_bios_spi_nor() {
-    [[ -n "$BIOS_SPI_DEVICE" ]] || return 0
+    # Recovery may follow a killed updater, or discovery itself may have
+    # failed. Unknown binding state is not permission to hand back the chip.
+    if [[ -z "$BIOS_SPI_DEVICE" ]]; then
+        find_bios_spi_device || return 1
+    fi
     if [[ -e "$BIOS_SPI_DEVICE/driver" ]]; then
         [[ "$(readlink -f "$BIOS_SPI_DEVICE/driver")" == /sys/bus/spi/drivers/spi-nor ]] || {
             echo "ERROR: BIOS SPI device has an unexpected driver." >&2
@@ -274,6 +294,7 @@ release_bios_spi_nor() {
         }
         # Remove MTD access before handing the shared chip back to the CPU.
         printf '%s' "${BIOS_SPI_DEVICE##*/}" > /sys/bus/spi/drivers/spi-nor/unbind || return 1
+        [[ ! -e "$BIOS_SPI_DEVICE/driver" ]] || return 1
     fi
     printf '\n' > "$BIOS_SPI_DEVICE/driver_override" || return 1
     BIOS_SPI_DEVICE=""
@@ -294,13 +315,34 @@ set_flash_select() {
     # Board GPIO table: high selects BMC ownership; low returns flash to BIOS.
     gpioset --mode=signal "$gpiochip" "${line}=${level}" &
     FLASH_SELECT_PID=$!
-    FLASH_OWNERSHIP_SELECTED=$level
     sleep 1
     if ! kill -0 "$FLASH_SELECT_PID" 2>/dev/null; then
         echo "ERROR: Failed to hold $FLASH_SELECT_GPIO at level $level" >&2
         FLASH_SELECT_PID=""
         return 1
     fi
+}
+
+return_flash_to_host() {
+    # Caller has already detached the SPI driver. Keep the marker/host lock
+    # across the GPIO handoff, including if stop or gpioset fails.
+    systemctl stop "$OWNER_SERVICE" || return 1
+    set_flash_select 0 || return 1
+    rmdir "$OWNERSHIP_MARKER" || return 1
+    FLASH_OWNERSHIP_SELECTED=0
+}
+
+retain_flash_fault() {
+    # Release any local low-level holder before restarting the independent
+    # high-level holder. The marker blocks On/Reset, BMC reboot and new jobs.
+    if [[ -n "$FLASH_SELECT_PID" ]]; then
+        kill "$FLASH_SELECT_PID" 2>/dev/null || true
+        wait "$FLASH_SELECT_PID" 2>/dev/null || true
+        FLASH_SELECT_PID=""
+    fi
+    systemctl start "$OWNER_SERVICE" ||
+        echo "ERROR: BIOS GPIO holder unavailable; ownership marker remains blocking power requests." >&2
+    echo "ERROR: BIOS ownership recovery required; keep Host off. Run bios-update.sh --recover-ownership after resolving SPI/GPIO errors." >&2
 }
 
 request_power_transition() {
@@ -321,15 +363,9 @@ cleanup() {
     local result=$?
     trap - EXIT
     if (( FLASH_OWNERSHIP_SELECTED )); then
-        if ! release_bios_spi_nor; then
-            echo "ERROR: Could not detach BIOS MTD; retaining BMC flash ownership. Host must remain off." >&2
-            # Keep the GPIO holder alive rather than handing an accessible
-            # MTD device to the CPU. Do not automatically power on the host.
+        if ! release_bios_spi_nor || ! return_flash_to_host; then
+            retain_flash_fault
             exit 1
-        fi
-        if ! set_flash_select 0; then
-            echo "ERROR: Could not restore BIOS flash ownership to the host." >&2
-            result=1
         fi
     fi
     if [[ -n "$FLASH_SELECT_PID" ]]; then
@@ -356,10 +392,28 @@ flock -s 6
 REBOOT_GUARD_HELD=1
 /usr/bin/obmc-flash-bmc rebootguardenable
 
+# This BIOS operation supersedes this boot's pending AC restore policy, even
+# if that timer expires after ownership has been released. A successful update
+# performs its own power cycle; ownership-only recovery must not boot an
+# unverified image. /run clears this decision at the next BMC boot.
+: > /run/ceb-gnrd-bios-power-managed
+
+if (( RECOVER_ONLY )); then
+    FLASH_OWNERSHIP_SELECTED=1
+    find_bios_spi_device
+    systemctl start "$OWNER_SERVICE"
+    release_bios_spi_nor
+    return_flash_to_host
+    echo "BIOS ownership recovered. Host remains off; image validity has not been checked."
+    exit 0
+fi
+
 echo "BIOS update started at $(date); host is confirmed off."
 echo "Selecting BMC ownership of BIOS flash via $FLASH_SELECT_GPIO"
 set_progress 25
-set_flash_select 1
+mkdir "$OWNERSHIP_MARKER"
+FLASH_OWNERSHIP_SELECTED=1
+systemctl start "$OWNER_SERVICE"
 sleep 5
 set_progress 28
 reprobe_bios_spi_nor
@@ -415,7 +469,7 @@ set_progress 88
 echo "BIOS flash completed; restoring BIOS ownership."
 set_progress 89
 release_bios_spi_nor
-set_flash_select 0
+return_flash_to_host
 sleep 1
 # Flash is detached and owned by the host again; permit the required power cycle.
 flock -u 7

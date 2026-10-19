@@ -35,6 +35,7 @@ WATCHDOG_LATCH_RETRY_SECONDS = 30
 BOOT_LATCH = os.path.join(STATE_DIR, "bios-boot-timeout")
 SENSOR_ALARM_CACHE = os.path.join(STATE_DIR, "sensor-alarms.json")
 BOOT_TIMEOUT_SECONDS = 600
+BOOT_LATCH_RETRY_SECONDS = 30
 
 MAPPER = "xyz.openbmc_project.ObjectMapper"
 MAPPER_PATH = "/xyz/openbmc_project/object_mapper"
@@ -488,12 +489,19 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     for handler in logging.getLogger().handlers:
         handler.setFormatter(JournalFormatter("%(levelname)s %(message)s"))
-    os.makedirs(STATE_DIR, exist_ok=True)
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+    except OSError as exc:
+        # A full /run must not prevent live alarms or reset the boot watchdog
+        # through repeated service startup failures. Latches retry below.
+        LOG.error("Unable to create alarm state directory; using memory state: %s", exc)
     load_sensor_alarms()
     threading.Thread(target=watchdog_monitor, daemon=True).start()
 
     boot_deadline = None
     boot_failed = os.path.exists(BOOT_LATCH)
+    boot_latch_saved = boot_failed
+    boot_latch_retry_at = 0.0
     watchdog_failed = os.path.exists(WATCHDOG_LATCH)
     watchdog_latch_saved = watchdog_failed
     if watchdog_failed:
@@ -537,6 +545,8 @@ def main():
                     else:
                         boot_failed = False
                     if not boot_failed:
+                        boot_latch_saved = False
+                        boot_latch_retry_at = 0.0
                         LOG.info("BIOS POST complete: boot timeout fault cleared")
             else:
                 # POST_COMPLETE drops on a warm reset while chassis power
@@ -547,9 +557,12 @@ def main():
                     LOG.info("BIOS boot watchdog started (%d seconds)", BOOT_TIMEOUT_SECONDS)
 
             if boot_deadline is not None and now >= boot_deadline:
-                with open(BOOT_LATCH, "w", encoding="ascii") as latch:
-                    latch.write("BIOS boot timeout\n")
+                # Latch in memory before touching storage. Failure to retain
+                # the marker must not skip SEL/LED handling or restart this
+                # process and grant another 600-second boot deadline.
                 boot_failed = True
+                boot_latch_saved = False
+                boot_latch_retry_at = 0.0
                 boot_deadline = None
                 LOG.error("BIOS did not assert BOOT_OK within %d seconds", BOOT_TIMEOUT_SECONDS)
                 sel_add(
@@ -557,6 +570,20 @@ def main():
                     % BOOT_TIMEOUT_SECONDS,
                     BIOS_FIRMWARE_SENSOR_TYPE, BIOS_HANG_SEL_DATA,
                 )
+
+        if boot_failed and not boot_latch_saved:
+            now = time.monotonic()
+            if now >= boot_latch_retry_at:
+                boot_latch_retry_at = now + BOOT_LATCH_RETRY_SECONDS
+                try:
+                    os.makedirs(STATE_DIR, exist_ok=True)
+                    with open(BOOT_LATCH, "w", encoding="ascii") as latch:
+                        latch.write("BIOS boot timeout\n")
+                except OSError as exc:
+                    LOG.warning("Unable to persist BIOS boot timeout latch; "
+                                "alarm remains active, retrying: %s", exc)
+                else:
+                    boot_latch_saved = True
 
         # Chassis intrusion: one SEL record (and, through sel-logger, one Redfish
         # event) when the sensor leaves Normal.  It does not light the alert LED.

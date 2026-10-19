@@ -1,0 +1,13 @@
+[Unit]
+Description=Hold BMC BIOS flash ownership until explicit release
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/sbin/ceb-gnrd-bios-flash-owner
+ExecStopPost=/usr/bin/obmc-flash-bmc rebootguarddisable
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+TimeoutStopSec=5

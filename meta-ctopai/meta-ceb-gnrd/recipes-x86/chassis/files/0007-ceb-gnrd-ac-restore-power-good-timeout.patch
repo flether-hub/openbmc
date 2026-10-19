@@ -15,7 +15,7 @@ Upstream-Status: Inappropriate [CEB-GNRD AC power sequencing]
 diff --git a/src/power_control.cpp b/src/power_control.cpp
 --- a/src/power_control.cpp
 +++ b/src/power_control.cpp
-@@ -156,6 +156,7 @@
+@@ -199,6 +199,7 @@
      {"PowerCycleMs", 5000},
      {"SioPowerGoodWatchdogMs", 1000},
      {"PowerOKWatchdogMs", 8000},
@@ -23,7 +23,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
      {"GracefulPowerOffS", (5 * 60)},
      {"WarmResetCheckMs", 500},
      {"PowerOffSaveMs", 7000},
-@@ -352,6 +353,7 @@
+@@ -395,6 +396,7 @@
      powerOKWatchdogTimerExpired,
      sioPowerGoodWatchdogTimerExpired,
      gracefulPowerOffTimerExpired,
@@ -31,7 +31,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
      powerOnRequest,
      powerOffRequest,
      powerCycleRequest,
-@@ -396,6 +398,8 @@
+@@ -439,6 +441,8 @@
              return "SIO power good watchdog timer expired";
          case Event::gracefulPowerOffTimerExpired:
              return "graceful power-off timer expired";
@@ -40,7 +40,48 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
          case Event::powerOnRequest:
              return "power-on request";
          case Event::powerOffRequest:
-@@ -1092,7 +1096,7 @@
+@@ -1130,6 +1134,40 @@
+     {
+         return;
+     }
++    // BIOS owns its post-update power cycle. Do not leave an older AC timer
++    // able to start an unverified image after ownership-only recovery.
++    if (access("/run/ceb-gnrd-bios-power-managed", F_OK) == 0 ||
++        access("/run/ceb-gnrd-bios-flash-held", F_OK) == 0)
++    {
++        policyInvoked = true;
++        lg2::info("AC restore cancelled: BIOS update/recovery owns subsequent host power actions");
++        return;
++    }
++    // Other internal restore events bypass the D-Bus setters. Hold the same
++    // lock through dispatch, retrying while a firmware job still blocks power.
++    std::unique_ptr<HostFirmwarePowerGuard> firmwareGuard;
++    if (powerRestorePolicy ==
++            "xyz.openbmc_project.Control.Power.RestorePolicy.Policy.AlwaysOn" ||
++        (powerRestorePolicy ==
++             "xyz.openbmc_project.Control.Power.RestorePolicy.Policy.Restore" &&
++         wasPowerDropped()))
++    {
++        try
++        {
++            firmwareGuard = std::make_unique<HostFirmwarePowerGuard>();
++        }
++        catch (const std::exception&)
++        {
++            powerRestoreTimer.expires_after(std::chrono::seconds(5));
++            powerRestoreTimer.async_wait([this](const boost::system::error_code ec) {
++                if (!ec)
++                {
++                    invoke();
++                }
++            });
++            return;
++        }
++    }
+     policyInvoked = true;
+ 
+     lg2::info("Invoking Power Restore Policy {POLICY}", "POLICY",
+@@ -1137,7 +1175,7 @@
      if (powerRestorePolicy ==
          "xyz.openbmc_project.Control.Power.RestorePolicy.Policy.AlwaysOn")
      {
@@ -49,7 +90,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
          setRestartCauseProperty(getRestartCause(RestartCause::powerPolicyOn));
      }
      else if (powerRestorePolicy ==
-@@ -1101,7 +1105,7 @@
+@@ -1146,7 +1184,7 @@
          if (wasPowerDropped())
          {
              lg2::info("Power was dropped, restoring Host On state");
@@ -58,7 +99,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
              setRestartCauseProperty(
                  getRestartCause(RestartCause::powerPolicyRestore));
          }
-@@ -1443,11 +1447,13 @@
+@@ -1488,11 +1526,13 @@
      });
  }
  
@@ -77,7 +118,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
      powerOKWatchdogTimer.async_wait([](const boost::system::error_code ec) {
          if (ec)
          {
-@@ -1817,8 +1823,11 @@
+@@ -1866,8 +1906,11 @@
              powerOKWatchdogTimerStart();
              setPowerState(PowerState::waitForPowerOK);
              break;

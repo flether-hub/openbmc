@@ -1,0 +1,341 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] power: resume pending AC restoration after daemon restart
+
+Keep pending, completed and cancelled policy state in /run for this kernel
+boot. Snapshot the pre-AC state, selected policy and boot-relative deadline
+so a daemon restart resumes only an unconsumed restore request. Completed
+policies, manual power actions and BIOS-managed power remain consumed.
+Retain the programming interlock when a pending restore is retried.
+
+Upstream-Status: Inappropriate [CEB-GNRD AC restore lifecycle]
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+index 7142567a02..a2f3d7e76c 100644
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -30,6 +30,7 @@
+ 
+ #include <boost/asio/io_context.hpp>
+ #include <boost/asio/posix/stream_descriptor.hpp>
++#include <boost/asio/post.hpp>
+ #include <boost/asio/steady_timer.hpp>
+ #include <boost/container/flat_map.hpp>
+ #include <boost/container/flat_set.hpp>
+@@ -40,6 +41,7 @@
+ #include <sdbusplus/asio/property.hpp>
+ 
+ #include <chrono>
++#include <cstdint>
+ #include <filesystem>
+ #include <fstream>
+ #include <optional>
+@@ -93,6 +95,41 @@ PowerRestoreController powerRestore(io);
+ static std::string node = "0";
+ static const std::string appName = "power-control";
+ 
++// /run survives this service restarting, but is fresh for each kernel boot.
++// Retain the original policy, boot-relative deadline and pre-AC power state.
++static std::filesystem::path acRestoreStatePath;
++static nlohmann::json acRestoreState;
++
++static bool acRestorePending()
++{
++    return acRestoreState.is_object() &&
++           acRestoreState.value("phase", "") == "pending";
++}
++
++static bool saveACRestoreState(const std::string& phase)
++{
++    // Also suppress the in-process timer if persisting cancellation fails.
++    acRestoreState["phase"] = phase;
++    const auto temporary = acRestoreStatePath.string() + ".tmp";
++    std::ofstream output(temporary, std::ios::trunc);
++    output << acRestoreState.dump() << '\n';
++    output.close();
++    std::error_code ec;
++    if (output)
++    {
++        std::filesystem::rename(temporary, acRestoreStatePath, ec);
++        if (!ec)
++        {
++            return true;
++        }
++    }
++    lg2::error("Cannot save AC restore state {PHASE}; automatic dispatch blocked",
++               "PHASE", phase);
++    return false;
++}
++
++static void cancelPendingACRestore();
++
+ enum class DbusConfigType
+ {
+     name = 1,
+@@ -519,6 +556,25 @@ static std::function<void(const Event)> getPowerStateHandler(PowerState state)
+ 
+ static void sendPowerControlEvent(const Event event)
+ {
++    // An explicit power action supersedes this boot's delayed automatic one.
++    // AC restore uses its distinct event after recording completion below.
++    switch (event)
++    {
++        case Event::powerButtonPressed:
++        case Event::resetButtonPressed:
++        case Event::powerOnRequest:
++        case Event::powerOffRequest:
++        case Event::powerCycleRequest:
++        case Event::resetRequest:
++        case Event::gracefulPowerOffRequest:
++        case Event::gracefulPowerCycleRequest:
++        case Event::powerOKAssert:
++        case Event::sioPowerGoodAssert:
++            cancelPendingACRestore();
++            break;
++        default:
++            break;
++    }
+     std::function<void(const Event)> handler = getPowerStateHandler(powerState);
+     if (handler == nullptr)
+     {
+@@ -624,6 +680,29 @@ static void savePowerState(const PowerState state)
+                      std::string{getChassisState(state)});
+     });
+ }
++static void cancelPendingACRestore()
++{
++    if (acRestorePending())
++    {
++        if (!saveACRestoreState("cancelled"))
++        {
++            // A full /run must not leave an old pending record to replay after
++            // a manual shutdown. Missing state in this existing directory is
++            // treated as consumed, as with the legacy one-shot marker.
++            std::error_code ec;
++            std::filesystem::remove(acRestoreStatePath, ec);
++            if (ec)
++            {
++                lg2::error("Cannot invalidate cancelled AC restore state: {ERROR}",
++                           "ERROR", ec.message());
++            }
++        }
++        // The original pre-AC state is no longer needed after cancellation.
++        // Keep the usual debounce when saving the state for the next AC boot.
++        savePowerState(powerState);
++    }
++}
++
+ static void setPowerState(const PowerState state)
+ {
+     const bool chassisChanged = getChassisState(powerState) != getChassisState(state);
+@@ -973,6 +1052,15 @@ void PowerRestoreController::run()
+ {
+     std::string powerRestorePolicyObject =
+         "/xyz/openbmc_project/control/host" + node + "/power_restore_policy";
++#ifndef USE_ACBOOT
++    if (acRestoreState.contains("policy"))
++    {
++        // main() is still publishing the state interfaces. Resume on the event
++        // loop so an expired deadline cannot dispatch through null interfaces.
++        boost::asio::post(io, [this]() { invokeIfReady(); });
++        return;
++    }
++#endif
+     powerRestorePolicyLog();
+     // this list only needs to be created once
+     if (matches.empty())
+@@ -1068,6 +1156,17 @@ void PowerRestoreController::setProperties(const dbusPropertiesList& props)
+ 
+ void PowerRestoreController::invokeIfReady()
+ {
++    if (!acRestorePending())
++    {
++        return;
++    }
++    // A restart must not replace an already scheduled policy/deadline with
++    // later settings, nor forget the state captured before the AC interruption.
++    if (acRestoreState.contains("policy"))
++    {
++        powerRestorePolicy = acRestoreState["policy"].get<std::string>();
++        powerRestoreDelay = 0; // The saved deadline below is authoritative.
++    }
+     if ((powerRestorePolicy.empty()) || (powerRestoreDelay < 0))
+     {
+         return;
+@@ -1082,16 +1181,26 @@ void PowerRestoreController::invokeIfReady()
+     matches.clear();
+     if (!timerFired)
+     {
+-        // Calculate the delay from now to meet the requested delay
+-        // Subtract the approximate uboot time
+-        static constexpr const int ubootSeconds = 20;
+-        int delay = powerRestoreDelay - ubootSeconds;
+-        // Subtract the time since boot
++        if (!acRestoreState.contains("deadline"))
++        {
++            // Match the existing 20-second U-Boot allowance. This is a kernel
++            // uptime deadline, not a fresh delay relative to daemon startup.
++            const auto deadline = static_cast<int64_t>(powerRestoreDelay) - 20;
++            acRestoreState["deadline"] = deadline > 0 ? deadline : 0;
++            acRestoreState["policy"] = powerRestorePolicy;
++            if (!saveACRestoreState("pending"))
++            {
++                return;
++            }
++        }
+         struct sysinfo info = {};
+-        if (sysinfo(&info) == 0)
++        if (sysinfo(&info) != 0)
+         {
+-            delay -= info.uptime;
++            lg2::error("Cannot read boot uptime for pending AC restore");
++            return;
+         }
++        const int64_t delay = acRestoreState["deadline"].get<int64_t>() -
++                              static_cast<int64_t>(info.uptime);
+ 
+         if (delay > 0)
+         {
+@@ -1134,11 +1243,23 @@ void PowerRestoreController::invoke()
+     {
+         return;
+     }
++    if (!acRestorePending())
++    {
++        policyInvoked = true;
++        return;
++    }
++    if (powerState != PowerState::off)
++    {
++        cancelPendingACRestore();
++        policyInvoked = true;
++        return;
++    }
+     // BIOS owns its post-update power cycle. Do not leave an older AC timer
+     // able to start an unverified image after ownership-only recovery.
+     if (access("/run/ceb-gnrd-bios-power-managed", F_OK) == 0 ||
+         access("/run/ceb-gnrd-bios-flash-held", F_OK) == 0)
+     {
++        cancelPendingACRestore();
+         policyInvoked = true;
+         lg2::info("AC restore cancelled: BIOS update/recovery owns subsequent host power actions");
+         return;
+@@ -1169,6 +1290,12 @@ void PowerRestoreController::invoke()
+         }
+     }
+     policyInvoked = true;
++    // Commit before dispatch so a subsequent daemon restart cannot repeat a
++    // completed policy. Lock contention above leaves the record pending.
++    if (!saveACRestoreState("completed"))
++    {
++        return;
++    }
+ 
+     lg2::info("Invoking Power Restore Policy {POLICY}", "POLICY",
+               powerRestorePolicy);
+@@ -1200,6 +1327,10 @@ void PowerRestoreController::invoke()
+ 
+ bool PowerRestoreController::wasPowerDropped()
+ {
++    if (acRestoreState.is_object() && acRestoreState.contains("powerDropped"))
++    {
++        return acRestoreState["powerDropped"].get<bool>();
++    }
+     std::string state = appState.get(PersistentState::Params::PowerState);
+     return state == "xyz.openbmc_project.State.Chassis.PowerState.On";
+ }
+@@ -2822,6 +2953,7 @@ void reschedulePropertyRead(const ConfigData& configData)
+ // Never infer AC restoration from daemon startup or the host's power state.
+ static bool consumeACRestoreBoot(const std::string& host)
+ {
++    using namespace power_control;
+     std::ifstream input("/sys/firmware/devicetree/base/chosen/aspeed,boot-reason",
+                         std::ios::binary);
+     std::string reason;
+@@ -2832,24 +2964,71 @@ static bool consumeACRestoreBoot(const std::string& host)
+         return false;
+     }
+ 
+-    // /run is cleared at each kernel boot, but survives a daemon restart.
+-    // Claim the AC event even if the host is already on at initialization.
++    // An old directory without a state record remains consumed, preserving
++    // compatibility with the previous implementation during a live update.
+     const std::string marker = "/run/ceb-gnrd-power-restore-host" + host;
++    acRestoreStatePath = std::filesystem::path(marker) / "state.json";
+     if (::mkdir(marker.c_str(), 0700) != 0)
+     {
+         const int error = errno;
+-        if (error == EEXIST)
+-        {
+-            lg2::info("Skipping power restore: AC boot already consumed");
+-        }
+-        else
++        if (error != EEXIST)
+         {
+             lg2::error("Cannot claim AC power restore boot: {ERROR}", "ERROR",
+                        std::strerror(error));
++            return false;
++        }
++        std::ifstream saved(acRestoreStatePath);
++        if (!saved)
++        {
++            lg2::info("Skipping power restore: legacy consumed AC boot");
++            return false;
++        }
++        acRestoreState = nlohmann::json::parse(saved, nullptr, false);
++        if (!acRestoreState.is_object() ||
++            !acRestoreState.contains("phase") ||
++            !acRestoreState["phase"].is_string() ||
++            !acRestoreState.contains("powerDropped") ||
++            !acRestoreState["powerDropped"].is_boolean() ||
++            (acRestoreState.contains("policy") !=
++             acRestoreState.contains("deadline")) ||
++            (acRestoreState.contains("policy") &&
++             (!acRestoreState["policy"].is_string() ||
++              !acRestoreState["deadline"].is_number_integer() ||
++              acRestoreState["deadline"].get<int64_t>() < 0 ||
++              acRestoreState["deadline"].get<int64_t>() > INT32_MAX)))
++        {
++            lg2::error("Invalid saved AC restore state; automatic dispatch blocked");
++            acRestoreState = nullptr;
++            return false;
++        }
++        if (!acRestorePending())
++        {
++            lg2::info("Skipping power restore: AC policy already completed or cancelled");
++            return false;
+         }
++    }
++    else
++    {
++        acRestoreState = {{"phase", "pending"},
++                          {"powerDropped",
++                           appState.get(PersistentState::Params::PowerState) ==
++                               "xyz.openbmc_project.State.Chassis.PowerState.On"}};
++    }
++    // A running host or a BIOS operation supersedes any pending automatic
++    // start. This decision must survive another daemon restart as well.
++    if (powerState == PowerState::on ||
++        access("/run/ceb-gnrd-bios-power-managed", F_OK) == 0 ||
++        access("/run/ceb-gnrd-bios-flash-held", F_OK) == 0)
++    {
++        cancelPendingACRestore();
++        return false;
++    }
++    if (!saveACRestoreState("pending"))
++    {
++        acRestoreState = nullptr;
+         return false;
+     }
+-    lg2::info("AC boot confirmed; evaluating power restore policy once");
++    lg2::info("AC boot confirmed; resuming pending power restore policy");
+     return true;
+ }
+ 
+@@ -3374,6 +3553,7 @@ int main(int argc, char* argv[])
+         {
+             throw std::invalid_argument("Power button output is masked");
+         }
++        cancelPendingACRestore();
+         if (assertGPIOForMs(powerOutConfig, TimerMap["ForceOffPulseMs"]) < 0)
+         {
+             throw std::runtime_error("Failed to assert force-off power button");

@@ -109,6 +109,8 @@ class Update(ServiceInterface):
                     os.close(fd)
                     raise ValueError('BIOS or CPLD update is already active')
                 self.locks.append(fd)
+            if Path('/run/ceb-gnrd-bios-flash-held').exists():
+                raise ValueError('BIOS flash ownership requires recovery before CPLD programming')
             if (Path('/run/initramfs/bmc-partitions.txt').exists() or
                     Path('/run/initramfs/ceb-gnrd-update-incomplete').exists()):
                 raise ValueError('A BMC firmware update is staged; restart the BMC before CPLD programming')

@@ -7,4 +7,5 @@ SRC_URI:append:ceb-gnrd = " \
     file://0002-ceb-gnrd-deduplicate-failsafe-state-logs.patch \
     file://0003-ceb-gnrd-quiet-fan-logs-during-host-transitions.patch \
     file://0004-ceb-gnrd-use-dc-power-for-thermal-gating.patch \
+    file://0005-ceb-gnrd-preserve-fixed-fan-duty-during-failsafe.patch \
     "

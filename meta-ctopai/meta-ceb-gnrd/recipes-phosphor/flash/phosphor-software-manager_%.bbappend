@@ -6,6 +6,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0003-ceb-gnrd-share-firmware-reboot-guard.patch \
     file://10-ceb-gnrd-reboot-guard-cleanup.conf \
     file://bios-update.sh \
+    file://ceb-gnrd-bios-flash-owner.sh \
+    file://ceb-gnrd-bios-flash-owner.service \
     file://bios-layout.txt \
     file://obmc-flash-host-bios@.service \
     "
@@ -36,10 +38,13 @@ RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-u-boot-mgr "
 do_install:append:ceb-gnrd() {
     install -d ${D}${sbindir}
     install -m 0755 ${UNPACKDIR}/bios-update.sh ${D}${sbindir}/
+    install -m 0755 ${UNPACKDIR}/ceb-gnrd-bios-flash-owner.sh ${D}${sbindir}/ceb-gnrd-bios-flash-owner
     # default BIOS flash layout (regions) used by bios-update.sh
     install -D -m 0644 ${UNPACKDIR}/bios-layout.txt ${D}${datadir}/ceb-gnrd/bios-layout.txt
     install -d ${D}${systemd_system_unitdir}
     install -m 0644 ${UNPACKDIR}/obmc-flash-host-bios@.service \
+        ${D}${systemd_system_unitdir}/
+    install -m 0644 ${UNPACKDIR}/ceb-gnrd-bios-flash-owner.service \
         ${D}${systemd_system_unitdir}/
     install -Dm0644 ${UNPACKDIR}/10-ceb-gnrd-reboot-guard-cleanup.conf \
         ${D}${systemd_system_unitdir}/xyz.openbmc_project.Software.BMC.Updater.service.d/10-ceb-gnrd-reboot-guard-cleanup.conf
@@ -55,6 +60,8 @@ do_install:append:ceb-gnrd() {
 }
 
 FILES:${PN}-updater:append:ceb-gnrd = " \
+    ${sbindir}/ceb-gnrd-bios-flash-owner \
+    ${systemd_system_unitdir}/ceb-gnrd-bios-flash-owner.service \
     ${datadir}/ceb-gnrd/bios-layout.txt \
     ${systemd_system_unitdir}/multi-user.target.wants/xyz.openbmc_project.Software.BMC.Updater.service \
     ${systemd_system_unitdir}/xyz.openbmc_project.Software.BMC.Updater.service.d/10-ceb-gnrd-reboot-guard-cleanup.conf \

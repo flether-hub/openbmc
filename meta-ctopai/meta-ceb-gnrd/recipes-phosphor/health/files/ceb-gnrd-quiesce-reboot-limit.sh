@@ -27,16 +27,30 @@ sel_add() {
 
 case "$1" in
     check)
-        n=$(cat "$FILE" 2>/dev/null || echo 0)
-        case "$n" in ''|*[!0-9]*) n=0 ;; esac
+        n=0
+        if [ -e "$FILE" ]; then
+            n=$(cat "$FILE") || exit 1
+            case "$n" in
+                0|1) ;;
+                *) echo "invalid automatic reboot count; staying in Quiesced" >&2; exit 1 ;;
+            esac
+        fi
         if [ "$n" -ge "$LIMIT" ]; then
             echo "automatic BMC reboot limit ($LIMIT) reached, staying in Quiesced"
             sel_add "BMC quiesced: automatic reboot limit ($LIMIT) reached, not rebooting again"
             exit 1
         fi
-        mkdir -p "$STATE"
-        echo $((n + 1)) > "$FILE"
-        sync
+        # Publish only a complete, durable count. A storage failure must not
+        # authorize a reboot whose count cannot survive that reboot.
+        mkdir -p "$STATE" || exit 1
+        pending=$(mktemp "$FILE.XXXXXX") || exit 1
+        trap 'rm -f "$pending"' EXIT
+        trap 'exit 1' HUP INT TERM
+        if ! printf '%s\n' "$((n + 1))" > "$pending" ||
+           ! sync "$pending" || ! mv -f "$pending" "$FILE" || ! sync "$STATE"; then
+            echo "cannot persist automatic reboot count; staying in Quiesced" >&2
+            exit 1
+        fi
         echo "automatic BMC reboot $((n + 1)) of $LIMIT"
         sel_add "BMC quiesced: automatic reboot $((n + 1)) of $LIMIT"
         exit 0

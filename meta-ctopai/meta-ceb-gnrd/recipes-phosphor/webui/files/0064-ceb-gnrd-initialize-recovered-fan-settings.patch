@@ -1,0 +1,142 @@
+Subject: [PATCH] fan-control: initialize recovered reads and preserve edited fields
+
+Initialize all form fields on the first successful GetFans response, including
+automatic retries. Refresh untouched controls and persistence after external
+IPMI changes, retaining user edits against the last displayed values. Track
+read generations and disable inputs during writes so stale reads and edits
+cannot replace the saved selection. Keep exact custom and mixed duties.
+
+Upstream-Status: Inappropriate [CEB-GNRD fan settings UI]
+
+--- a/src/views/Settings/FanControl/FanControl.vue
++++ b/src/views/Settings/FanControl/FanControl.vue
+@@ -14,7 +14,7 @@
+         <b-form-select
+           v-model="selectedFan"
+           :options="fanOptions"
+-          :disabled="!hasControl"
++          :disabled="!hasControl || isSaving"
+           @change="showSelectedFan"
+         />
+       </b-form-group>
+@@ -24,7 +24,7 @@
+           v-model="mode"
+           :options="modeOptions"
+           name="fan-control-mode"
+-          :disabled="!hasControl"
++          :disabled="!hasControl || isSaving"
+         />
+       </b-form-group>
+ 
+@@ -35,12 +35,12 @@
+         <b-form-select
+           v-model.number="fixedSpeed"
+           :options="fixedOptions"
+-          :disabled="!hasControl"
++          :disabled="!hasControl || isSaving"
+         />
+       </b-form-group>
+ 
+       <b-form-group>
+-        <b-form-checkbox v-model="persist" :disabled="!hasControl">
++        <b-form-checkbox v-model="persist" :disabled="!hasControl || isSaving">
+           {{ $t('pageFanControl.persist') }}
+         </b-form-checkbox>
+         <small class="d-block text-muted">
+@@ -123,6 +123,10 @@
+         })),
+       ],
+       hasControl: false,
++      settingsLoaded: false,
++      controlBaseline: null,
++      persistBaseline: false,
++      loadSequence: 0,
+       isSaving: false,
+       loadError: false,
+       persist: false,
+@@ -134,6 +138,16 @@
+     };
+   },
+   computed: {
++    controlDirty() {
++      const baseline = this.controlBaseline;
++      return baseline !== null && (
++        this.mode !== baseline.mode ||
++        (this.mode === 'fixed' && Number(this.fixedSpeed) !== baseline.duty)
++      );
++    },
++    persistDirty() {
++      return this.settingsLoaded && this.persist !== this.persistBaseline;
++    },
+     fixedOptions() {
+       const values = [20, 30, 40, 50, 60, 70, 80, 90, 100];
+       const custom = Number(this.fixedSpeed);
+@@ -175,20 +189,35 @@
+       return response?.data?.data;
+     },
+     async loadSettings(updateForm = true) {
++      if (!updateForm && this.isSaving) return;
++      const sequence = ++this.loadSequence;
+       try {
+         // [keep after reboot, then mode, duty, rpm low, rpm high for each fan]
+         const bytes = await this.callService('GetFans');
+-        if (!Array.isArray(bytes) || bytes.length < 1 + 4 * fanCount) return;
+-        this.loadError = false;
+-        this.hasControl = true;
+-        if (updateForm) this.persist = bytes[0] === 1;
++        if (sequence !== this.loadSequence || (!updateForm && this.isSaving)) return;
++        if (!Array.isArray(bytes) || bytes.length < 1 + 4 * fanCount) {
++          throw new Error('Incomplete fan settings response');
++        }
++        // Retry must initialize the form after the first request failed.
++        // Later reads update untouched fields while preserving real edits.
++        const updateControl = updateForm || !this.settingsLoaded || !this.controlDirty;
++        const updatePersist = updateForm || !this.settingsLoaded || !this.persistDirty;
+         this.fanStatus = Array.from({ length: fanCount }, (_, index) => ({
+           fixed: bytes[1 + index * 4] === 1,
+           duty: bytes[2 + index * 4],
+         }));
+-        if (updateForm) this.showSelectedFan();
++        if (updateControl) this.showSelectedFan();
++        if (updatePersist) {
++          this.persist = bytes[0] === 1;
++          this.persistBaseline = this.persist;
++        }
++        this.settingsLoaded = true;
++        this.hasControl = true;
++        this.loadError = false;
+       } catch {
+-        this.loadError = true;
++        if (sequence === this.loadSequence && (updateForm || !this.isSaving)) {
++          this.loadError = true;
++        }
+       }
+     },
+     showSelectedFan() {
+@@ -196,21 +225,22 @@
+       if (this.selectedFan === 'all' && status && this.fanStatus.some((fan) =>
+         fan.fixed !== status.fixed || (fan.fixed && fan.duty !== status.duty))) {
+         this.mode = 'mixed';
+-        return;
+-      }
+-      if (status?.fixed && status.duty >= 10 && status.duty <= 100) {
++      } else if (status?.fixed && status.duty >= 10 && status.duty <= 100) {
+         this.mode = 'fixed';
+         this.fixedSpeed = status.duty;
+       } else {
+         this.mode = 'adaptive';
+       }
++      this.controlBaseline = { mode: this.mode, duty: Number(this.fixedSpeed) };
+     },
+     async saveSettings() {
+-      if (this.mode === 'mixed') return;
++      if (this.isSaving || !this.hasControl || this.mode === 'mixed') return;
+       const fixed = this.mode === 'fixed';
+       const data = [this.fanIndex, fixed ? 1 : 0,
+         fixed ? Number(this.fixedSpeed) : 0, this.persist ? 1 : 0];
+       this.isSaving = true;
++      // Discard any read started before this write, even if it finishes late.
++      ++this.loadSequence;
+       try {
+         if ((await this.callService('SetFan', data)) !== true) throw new Error('SetFan');
+         await this.loadSettings();

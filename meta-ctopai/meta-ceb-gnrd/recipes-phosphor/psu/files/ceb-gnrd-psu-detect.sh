@@ -153,7 +153,24 @@ for addr in $ADDRS; do
         continue
     fi
 
-    model=$(read_model "$addr" || true)
+    model=
+    attempt=0
+    while [ "$attempt" -lt 3 ]; do
+        model=$(read_model "$addr" || true)
+        [ -z "$model" ] || break
+        attempt=$((attempt + 1))
+        [ "$attempt" -ge 3 ] || sleep 1
+    done
+    if [ -z "$model" ]; then
+        if [ -e "$(dev_dir "$addr")/driver" ]; then
+            # Debugfs may be unavailable. Do not replace a working binding.
+            log "PSU at $addr: model unavailable; keeping the bound driver"
+            continue
+        fi
+        log "ERROR: PSU at $addr: model read failed after retries; refusing to guess a driver. Retry ceb-gnrd-psu-detect.service after checking the PSU."
+        result=1
+        continue
+    fi
     driver=$(select_driver "$addr" "$model")
     if [ "$have" -eq 1 ] &&
        [ "$(cat "$(dev_dir "$addr")/name" 2>/dev/null)" != "$driver" ]; then

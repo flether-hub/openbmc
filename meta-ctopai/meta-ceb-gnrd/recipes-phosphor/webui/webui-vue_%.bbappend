@@ -62,6 +62,9 @@ SRC_URI:append:ceb-gnrd = " \
     file://0060-ceb-gnrd-vm-close-and-cpld-stage-timeouts.patch \
     file://0061-ceb-gnrd-show-custom-and-mixed-fan-settings.patch \
     file://0062-ceb-gnrd-read-only-mac-address.patch \
+    file://0063-ceb-gnrd-project-post-code-definitions.patch \
+    file://0064-ceb-gnrd-initialize-recovered-fan-settings.patch \
+    file://0065-ceb-gnrd-load-all-event-log-pages.patch \
     file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "

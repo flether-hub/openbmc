@@ -1,0 +1,30 @@
+Subject: [PATCH] ipmi: advertise aggregate temperature thresholds as read-only
+
+CPU_MAX_TEMP and DIMM_MAX_TEMP publish read-only UNC, UC and UNR properties.
+Clear their writable threshold mask and report read-only threshold access in
+the SDR capabilities. Keep all readable thresholds and event support, and
+leave ordinary sensors with their existing threshold policy.
+
+Upstream-Status: Inappropriate [CEB-GNRD aggregate temperature policy]
+
+--- a/dbus-sdr/sensorcommands.cpp
++++ b/dbus-sdr/sensorcommands.cpp
+@@ -2053,6 +2053,18 @@
+     // writable through Set Sensor Thresholds, which cannot change it.
+     record.body.discreteReadingSettingMask[1] &= ~static_cast<uint8_t>(
+         IPMISensorReadingByte3::upperNonRecoverable);
++    if (path == "/xyz/openbmc_project/sensors/temperature/CPU_MAX_TEMP" ||
++        path == "/xyz/openbmc_project/sensors/temperature/DIMM_MAX_TEMP")
++    {
++        // These aggregate sensors expose all threshold properties as read-only.
++        // SDR byte 12 bits [3:2]: 01 = readable, 10 = readable and settable.
++        constexpr uint8_t thresholdAccessMask = 0x0c;
++        constexpr uint8_t thresholdsReadOnly = 0x04;
++        record.body.sensorCapabilities =
++            (record.body.sensorCapabilities & ~thresholdAccessMask) |
++            thresholdsReadOnly;
++        record.body.discreteReadingSettingMask[1] = 0;
++    }
+     return true;
+ }
+ 

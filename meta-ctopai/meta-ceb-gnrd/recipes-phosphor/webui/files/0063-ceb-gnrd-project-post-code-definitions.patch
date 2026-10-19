@@ -1,0 +1,46 @@
+Subject: [PATCH] post codes: prefer supplied GNR-D BIOS checkpoint definitions
+
+Add project source meanings for MRC pipe synchronization, DIMM information,
+late memory initialization, RAS configuration and MRC start/stop. The shared
+catalog also records the supplied ExitBootServices mapping and provenance.
+Retain early-sequence and missing-phase cautions, one-byte validation, and
+all existing boot handoff guards. Names do not change BootProgress state.
+
+Upstream-Status: Inappropriate [CEB-GNRD BIOS source definitions]
+
+diff --git a/src/utils/amiPostCodes.js b/src/utils/amiPostCodes.js
+--- a/src/utils/amiPostCodes.js
++++ b/src/utils/amiPostCodes.js
+@@ -46,7 +46,12 @@
+     return 'ami';
+   }
+   if (state.phase === 'pei') {
+-    if (key >= 'B0' && key <= 'BF') return 'intelMemory';
++    if (
++      catalog.gnrdCodes?.[key]?.phase === 'Intel MRC' ||
++      (key >= 'B0' && key <= 'BF')
++    ) {
++      return 'intelMemory';
++    }
+     if (entry?.kind === 'progress' && rules.earlyAmiProgress.some(
+       ([first, last]) => key >= first && key <= last,
+     )) return 'ami';
+@@ -75,6 +80,18 @@
+   const entry = definition(key);
+   const unmatched = catalog.unmatched[language];
+   const labels = catalog.contextText;
++  // These are the project's supplied symbol/value definitions, not a full
++  // version-matched RC table. They do not advance phase or boot-success state.
++  const project = key && catalog.gnrdCodes?.[key];
++  if (project && context !== 'acpi') {
++    let text = `${labels.gnrdDefinition[language]} / ${project.phase}: ${project.description[language]} (${project.symbol})`;
++    if (key === 'AF' && ['intelPlatform', 'intelMemory'].includes(context)) {
++      text += `; ${labels.earlyExitConflict[language]}`;
++    } else if (!context || ['unresolved', 'platformUnknown'].includes(context)) {
++      text += `; ${labels.sequenceUnresolved[language]}`;
++    }
++    return text;
++  }
+   if (context === 'intelMemory') {
+     return `${labels.intelMemory[language]}: ${catalog.intelMemory[key]?.[language] || unmatched}`;
+   }

@@ -43,6 +43,7 @@ set changes:  journalctl -u ceb-gnrd-temp-max
 """
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -108,12 +109,111 @@ PECI_RESCAN = "/sys/bus/peci/rescan"
 # the point where both fan curves give 60 % (keep in sync with ceb-gnrd.json).
 # A hotter last reading must never be lowered merely because a read failed.
 FAILSAFE_TEMP = 70.0
+PROTECTION_STATE = "/run/ceb-gnrd-temp-max/protection.json"
+STATE_RETRY_SECONDS = 30
 
 # Upper thresholds in degrees C: (non-critical UNC, critical UC, non-recoverable UNR)
 THRESHOLDS = {
     "CPU": (90.0, 98.0, 105.0),
     "DIMM": (80.0, 85.0, 95.0),
 }
+
+
+class ProtectionState:
+    """Keep this DC cycle's protection across a service/watchdog restart.
+
+    A per-cycle peak, rounded upward to whole degrees, avoids rewriting RAM
+    state for every small sample fluctuation. It only substitutes for missing
+    inputs after a restart; a complete live sample still publishes its current
+    value. Never infer a new DC cycle from a failed chassis query or from a
+    power-control service restart.
+    """
+
+    def __init__(self):
+        self.expected_sources = set()
+        self.peaks = {group: FAILSAFE_TEMP for group in THRESHOLDS}
+        self.alarms = {group: [False, False, False] for group in THRESHOLDS}
+        self.saved = None
+        self.retry_at = 0.0
+        self.write_failed = False
+        try:
+            with open(PROTECTION_STATE, encoding="utf-8") as stream:
+                data = json.load(stream)
+            if not isinstance(data, dict) or data.get("version") != 1:
+                raise ValueError("unsupported protection state")
+            sources = data["sources"]
+            peaks = data["peaks"]
+            alarms = data["alarms"]
+            if (not isinstance(sources, list)
+                    or any(not isinstance(item, list) or len(item) != 2
+                           or item[0] not in THRESHOLDS
+                           or not isinstance(item[1], str) or not item[1]
+                           for item in sources)):
+                raise ValueError("invalid source identities")
+            if not isinstance(peaks, dict) or set(peaks) != set(THRESHOLDS):
+                raise ValueError("invalid protection temperatures")
+            if any(isinstance(value, bool) or not isinstance(value, (int, float))
+                   or not math.isfinite(value) or value < FAILSAFE_TEMP
+                   for value in peaks.values()):
+                raise ValueError("invalid protection temperature")
+            if (not isinstance(alarms, dict) or set(alarms) != set(THRESHOLDS)
+                    or any(not isinstance(states, list) or len(states) != 3
+                           or any(type(state) is not bool for state in states)
+                           for states in alarms.values())):
+                raise ValueError("invalid threshold latches")
+            self.expected_sources = {tuple(item) for item in sources}
+            self.peaks = peaks
+            self.alarms = alarms
+            self.saved = self.snapshot()
+            LOG.info("Restored temperature protection for %d known sources",
+                     len(self.expected_sources))
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            LOG.error("Unable to restore temperature protection: %s", exc)
+
+    def snapshot(self):
+        # Copy the mutable values: the previous snapshot must not change when
+        # another source is learned or a threshold changes in memory.
+        return {"version": 1, "sources": sorted(self.expected_sources),
+                "peaks": dict(self.peaks),
+                "alarms": {group: list(states)
+                           for group, states in self.alarms.items()}}
+
+    def checkpoint(self, sensors, thresholds, on):
+        if not on:
+            self.expected_sources.clear()
+        for group, sensor in sensors.items():
+            if not on:
+                self.peaks[group] = FAILSAFE_TEMP
+            elif math.isfinite(sensor.value):
+                self.peaks[group] = max(self.peaks[group], math.ceil(sensor.value))
+            self.alarms[group] = [obj.alarm for obj, _, _ in thresholds[group]]
+        data = self.snapshot()
+        if data == self.saved or time.monotonic() < self.retry_at:
+            return
+        temporary = PROTECTION_STATE + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(PROTECTION_STATE), exist_ok=True)
+            with open(temporary, "w", encoding="utf-8") as stream:
+                json.dump(data, stream, allow_nan=False)
+                stream.write("\n")
+            os.replace(temporary, PROTECTION_STATE)
+        except OSError as exc:
+            self.retry_at = time.monotonic() + STATE_RETRY_SECONDS
+            self.write_failed = True
+            LOG.error("Unable to retain temperature protection; memory state "
+                      "remains active, retrying: %s", exc)
+        else:
+            self.saved = data
+            if self.write_failed:
+                LOG.info("Temperature protection state persistence recovered")
+            self.write_failed = False
+        finally:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
 
 
 class TempSensor(ServiceInterface):
@@ -383,7 +483,9 @@ async def host_is_on(bus):
     try:
         body = await call(bus, CHASSIS_STATE[0], CHASSIS_STATE[1], PROPS, "Get",
                           "ss", [CHASSIS_STATE[2], CHASSIS_STATE[3]])
-        return str(body[0].value).endswith(".On")
+        # Only an explicit DC-off observation may clear the learned sources
+        # and retained thermal alarms. An unfamiliar state is still unknown.
+        return str(body[0].value) != "xyz.openbmc_project.State.Chassis.PowerState.Off"
     except Exception:
         return True  # unknown: assume on
 
@@ -566,6 +668,7 @@ async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(levelname)s %(message)s")
     for handler in logging.getLogger().handlers:
         handler.setFormatter(JournalFormatter("%(levelname)s %(message)s"))
+    protection = ProtectionState()
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     log_state = {"settle_until": time.monotonic() + SENSOR_LOG_SETTLE_SECONDS,
                  "host_state": None}
@@ -599,7 +702,7 @@ async def main():
     for group, sensor in sensors.items():
         # Protect a running host while initial discovery is still pending.
         # A confirmed Off sample will replace this with zero normally.
-        sensor.update(FAILSAFE_TEMP)
+        sensor.update(protection.peaks[group])
         availability[group].update(True)
         path = "%s/%s" % (SENSOR_ROOT, sensor.sensor_name)
         bus.export(path, sensor)
@@ -612,7 +715,10 @@ async def main():
             (CriticalThreshold(uc), "CriticalAlarmHigh", "UC"),
             (NonRecoverableThreshold(unr), "NonRecoverableAlarmHigh", "UNR"),
         ]
-        for obj, _, _ in thresholds[group]:
+        for (obj, _, _), alarm in zip(thresholds[group], protection.alarms[group]):
+            # Restore before the bus name becomes visible. Functional remains
+            # false until every previously learned source is readable again.
+            obj.alarm = alarm
             bus.export(path, obj)
     manager = SensorObjectManager()
     for group, sensor in sensors.items():
@@ -633,6 +739,10 @@ async def main():
     last_rescan = -PECI_RESCAN_SECONDS
     missing_groups = set()
     missing_since = {}
+    # Learn only sources that actually returned a temperature this DC cycle.
+    # Empty DIMM slots can expose unreadable hwmon entries. Use device/label
+    # identities so hwmon renumbering does not create permanent false faults.
+    expected_sources = protection.expected_sources
     while True:
         on = await host_is_on(bus)
         now = time.monotonic()
@@ -667,9 +777,15 @@ async def main():
             if not on:
                 readings = {}
 
-        missing = set(group for group in sensors if on and not any(
-            g == group and path in readings and math.isfinite(readings[path])
-            for path, (g, _) in sources.items()))
+        valid_sources = {identity for path, identity in sources.items()
+                         if path in readings and math.isfinite(readings[path])}
+        if on:
+            expected_sources.update(valid_sources)
+        else:
+            expected_sources.clear()
+        missing = {group for group in sensors if on and (
+            not any(g == group for g, _ in valid_sources)
+            or any(g == group for g, _ in expected_sources - valid_sources))}
         if not on:
             # Power-off is expected, not a temperature recovery/failure.
             missing_groups.clear()
@@ -685,7 +801,7 @@ async def main():
                              and now - missing_since[group] >= MISSING_LOG_DELAY_SECONDS}
             recovered = missing_groups - missing
             if newly_missing:
-                LOG.warning("No readable PECI temperature for %s; retaining at least %.1f C fan protection input",
+                LOG.warning("Incomplete PECI temperatures for %s; retaining at least %.1f C fan protection input",
                             ", ".join(sorted(newly_missing)), FAILSAFE_TEMP)
             if recovered:
                 LOG.info("PECI temperature sources recovered for %s",
@@ -693,28 +809,35 @@ async def main():
             # A brief unavailable interval never logged as a fault must not
             # produce a recovered message when its first live sample arrives.
             missing_groups = (missing_groups - recovered) | newly_missing
+        alarm_source_groups = []
         for group, sensor in sensors.items():
             values = [readings[path] for path, (g, _) in sources.items()
                       if g == group and path in readings
                       and math.isfinite(readings[path])]
             real = max(values) if values else math.nan
-            if values:
+            if on and group in missing:
+                sensor.protect()               # even a partial loss must not reduce cooling
+                if values:
+                    sensor.update(max(sensor.value, real))
+            elif values:
                 sensor.update(real)
-            elif on:
-                sensor.protect()               # a failed read must not reduce cooling
             else:
                 sensor.update(0.0)             # host off: no thermal load
             # Available means a usable control input is published. Keep the
             # finite protection input available so PID does not replace it
             # with the zone's lower failsafe speed. Functional distinguishes
             # this substitute from a genuine PECI sample. Off publishes 0 C.
-            operational[group].update(not on or bool(values))
+            operational[group].update(not on or group not in missing)
             availability[group].update(math.isfinite(sensor.value))
             high_asserted = False
             for obj, alarm_name, level in thresholds[group]:
                 # Known power-off is not a lost reading: clear old thermal
                 # alarms. A failed read while on still retains the alarm.
                 alarm_value = real if on else 0.0
+                if on and group in missing and obj.alarm:
+                    # A cooler surviving channel cannot prove recovery of
+                    # the missing channel. New hot readings may still assert.
+                    alarm_value = math.nan
                 if obj.evaluate(sensor.sensor_name, alarm_value, alarm_name):
                     high_asserted = high_asserted or obj.alarm
                     LOG.warning("%s %s %s (value %.1f, threshold %.1f)",
@@ -722,7 +845,13 @@ async def main():
                                 "asserted" if obj.alarm else "cleared",
                                 alarm_value, obj.high)
             if high_asserted:
-                await asyncio.to_thread(log_alarm_sources, group, sources, readings)
+                alarm_source_groups.append(group)
+        # Save before any diagnostic/inventory await can stall and trigger a
+        # watchdog restart. Stable samples do not rewrite the state file.
+        protection.checkpoint(sensors, thresholds, on)
+        for group in alarm_source_groups:
+            await asyncio.to_thread(log_alarm_sources, group, sources, readings)
+        for group in sensors:
             if not assocs[group].assoc:
                 if not default_assoc:
                     default_assoc = (await find_board_assoc(bus)

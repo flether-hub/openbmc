@@ -143,7 +143,7 @@ diff --git a/bmc/obmc-flash-bmc b/bmc/obmc-flash-bmc
  }
  
  #TODO: Replace the implementation with systemd-inhibitors lock
-@@ -444,9 +450,24 @@
+@@ -444,9 +450,26 @@
      file="reboot-guard.conf"
      units=("reboot" "poweroff" "halt")
  
@@ -154,6 +154,8 @@ diff --git a/bmc/obmc-flash-bmc b/bmc/obmc-flash-bmc
 +    # Another activation, BIOS shell or CPLD job still owns a reference.
 +    # A rejected activation must never remove that owner's reboot guard.
 +    flock -n 201 || return 0
++    # Retain protection even while the independent BIOS GPIO holder restarts.
++    [ ! -e /run/ceb-gnrd-bios-flash-held ] || return 0
      for unit in "${units[@]}"; do
 -        rm -rf ${dir}"${unit}".target.d/${file}
 +        rm -f ${dir}"${unit}".target.d/${file}

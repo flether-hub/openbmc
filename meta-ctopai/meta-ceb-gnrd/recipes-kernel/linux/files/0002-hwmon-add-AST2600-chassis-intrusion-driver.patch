@@ -11,9 +11,9 @@ Upstream-Status: Inappropriate [CEB-GNRD board-specific]
 ---
  drivers/hwmon/Kconfig                  |   9 +
  drivers/hwmon/Makefile                 |   1 +
- drivers/hwmon/aspeed-chassis.c         | 119 +++++++++++++++++++++
+ drivers/hwmon/aspeed-chassis.c         | 125 +++++++++++++++++++++
  arch/arm/boot/dts/aspeed/aspeed-g6.dtsi |   7 +
- 4 files changed, 135 insertions(+)
+ 4 files changed, 141 insertions(+)
 
 diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
 --- a/drivers/hwmon/Kconfig
@@ -49,7 +49,7 @@ new file mode 100644
 index 000000000000..000000000000
 --- /dev/null
 +++ b/drivers/hwmon/aspeed-chassis.c
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,125 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Copyright (C) 2021 ASPEED Technology Inc.
@@ -105,6 +105,12 @@ index 000000000000..000000000000
 +
 +	if (kstrtoul(buf, 10, &val) < 0 || val != 0)
 +		return -EINVAL;
++
++	/* Raw-level mode has no history to acknowledge. Userspace still writes
++	 * zero after each poll; do not pulse the low-active latch in this mode.
++	 */
++	if (chassis->intrusion_active_high)
++		return count;
 +
 +	/* The clear bit must be pulsed: set, then release. */
 +	ctrl = readl(chassis->base);

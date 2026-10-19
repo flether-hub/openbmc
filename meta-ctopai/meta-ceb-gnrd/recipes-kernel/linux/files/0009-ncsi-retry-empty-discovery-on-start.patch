@@ -1,53 +1,192 @@
 From: CEB-GNRD maintainers <bmc@example.com>
-Subject: [PATCH] ncsi: retry discovery after an empty initial probe
+Subject: [PATCH] ncsi: retry empty and incomplete channel discovery
 
-A host-powered controller can fail to answer the first NC-SI enumeration.
-The probe still marks the device PROBED; subsequent interface starts then
-return ENODEV from channel selection without issuing discovery commands.
+A host-powered controller may disappear after Clear Initial State creates
+a channel but before Get Version ID or Get Capabilities completes. Merely
+finding that channel on the next interface start leaves it permanently
+without the metadata and filter tables needed for configuration.
 
-On the next start, clear PROBED only when there are no discovered channels.
-Reuse the existing probe state machine and request timeout handling. Keep
-known channels, package/channel selection policy and external link failure
-handling unchanged. The board userspace monitor bounds restart frequency.
+Track the two mandatory discovery responses separately. Retry the existing
+probe state machine after an empty or incomplete pass and do not configure
+incomplete channels. Keep channel objects, known metadata, and user package
+and channel selection policy; external carrier loss by itself is not a
+reason to discard discovery. Board userspace bounds interface retries.
+
+Make capability/filter initialization transactional and idempotent, so a
+repeated probe cannot leak the filter tables of already complete channels
+or leave partially published tables after an allocation failure.
 
 Upstream-Status: Pending
 ---
+--- a/net/ncsi/internal.h
++++ b/net/ncsi/internal.h
+@@ -219,6 +219,8 @@
+ #define NCSI_CHANNEL_ACTIVE		2
+ #define NCSI_CHANNEL_INVISIBLE		3
+ 	bool                        reconfigure_needed;
++	bool                        version_valid; /* GVI completed */
++	bool                        caps_valid;    /* GC and filters ready */
+ 	spinlock_t                  lock;	/* Protect filters etc */
+ 	struct ncsi_package         *package;
+ 	struct ncsi_channel_version version;
 --- a/net/ncsi/ncsi-manage.c
 +++ b/net/ncsi/ncsi-manage.c
-@@ -1817,10 +1817,36 @@
+@@ -1262,7 +1262,11 @@
+ 
+ 			spin_lock_irqsave(&nc->lock, cflags);
+ 
+-			if (!list_empty(&nc->link) ||
++			/* CIS alone creates a channel. Do not configure it until
++			 * its mandatory discovery responses and filters are ready.
++			 */
++			if (!nc->version_valid || !nc->caps_valid ||
++			    !list_empty(&nc->link) ||
+ 			    nc->state != NCSI_CHANNEL_INACTIVE) {
+ 				spin_unlock_irqrestore(&nc->lock, cflags);
+ 				continue;
+@@ -1817,14 +1821,45 @@
  int ncsi_start_dev(struct ncsi_dev *nd)
  {
  	struct ncsi_dev_priv *ndp = TO_NCSI_DEV_PRIV(nd);
 +	struct ncsi_package *np;
 +	struct ncsi_channel *nc;
-+	bool has_channel = false;
++	unsigned long flags;
++	bool has_channel = false, incomplete = false;
  
  	if (nd->state != ncsi_dev_state_registered &&
  	    nd->state != ncsi_dev_state_functional)
  		return -ENOTTY;
-+
-+	/* A host-powered NIC can be absent during the first enumeration.
-+	 * Finishing that pass sets PROBED even when no channel answered.
-+	 * Starting the interface again must retry discovery in that case,
-+	 * rather than forever trying to configure an empty channel list.
-+	 * Preserve existing channels and user selection policy; lack of
-+	 * external carrier alone is not a reason to discard discovery.
+ 
++	/* A host-powered NIC may disappear after CIS created a channel
++	 * but before GVI/GC completed. Retry discovery on the next start
++	 * for both empty and incomplete topology. Keep channel objects,
++	 * completed metadata and package/channel selection policy.
 +	 */
 +	if (ndp->flags & NCSI_DEV_PROBED) {
 +		NCSI_FOR_EACH_PACKAGE(ndp, np) {
 +			NCSI_FOR_EACH_CHANNEL(np, nc) {
 +				has_channel = true;
-+				break;
++				spin_lock_irqsave(&nc->lock, flags);
++				incomplete = !nc->version_valid || !nc->caps_valid;
++				spin_unlock_irqrestore(&nc->lock, flags);
++				if (incomplete)
++					break;
 +			}
-+			if (has_channel)
++			if (incomplete)
 +				break;
 +		}
-+		if (!has_channel) {
++		if (!has_channel || incomplete) {
 +			ndp->flags &= ~(NCSI_DEV_PROBED | NCSI_DEV_HWA);
 +			netdev_info(nd->dev,
-+				    "NCSI: No discovered channels, retrying probe\n");
++				    "NCSI: %s discovery, retrying probe\n",
++				    has_channel ? "Incomplete" : "Empty");
 +		}
 +	}
- 
++
  	if (!(ndp->flags & NCSI_DEV_PROBED)) {
  		ndp->package_probe_id = 0;
+ 		ndp->channel_probe_id = 0;
++		ndp->channel_count = NCSI_RESERVED_CHANNEL;
+ 		nd->state = ncsi_dev_state_probe;
+ 		schedule_work(&ndp->work);
+ 		return 0;
+--- a/net/ncsi/ncsi-rsp.c
++++ b/net/ncsi/ncsi-rsp.c
+@@ -752,6 +752,7 @@
+ 	struct ncsi_dev_priv *ndp = nr->ndp;
+ 	struct ncsi_channel *nc;
+ 	struct ncsi_channel_version *ncv;
++	unsigned long flags;
+ 	int i;
+ 
+ 	/* Find the channel */
+@@ -768,6 +769,7 @@
+ 	 *
+ 	 * Alpha1 and alpha2 are ISO/IEC 8859-1 characters.
+ 	 */
++	spin_lock_irqsave(&nc->lock, flags);
+ 	ncv = &nc->version;
+ 	ncv->major = decode_bcd_u8(rsp->major);
+ 	ncv->minor = decode_bcd_u8(rsp->minor);
+@@ -780,6 +782,8 @@
+ 	for (i = 0; i < ARRAY_SIZE(ncv->pci_ids); i++)
+ 		ncv->pci_ids[i] = ntohs(rsp->pci_ids[i]);
+ 	ncv->mf_id = ntohl(rsp->mf_id);
++	nc->version_valid = true;
++	spin_unlock_irqrestore(&nc->lock, flags);
+ 
+ 	return 0;
+ }
+@@ -790,6 +794,9 @@
+ 	struct ncsi_dev_priv *ndp = nr->ndp;
+ 	struct ncsi_channel *nc;
+ 	struct ncsi_package *np;
++	unsigned char *addrs;
++	u16 *vids;
++	unsigned long flags;
+ 	size_t size;
+ 
+ 	/* Find the channel */
+@@ -798,6 +805,32 @@
+ 				      &np, &nc);
+ 	if (!nc)
+ 		return -ENODEV;
++
++	spin_lock_irqsave(&nc->lock, flags);
++	/* Retrying an incomplete probe revisits healthy channels too. Their
++	 * capabilities are already known; do not replace/leak live filters.
++	 */
++	if (nc->caps_valid) {
++		np->ndp->channel_count = rsp->channel_cnt;
++		spin_unlock_irqrestore(&nc->lock, flags);
++		return 0;
++	}
++
++	/* Publish capability data only after both filter allocations succeed.
++	 * An allocation failure must leave a retryable, incomplete channel.
++	 */
++	size = (rsp->uc_cnt + rsp->mc_cnt + rsp->mixed_cnt) * ETH_ALEN;
++	addrs = kzalloc(size, GFP_ATOMIC);
++	if (!addrs) {
++		spin_unlock_irqrestore(&nc->lock, flags);
++		return -ENOMEM;
++	}
++	vids = kcalloc(rsp->vlan_cnt, sizeof(*vids), GFP_ATOMIC);
++	if (!vids) {
++		kfree(addrs);
++		spin_unlock_irqrestore(&nc->lock, flags);
++		return -ENOMEM;
++	}
+ 
+ 	/* Update channel's capabilities */
+ 	nc->caps[NCSI_CAP_GENERIC].cap = ntohl(rsp->cap) &
+@@ -812,25 +845,19 @@
+ 	nc->caps[NCSI_CAP_VLAN].cap = rsp->vlan_mode &
+ 				      NCSI_CAP_VLAN_MASK;
+ 
+-	size = (rsp->uc_cnt + rsp->mc_cnt + rsp->mixed_cnt) * ETH_ALEN;
+-	nc->mac_filter.addrs = kzalloc(size, GFP_ATOMIC);
+-	if (!nc->mac_filter.addrs)
+-		return -ENOMEM;
++	nc->mac_filter.addrs = addrs;
+ 	nc->mac_filter.n_uc = rsp->uc_cnt;
+ 	nc->mac_filter.n_mc = rsp->mc_cnt;
+ 	nc->mac_filter.n_mixed = rsp->mixed_cnt;
+-
+-	nc->vlan_filter.vids = kcalloc(rsp->vlan_cnt,
+-				       sizeof(*nc->vlan_filter.vids),
+-				       GFP_ATOMIC);
+-	if (!nc->vlan_filter.vids)
+-		return -ENOMEM;
++	nc->vlan_filter.vids = vids;
+ 	/* Set VLAN filters active so they are cleared in the first
+ 	 * configuration state
+ 	 */
+ 	nc->vlan_filter.bitmap = U64_MAX;
+ 	nc->vlan_filter.n_vids = rsp->vlan_cnt;
+ 	np->ndp->channel_count = rsp->channel_cnt;
++	nc->caps_valid = true;
++	spin_unlock_irqrestore(&nc->lock, flags);
+ 
+ 	return 0;
+ }

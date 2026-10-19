@@ -25,7 +25,7 @@ diff --git a/bmc/static/flash.cpp b/bmc/static/flash.cpp
  #include <cstdint>
  #include <algorithm>
  #include <filesystem>
-@@ -18,6 +24,59 @@
+@@ -18,6 +24,64 @@
  
  namespace
  {
@@ -46,6 +46,11 @@ diff --git a/bmc/static/flash.cpp b/bmc/static/flash.cpp
 +        cpld = open("/run/lock/ceb-gnrd-cpld-update.lock",
 +                    O_CREAT | O_RDWR | O_CLOEXEC, 0600);
 +        if (cpld < 0 || flock(cpld, LOCK_SH | LOCK_NB) != 0)
++        {
++            release();
++        }
++        std::error_code ownershipError;
++        if (std::filesystem::exists("/run/ceb-gnrd-bios-flash-held", ownershipError) || ownershipError)
 +        {
 +            release();
 +        }
@@ -85,7 +90,7 @@ diff --git a/bmc/static/flash.cpp b/bmc/static/flash.cpp
  constexpr auto PATH_INITRAMFS = "/run/initramfs";
  constexpr auto FLASH_ALT_SERVICE_TMPL = "obmc-flash-bmc-alt@";
  } // namespace
-@@ -55,6 +114,19 @@
+@@ -55,6 +119,19 @@
      // the image to flash during reboot.
      fs::path uploadDir(IMG_UPLOAD_DIR);
      fs::path toPath(PATH_INITRAMFS);
@@ -105,7 +110,7 @@ diff --git a/bmc/static/flash.cpp b/bmc/static/flash.cpp
  
      // The package-local selection is processed only after normal image
      // validation/signature verification. No global settings carry to the next
-@@ -274,6 +346,7 @@
+@@ -274,6 +351,7 @@
          fail("cannot remove incomplete marker");
          return;
      }

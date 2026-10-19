@@ -1,0 +1,42 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] pid: honor fixed fan duty at the final PWM output
+
+SetFan represents fixed duty as equal OutLimitMin/OutLimitMax values in
+the supported 10..100 percent range. The later zone failsafe adjustment
+must not raise that explicit per-fan command. Derive the output directly
+from valid fixed limits and keep zone failure detection and diagnostics
+active. Adaptive fans in the same zone still use the normal failsafe PWM.
+
+Base: phosphor-pid-control f6d4cb9e5ddaeb14fbd14f9d5730fd71afe8efe2
+plus CEB-GNRD patches 0001..0004.
+
+Upstream-Status: Inappropriate [CEB-GNRD fixed fan control policy]
+
+diff --git a/pid/fancontroller.cpp b/pid/fancontroller.cpp
+--- a/pid/fancontroller.cpp
++++ b/pid/fancontroller.cpp
+@@ -123,7 +123,14 @@
+ 
+ void FanController::outputProc(double value)
+ {
+-    double percent = value;
++    // CEB-GNRD SetFan encodes a fixed 10..100% duty using equal output
++    // limits. Honor that per-controller command at the final PWM output,
++    // including while shared zone inputs report a critical/failsafe state.
++    // Reject invalid/uninitialized limits so they cannot disable failsafe.
++    const auto& limits = getPIDInfo()->outLim;
++    const bool fixedDuty = std::isfinite(limits.min) && limits.min >= 10.0 &&
++                           limits.min <= 100.0 && limits.min == limits.max;
++    double percent = fixedDuty ? limits.min : value;
+ 
+     /* If doing tuning, don't go into failsafe mode. */
+     if (!tuningEnabled)
+@@ -137,7 +144,7 @@
+             failsafeTransition = true;
+         }
+ 
+-        if (failsafeCurrState)
++        if (failsafeCurrState && !fixedDuty)
+         {
+             double failsafePercent = _owner->getFailSafePercent();
+ 

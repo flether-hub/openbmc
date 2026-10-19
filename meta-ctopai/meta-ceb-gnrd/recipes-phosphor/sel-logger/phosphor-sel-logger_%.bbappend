@@ -19,3 +19,4 @@ SRC_URI:append:ceb-gnrd = " file://0001-ceb-gnrd-log-non-recoverable-threshold-e
 RDEPENDS:${PN}:append:ceb-gnrd = " phosphor-watchdog "
 
 SRC_URI:append:ceb-gnrd = " file://0003-ceb-gnrd-preserve-platform-event-metadata.patch"
+SRC_URI:append:ceb-gnrd = " file://0004-ceb-gnrd-retain-first-threshold-recovery.patch"

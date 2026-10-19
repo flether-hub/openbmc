@@ -1,0 +1,183 @@
+Subject: [PATCH] initfs: preserve recovery state when an update fails
+
+Check the updater exit status as well as remaining images. Keep the
+watchdog feeder and RAM backup alive in console recovery instead of
+reporting success and resetting after a settings restoration failure.
+Do not start flash writes when the settings backup itself fails. Allow
+--no-flash --no-save-files restoration without checking consumed images.
+
+Upstream-Status: Inappropriate [CEB-GNRD update recovery policy]
+
+--- a/obmc-update.sh
++++ b/obmc-update.sh
+@@ -166,11 +166,22 @@
+ then
+ 	if test ! -d $upper -a -n "$rwfs"
+ 	then
+-		mkdir -p $rwdir
+-		mount "$rwdev" $rwdir -t "$(probe_fs_type "$rwdev")" -o "$rorwopts"
++		if ! mkdir -p $rwdir ||
++		   ! mount "$rwdev" $rwdir -t "$(probe_fs_type "$rwdev")" -o "$rorwopts"
++		then
++			echoerr "Unable to mount existing settings for backup; no images written."
++			exit 1
++		fi
+ 		mounted=$rwdir
+ 	fi
+ 
++	if ! test -r "$whitelist"
++	then
++		echoerr "Settings whitelist unavailable; no images written."
++		test -z "$mounted" || umount "$mounted"
++		exit 1
++	fi
++	backup_failed=0
+ 	while read -r f
+ 	do
+ 		if ! test -e "$upper/$f"
+@@ -178,13 +189,22 @@
+ 			continue
+ 		fi
+ 		d="$save/$f"
+-		mkdir -p "${d%/*}"
+-		cp -rp "$upper/$f" "${d%/*}/"
++		if ! mkdir -p "${d%/*}" || ! cp -rp "$upper/$f" "${d%/*}/"
++		then
++			echoerr "Unable to back up $f; no images written."
++			backup_failed=1
++			break
++		fi
+ 	done < $whitelist
+ 
+-	if test -n "$mounted"
+-	then
+-		umount $mounted
++	if test -n "$mounted" && ! umount "$mounted"
++	then
++		echoerr "Unable to unmount settings backup source; no images written."
++		backup_failed=1
++	fi
++	if test "$backup_failed" != 0
++	then
++		exit 1
+ 	fi
+ fi
+ 
+@@ -193,6 +213,20 @@
+ then
+ 	# shell didn't expand the wildcard, so no files exist
+ 	echo "No images found to update."
++	imglist=
++fi
++
++if test -z "$doflash" -a -z "$dosave" -a "$dorestore" = "y" &&
++   ! test -d "$save"
++then
++	echoerr "No saved settings backup found for restore-only operation."
++	exit 1
++fi
++
++# A restore-only retry must work after successful image files were removed,
++# or when an unrelated remaining image cannot pass flash preflight.
++if test -z "$doflash"
++then
+ 	imglist=
+ fi
+ 
+--- a/obmc-shutdown.sh
++++ b/obmc-shutdown.sh
+@@ -51,14 +51,29 @@
+ 			wd=
+ 		fi
+ 		$update --clean-saved-files
+-		remaining=$(ls $image*)
+-		if test -n "$remaining"
++		update_rc=$?
++		remaining=$(ls $image* 2>/dev/null)
++		if test "$update_rc" != 0 || test -n "$remaining"
+ 		then
+-			echo 1>&2 "Flash update failed to flash these images:"
+-			echo 1>&2 "$remaining"
+-		else
+-			echo "Flash update completed."
++			echo 1>&2 "Flash update or settings restoration failed (status $update_rc)."
++			test -z "$remaining" || echo 1>&2 "Unwritten images: $remaining"
++			echo 1>&2 "Automatic reboot stopped; preserve /run/save before removing power."
++			echo 1>&2 "The watchdog feeder remains active during console recovery."
++			echo 1>&2 "After correcting rwfs errors and verifying the RAM backup is complete:"
++			echo 1>&2 "$update --no-flash --no-save-files --restore-files --no-clean-saved-files"
++			echo 1>&2 "Confirm the image and settings are complete before a manual reboot -f."
++			# Do not arm the short reboot watchdog or return from PID 1:
++			# either would destroy the only remaining settings backup.
++			# Keep the existing watchdog feeder alive while an operator
++			# fixes the storage error or copies the backup off the BMC.
++			while :
++			do
++				PS1="update-recovery# " /bin/sh </dev/console >/dev/console 2>&1
++				echo 1>&2 "Update recovery is still required; automatic reboot remains stopped."
++				sleep 5
++			done
+ 		fi
++		echo "Flash update and settings restoration completed."
+ 
+ 		if test -n "$wd"
+ 		then
+--- a/obmc-init.sh
++++ b/obmc-init.sh
+@@ -180,6 +180,27 @@
+ 	fi
+ }
+ 
++update_recovery() {
++	echo 1>&2 "Update or settings restoration failed; stopping boot before further writes."
++	echo 1>&2 "Preserve /run/save before removing power. Correct the storage error first."
++	echo 1>&2 "Only after verifying the RAM backup is complete, restore it without reflashing:"
++	echo 1>&2 "$update --no-flash --no-save-files --restore-files --no-clean-saved-files"
++	echo 1>&2 "Confirm image/settings recovery before a manual reboot -f."
++	if test -c /dev/watchdog
++	then
++		watchdog -t 1 -T 5 -F /dev/watchdog &
++	fi
++	# A boot-time update failure also must not panic PID 1 and lose the
++	# RAM backup. Unlike debug_takeover, leaving the shell cannot continue
++	# into erasing rwfs or starting the system with incomplete settings.
++	while :
++	do
++		PS1="update-recovery# " /bin/sh </dev/console >/dev/console 2>&1
++		echo 1>&2 "Update recovery is still required; boot remains stopped."
++		sleep 5
++	done
++}
++
+ rofs=$(findmtd rofs)
+ rwfs=$(findmtd rwfs)
+ 
+@@ -356,15 +377,15 @@
+ 		if test "$slowclean" = "1"
+ 		then
+ 			# for in-place update, use the same workflow as before
+-			$update --no-restore-files $do_save
++			$update --no-restore-files $do_save || update_recovery
+ 			echo "Clearing read-write overlay filesystem."
+-			flash_eraseall "/dev/$rwfs"
++			flash_eraseall "/dev/$rwfs" || update_recovery
+ 			echo "Restoring saved files to read-write overlay filesystem."
+ 			touch $trigger
+-			$update --no-save-files --clean-saved-files
++			$update --no-save-files --clean-saved-files || update_recovery
+ 		fi
+ 	else
+-		$update --clean-saved-files $do_save
++		$update --clean-saved-files $do_save || update_recovery
+ 	fi
+ 
+ 	rwfst=$(probe_fs_type "$rwdev")
+@@ -388,7 +409,7 @@
+ if test "$rwfst$copyfiles" = noney
+ then
+ 	touch $trigger
+-	$update --copy-files --clean-saved-files --no-restore-files
++	$update --copy-files --clean-saved-files --no-restore-files || update_recovery
+ fi
+ 
+ if grep -w copy-base-filesystem-to-ram $optfile &&

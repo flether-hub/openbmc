@@ -588,8 +588,9 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * BMC 分区选择：kernel/rofs 默认选中并须一起更新；rwfs 按选择处理；U-Boot/环境默认不选，启用时需要确认。环境更新会清除保存的 MAC/网络启动配置。分区选择在后端再次校验，整片 `.static.mtd.all.tar` 更新被拒绝。
 * BMC/BIOS 与 CPLD 升级期间，另一组上传/启动按钮禁用；后端使用共享升级锁、电源互锁与重启保护。网页禁用只是第一层，不能代替后端校验。
 * 固定风扇档位为 20%、30%、40% … 100%，默认表单值 60%。可独立控制 SYS_FAN0–5或统一控制，自动模式为 30–100%。IPMI 固定占空比接受 10–100%，网页提供的是 10% 步进预设。
-* 保存调用 `ApplyFan<0..5|All><Adaptive|Fixed20..100><Keep|Forget>`（固定值每 10% 一档）；变更前保存快照，写入和控制重载失败时回滚。保留选项将配置保存到 `/var/lib/ceb-gnrd/fan-settings.json`。
+* 保存调用 `SetFan`；网页显示 IPMI 设置的自定义占空比，多风扇配置不一致时显示“混合”。变更前保存快照，写入和控制重载失败时回滚。保留选项将配置保存到 `/var/lib/ceb-gnrd/fan-settings.json`。
 * 六个控制器配置或上下限不可读/非法时，GetFans 返回 D-Bus 错误，Web 显示加载失败，IPMI 返回响应错误，不再把未知模式显示为自动。
+* 风扇页首次成功读取（含失败后的自动重试）会初始化全部表单字段；之后刷新同步未编辑的字段并保留用户未保存的修改。保存期间禁用输入，并忽略保存前发起的过期读取。
 * 虚拟媒体的本地 ISO 会话可跨 BMC 内部菜单保持；浏览器刷新/关闭会断开。切换标签或后台休眠仍可能导致 WebSocket 断流，不能承诺挂载持续；独立挂载窗口方案尚未实现。
 * KVM、SOL、时间、事件日志和传感器页面提供各自的实时刷新/显示逻辑。KVM 键释放失败导致重复输入的缺口尚未修复，需要保留为已知问题。
 * Web 仅保留 BMC dump、单运行镜像、实际支持的清单/设置；PLDM、DCMI、SMBIOS 清单、远端 CIFS/HTTPS 虚拟媒体未配置。
@@ -601,6 +602,8 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * CPU 温度上限 UNC/UC/UNR 为 90/98/105°C，DIMM 为 80/85/95°C。电压使用 LC/UC；风扇没有转速阈值告警。板级私有 UNR接口不会触发 HardShutdown。
 * Host Off 时 CPU/DIMM 值为 0，停止 Host 供电传感器失读告警；Host On 失读时发布至少 70°C 的保护输入，保留更高的最后读值，直到恢复有效采样或确认 DC Off。告警使用真实读值，不用保护值制造温度告警。
 * POST 只保留最近一次 Host 启动，每轮最多 512 条；冷启动/热复位切换历史。BMC或 POST服务重启恢复当前轮，不以空内存缓存作为新 Host 启动。按 4F/60、90、AD、AF 等锚点判断 AMI/Intel 参考上下文；原始码仍保留，未知/OEM码不强行判为错误。
+* Web POST 解码优先采用项目于2026-10-19提供的BIOS源码定义：`7E=CHECKPOINT_MAJOR_PIPE_SYNC`（内存流水线同步）、`BC=CHECKPOINT_MAJOR_RAS_CONFIG`（内存RAS配置）、`BF=CHECKPOINT_MAJOR_MRC_START_STOP`（MRC开始/结束，不能固定判为完成）、`C6=CHECKPOINT_MAJOR_DIMM_INFO`（DIMM信息）、`CE=CHECKPOINT_MAJOR_MEM_LATE`（内存初始化后期）、`AF=DXE_EXIT_BOOT_SERVICES`（退出UEFI引导服务检查点）。来源路径为`Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h`及`Intel/ServerPlatformPkg/Library/PlatformPostCodeMapLib/PlatformPostCodeMapLib.c`；未提供对应BIOS/RC/BKC版本，其他Intel码仍为跨平台参考，早期AF及缺失阶段的序列仍显示提示，不据单码判定OS启动成功。
+* GNR-D BWG（文档762471，Rev.0.9，2025-02，第36–39页）说明Port 80h路由、早期`0x80`及后续`0x80–0x83`解码，没有给出完整POST码表。当前BMC只监听I/O端口`0x80`；端口地址不等于POST码值，单字节采样不能还原完整的16位FSP码，亦不把BIOS Mailbox的`0x80`命令解释成POST码。
 * 本次完整 journal 在 RAM `/run/log/journal`，最多约 8 MiB；警告及以上文本保存在 `/var/log/bmc-system.log`，每文件 512 KiB、5个旧文件。SEL每文件 15 KiB、1个旧文件；Redfish日志每文件 64 KiB、1个旧文件，由 rsyslog 写入时轮转。定时器每分钟监控 RWFS 空间。
 * 普通重启不主动清除持久日志；重写 RWFS 的升级按白名单恢复设置，SEL/Redfish/系统警告日志不在白名单中，不能承诺保留。恢复出厂清除 RWFS；U-Boot环境位于独立分区。
 * SSH 使用 Dropbear，现代 SCP走 SFTP（保留 openssh-sftp-server）；旧 `scp -O` 和 rsync 不随本镜像提供。
@@ -746,7 +749,10 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 * 默认网络参数为 ipaddr 192.168.185.200/24、gatewayip 192.168.185.1、serverip 192.168.185.84；它们只用于 U-Boot。Linux eth0 默认 DHCP。QEMU的 TFTP serverip 为 192.168.185.1。
 * U-Boot已移除编译默认 ethaddr/eth1addr及缺省补齐，已有保存值仍生效。使用真实板卡生产 MAC；恢复全部默认环境前记录并恢复两路 MAC。更改 DDR/SPL或启动环境默认值，需要更新 U-Boot才能生效。
 * BMC分区升级选择写入 `bmc-partitions.txt`，后端验证后暂存到 `/run/initramfs`，重启时由 initramfs更新。kernel/rofs 成对，U-Boot/环境须显式选择。RWFS重写时按通用与板级白名单恢复设置；日志不在保留列表。
+* initramfs 检查备份、刷写及恢复的退出状态。失败时停止后续擦写/自动重启，继续喂看门狗并进入串口 `update-recovery#`，保留 `/run/save`；此时正常 Web/SSH 服务不可用。备份失败会在刷写前停止。先排除存储或挂载错误并确认 RAM 备份完整，再用 `/run/initramfs/update --no-flash --no-save-files --restore-files --no-clean-saved-files` 恢复已有备份；该命令不会重刷镜像或用空 RWFS 覆盖备份。确认镜像及配置均已恢复后才手动重启；断电仍会丢失 RAM 备份。
 * BIOS上传包需包含完整 64 MiB镜像。`bios-update.sh` 等待稳定 Host Off、持有升级/Host Flash锁，切换 GPIOM1后显式绑定 SPI-NOR，按 `bios-layout.txt` 和用户区域选择刷写。默认不改 nac0/nac1；选中这些区域需确认。解除绑定和恢复所有权后按现有流程请求主机重新上电。
+* BIOS Flash 的高电平保持由独立的 `ceb-gnrd-bios-flash-owner.service` 承担。升级脚本异常退出或 SPI 解绑失败后，`/run/ceb-gnrd-bios-flash-held` 标记保留，阻止 Host 开机/复位、BMC 重启及新的固件升级。该标记保留于当前 BMC 启动周期，不代表镜像校验成功。AC 恢复自动开机受升级互锁约束：CPLD 升级期间延后执行；BIOS 升级/所有权恢复在确认 Host Off 后通过 `/run/ceb-gnrd-bios-power-managed` 取消本次启动尚未执行的 AC 恢复，由成功的 BIOS 升级流程负责随后上电，所有权恢复则保持关机。配置的 AC 恢复策略不变。
+* BIOS 所有权异常时，先检查 `journalctl -u 'obmc-flash-host-bios@*' -u ceb-gnrd-bios-flash-owner.service` 并排除 SPI/GPIO 错误，再在 Host 关机后执行 `bios-update.sh --recover-ownership`。恢复命令重新确认稳定 Off、解绑 SPI-NOR、归还 Flash 控制权后才清除标记；不刷写镜像、不自动开机，也不验证此前刷写是否完整。不要直接删除标记或手工停止保持服务来绕过恢复。
 * CPLD使用 `ceb-gnrd-cpld-update.py`、`cpld_jtag.py` 和 `ceb-gnrd-jtag.c`。仅接受批准的 `.bit`格式、IDCODE/feature code及 primary大小；primary最大 384 KiB，不写 Golden区。任务最多 10分钟，要求 Host Off；逐页 Flash readback验证通过才报告成功，随后整板 AC power cycle生效。
 * 运行镜像与 Golden镜像的 persist_bit=1 已由板卡负责人确认，并登记在 `cpld-update.json`。`recovery.json` 持久化准确的镜像/Flash哈希及恢复条件，擦除中断后只有匹配的已批准计划才能重试；它不是任意镜像通用解锁。
 * BMC/BIOS/CPLD共用固件升级互斥和重启保护；Host Flash期间阻止Host开机/复位及BMC正常重启。升级进程退出时只释放自己的引用，最后一个引用释放后清理重启保护。
@@ -755,11 +761,14 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 
 * `ceb-gnrd-temp-max.py` 从 hwmon 标签选取 PECI Die/Core和DIMM温度，排除DTS/Tcontrol/Tthrottle/Tjmax/margin等参考值，只发布 CPU_MAX_TEMP和DIMM_MAX_TEMP。
 * 每 2秒采样；读值丢失时保留 `max(70°C, 已发布的较高温度)`，有效采样恢复后使用实测温度；确认 Chassis DC Off后清零。独立监控发现采样超过15秒停滞时采用同样保护并停止systemd watchdog报活。
+* 本次 DC 周期已发现的温度源、告警和保守温度峰值保存在 `/run/ceb-gnrd-temp-max/protection.json`，用于温度服务重启后的恢复。部分探头失读时不会只凭较凉的剩余探头解除保护；全部已知探头恢复后仍使用实时温度。仅明确观察到 DC Off 才清除历史，状态未知不视为关机；该缓存不跨 BMC 重启保留。
 * Functional区分真实测量与保护输入，有限保护输入保持Available供PID使用；阈值评估使用真实采样，失读保留已触发告警，DC Off清除Host温度告警。开机/复位过渡只延迟诊断日志，不延迟散热保护。
 * 自动曲线的输入/输出点见 `recipes-phosphor/configuration/entity-manager/ceb-gnrd.json`：CPU 40/50/60/70/80/90°C 对应30/40/50/60/80/100%；DIMM 40/50/60/70/80°C 对应30/40/55/60/100%，下降滞回2°C。PID取两条需求的较高值，区域最低30%。这些配置仍需按实板散热验证。
 * `ceb-gnrd-fan-settings.py` 为六个控制器提供串行操作、快照回滚、持久化与控制重载。网页固定值20–100%、步进10%；IPMI接受10–100%。GetFans要求六个控制器的上下限完整、有限且合法；失败时返回ConfigurationUnavailable。
+* 固定模式的最终 PWM 使用该风扇配置的占空比，高温和区域 failsafe 不覆盖固定值；温度、传感器故障和告警记录继续工作。同一区域的自适应风扇仍执行温度曲线及 60% failsafe 策略。GetFans 在固定模式返回设置值，在自适应模式返回当前 PWM。
 * `ceb-gnrd-fan-owner` 取得 GPIOI6并清除复位保持位；`ceb-gnrd-fan-release` 停止时交还CPLD。Host供电的TACH失读只在确认机箱DC Off时抑制，热复位不能按Host逻辑Off撤销散热检查。
 * `ceb-gnrd-alert-led.py` 汇总电压Critical、温度UNR及CPU/DIMM UC、600秒BIOS启动超时和Host watchdog。阈值源暂时消失不当作恢复；故障缓存保留到对应的有效状态明确解除。Host Off清除Host供电传感器的失读状态。
+* BIOS 超时先在内存锁存并尝试记录 SEL，再独立保存锁存文件；文件写入失败每 30 秒重试，不中断告警处理或重新开始 600 秒等待。CPU_MAX_TEMP / DIMM_MAX_TEMP 的 UNC、UC、UNR 阈值均只读，IPMI SDR 同样声明不可写。
 * BIOS超时在后续POST complete时解除；Host watchdog状态锁存到BMC重启。`enclosure_fault` 映射到GPIOI5的fault LED，告警期间定期重发组状态。
 
 ### 电源、UID、POST与启动设置
@@ -767,6 +776,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 * `power-config-host0.json` 的PowerOk是GPIOV4；PowerOut/ResetOut由x86-power-control独占。实体Power button只通知BMC，实体Reset没有连接BMC，因此IPMI机箱能力查询不假定Power0/Reset0 Enabled可用。
 * UID短按保持定位功能；持续5秒读取实际GPIO后请求正常BMC重启，长按释放不再重复定位，启动时已经按住的旧事件不直接当作新长按。
 * 来电恢复策略默认AlwaysOn，只在已识别AC上电时应用；单独BMC重启保留Host当前状态。未知复位来源不授权自动主机上电。AC恢复策略触发的自动开机等待Power Good最多60秒（`ACRestorePowerOKWatchdogMs=60000`）；普通开机和电源循环仍使用8秒（`PowerOKWatchdogMs=8000`）。超时仍记录上电失败。
+* 同一次BMC启动内，AC恢复任务在 `/run/ceb-gnrd-power-restore-host0/state.json` 保存待执行、已完成或已取消状态。电源服务重启会按原策略、断电前电源状态及原启动截止时间恢复等待；已执行、手动电源操作或BIOS接管所取消的任务不重放。该记录不跨BMC重启保留。
 * PSU“预测故障”（`PredictiveFailure`）须连续有效采样保持10秒，且复查仍告警后才更新健康状态和记录事件；恢复、读取失败或供电状态不适用时取消待确认告警。已确认告警恢复时立即解除。严重故障、风扇故障及AC丢失事件不使用此延迟。整机AC断电后若BMC在确认前掉电，则不会记录待确认的预测故障；余电持续超过10秒时仍可能记录。
 * BMC重启原因结合bootstatus与干净关机标记识别；正常shutdown/reboot不因ASPEED watchdog复位机制被直接当作异常watchdog。异常watchdog写入SEL；BMC Ready/正常状态变化按信息级别记录。
 * `ceb-gnrd-health` 为ObjectMapper、EntityManager、bmcweb和ipmid设置Restart/启动限制及OnFailure=Quiesce；本层fan-settings、temp-max、alert-led、boot-progress仅自动重启，不因单次服务失败直接Quiesce。Quiesced自动BMC重启限制为1次，计数保存在RWFS，正常运行15分钟后清零；持久故障留待人工处理。上游未报活的服务不能靠WatchdogSec检测卡死，本层notify服务按各自主循环报活。
@@ -778,7 +788,9 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 
 * eth0是MAC2/DT mac1，RTL8211FS-CG地址1，rgmii-id，CPLD驱动PHY reset。eth1是MAC3/DT mac2的NC-SI；U-Boot禁用eth1。
 * networkd生成和迁移物理网卡配置使用硬件Path：eth0=platform-1e680000.ethernet，eth1=platform-1e670000.ethernet；VLAN和其他接口仍按适用名称匹配。禁用网络管理器persist-mac/sync-mac，旧MAC覆盖清理保留IP等设置。
+* networkd启动前先在 `/run` 生成并比较迁移结果；配置已符合要求时不写RWFS。只有确需迁移时才原子替换配置，写入失败仍阻止启动，避免旧NC-SI策略提前拉起网口。
 * NC-SI要求Chassis On、POST complete和NICEnabled，等待5秒再拉起；初始无carrier每30秒重试，三次后每300秒慢恢复。已获取carrier后的网线掉线保留已发现通道，等待内核恢复；状态未知时不主动拉起或重探测。
+* 内核区分发现 NC-SI 通道与完成版本/能力初始化。初次探测为空或中途失败时，下次接口启动会重试；不完整通道不参与配置，正常通道和选择策略保留，重复探测复用已初始化的过滤表。
 * `ceb-gnrd-psu-detect.sh` 启动一次探测i2c-7。未绑定时读取STATUS_WORD，失败才尝试STATUS_BYTE；MFR_MODEL规范化为MEGCRPS800AOP/CRPS800AOP时选megcrps800，否则选generic pmbus。已绑定设备用驱动锁保护的hwmon/debugfs路径，不强制绕过驱动访问PAGE/PEC。
 * Generic PMBus并不保证每家PSU提供相同通道；PSUSensor按实际驱动hwmon标签发布输入/输出电压、功率和温度。换框/换模块后需重启BMC重新检测；没有定时热插拔切换。未配置PSU在位/冗余/阈值告警。
 * NCT3015Y-R在i2c-9/0x6f，作为rtc0；RTC sync最多等待3秒，总启动超时5秒。NTP禁用时网络管理器不请求不存在的timesync服务；启用后需要核对配置与同步结果。
@@ -788,9 +800,10 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 
 * JFFS2不适合二进制journal的可写mmap，本板journal为RAM存储，限8MiB/8文件。rsyslog将warning及以上写入持久`bmc-system.log`（512KiB、5旧文件），SEL 15KiB/1旧文件，Redfish 64KiB/1旧文件。轮转在写入时执行，保留条数取决于记录大小。
 * `ceb-gnrd-sel-logrotate` 名称保留，但当前定时任务是RWFS空间监控；启动清理限制旧诊断文件，不删除用户设置。SEL事件元数据保留sensor type/number/event type/generator ID；标准`ipmitool event`格式与手动Platform Event兼容。
+* SEL logger 重启后收到的第一条阈值变化可为触发或解除，不能因内存中缺少旧触发而丢弃恢复事件；后续相同状态仍去重。网页事件列表读取所有 Redfish 分页，列表与“全部导出”使用同一完整结果；分页失败保留上次完整列表。
 * BMC普通重启保留持久日志；升级选择重写RWFS时日志不在白名单。用户、网络、机器ID等由通用白名单保留；板级白名单另含时区、主机名、SSH/HTTPS/CA证书、风扇设置、CPLD recovery和bmcweb持久数据。整片编程器烧录/恢复出厂不等同普通升级保留流程。
 * CA证书以单张文件和hash links为持久化来源；批量上传包仅用于校验/暂存，提交前删除快照。旧bundle按独立文件迁移，不恢复已经删除的CA。普通服务退出保留CA文件；显式Delete/DeleteAll仍删除；批量替换保留事务回滚。
-* `ceb-gnrd-check 1` 对实板进行当前状态只读诊断并保存报告/日志包。检查通过不代替Host侧功能、时序或压力验证；显式CEB_CHECK_CLEAR_LOGS=1才授权删除事件日志。
+* `ceb-gnrd-check 1` 对实板进行当前状态只读诊断并保存报告/日志包。关机时跳过配置为 On/ChassisOn/BiosPost 的实时读数检查，仍检查六个风扇 SDR 是否存在。检查通过不代替Host侧功能、时序或压力验证；显式CEB_CHECK_CLEAR_LOGS=1才授权删除事件日志。
 * `bmc-hw-dump` 提供只读GPIO/pinmux/I2C/eSPI/KCS/VUART/网络/MTD等转储。原始信号球位来自硬件契约和pinctrl，不应从端口表反推已完成实板验证。
 
 ### 已知限制与实板确认

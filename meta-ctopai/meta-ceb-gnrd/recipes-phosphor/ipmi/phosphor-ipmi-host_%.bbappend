@@ -47,3 +47,6 @@ SRC_URI:append:ceb-gnrd = " file://0007-ceb-gnrd-report-front-panel-masking-unsu
 
 # Keep live UNR status and event masks consistent with the exposed thresholds.
 SRC_URI:append:ceb-gnrd = " file://0008-ceb-gnrd-report-live-non-recoverable-alarms.patch"
+
+# Aggregate temperature thresholds are reported but cannot be changed by IPMI.
+SRC_URI:append:ceb-gnrd = " file://0009-ceb-gnrd-read-only-aggregate-thresholds.patch"

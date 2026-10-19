@@ -27,7 +27,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
  #include <sys/sysinfo.h>
  #include <sys/stat.h>
  
-@@ -42,6 +48,36 @@
+@@ -42,6 +48,43 @@
  
  namespace power_control
  {
@@ -49,6 +49,13 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
 +            }
 +            throw std::runtime_error("Host start/reset is blocked during firmware programming");
 +        }
++        // A failed BIOS detach must survive the updater process exiting.
++        if (access("/run/ceb-gnrd-bios-flash-held", F_OK) == 0 || errno != ENOENT)
++        {
++            close(fd);
++            fd = -1;
++            throw std::runtime_error("BIOS flash ownership requires recovery before host start/reset");
++        }
 +    }
 +    ~HostFirmwarePowerGuard()
 +    {
@@ -64,7 +71,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
  static boost::asio::io_context io;
  std::shared_ptr<sdbusplus::asio::connection> conn;
  PersistentState appState;
-@@ -586,6 +622,8 @@
+@@ -586,6 +629,8 @@
      hostIface->set_property("CurrentHostState",
                              std::string(getHostState(powerState)));
  
@@ -73,7 +80,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
      chassisIface->set_property("CurrentPowerState",
                                 std::string(getChassisState(powerState)));
      chassisIface->set_property("LastStateChangeTime", getCurrentTimeMs());
-@@ -3096,6 +3134,11 @@
+@@ -3096,6 +3141,11 @@
          "RequestedHostTransition",
          std::string("xyz.openbmc_project.State.Host.Transition.Off"),
          [](const std::string& requested, std::string& resp) {
@@ -85,7 +92,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
              if (requested == "xyz.openbmc_project.State.Host.Transition.Off")
              {
                  // if power button is masked, ignore this
-@@ -3204,6 +3247,11 @@
+@@ -3204,6 +3254,11 @@
          "RequestedPowerTransition",
          std::string("xyz.openbmc_project.State.Chassis.Transition.Off"),
          [](const std::string& requested, std::string& resp) {
@@ -97,7 +104,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
              if (requested == "xyz.openbmc_project.State.Chassis.Transition.Off")
              {
                  // if power button is masked, ignore this
-@@ -3260,9 +3308,14 @@
+@@ -3260,9 +3315,14 @@
              resp = requested;
              return 1;
          });
@@ -112,7 +119,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
          if (powerState != PowerState::off)
          {
              throw std::invalid_argument("ForcePowerButtonOff requires host Off");
-@@ -3295,6 +3348,11 @@
+@@ -3295,6 +3355,11 @@
          "RequestedPowerTransition",
          std::string("xyz.openbmc_project.State.Chassis.Transition.On"),
          [](const std::string& requested, std::string& resp) {
@@ -124,7 +131,7 @@ diff --git a/src/power_control.cpp b/src/power_control.cpp
              if (requested ==
                  "xyz.openbmc_project.State.Chassis.Transition.PowerCycle")
              {
-@@ -3338,6 +3396,11 @@
+@@ -3338,6 +3403,11 @@
              "RequestedPowerTransition",
              std::string("xyz.openbmc_project.State.Chassis.Transition.On"),
              [](const std::string& requested, std::string& resp) {
