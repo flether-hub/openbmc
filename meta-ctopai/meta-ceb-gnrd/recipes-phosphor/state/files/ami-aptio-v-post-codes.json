@@ -1848,8 +1848,8 @@
     }
   },
   "readingGuidance": {
-    "zh": "按同一启动轮次的接收顺序解读，优先采用项目 BIOS 源码定义，其他平台表仅供参考。最后一个码只表示执行位置，不能单独判定器件故障或启动成功。",
-    "en": "Read codes in receive order within each boot cycle. Project BIOS definitions take priority; other platform tables are references. The last checkpoint identifies an execution point, not a failed component or proof of successful boot."
+    "zh": "POST 代码按每次启动的接收顺序显示，用于查看 BIOS 启动进度。",
+    "en": "POST codes are displayed in receive order for each boot cycle to show BIOS startup progress."
   },
   "sequenceRules": {
     "earlyAmiProgress": [
