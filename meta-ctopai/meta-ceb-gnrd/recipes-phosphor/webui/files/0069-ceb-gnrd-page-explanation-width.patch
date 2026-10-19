@@ -1,0 +1,40 @@
+Subject: [PATCH] webui: use available width for page explanations
+
+Expand the reboot explanation and shared page subtitles while preserving
+normal wrapping on narrow screens.
+
+Upstream-Status: Inappropriate [CEB-GNRD presentation]
+
+--- a/src/views/Operations/RebootBmc/RebootBmc.vue
++++ b/src/views/Operations/RebootBmc/RebootBmc.vue
+@@ -2,7 +2,7 @@
+   <b-container fluid="xl">
+     <page-title />
+     <b-row>
+-      <b-col md="8" lg="8" xl="6">
++      <b-col cols="12">
+         <page-section>
+           <b-row>
+             <b-col>
+@@ -18,7 +18,9 @@
+               </dl>
+             </b-col>
+           </b-row>
+-          {{ $t('pageRebootBmc.rebootInformation') }}
++          <p class="mb-0 lh-base">
++            {{ $t('pageRebootBmc.rebootInformation') }}
++          </p>
+           <b-button
+             variant="primary"
+             class="d-block mt-5"
+--- a/src/components/Global/PageTitle.vue
++++ b/src/components/Global/PageTitle.vue
+@@ -29,6 +29,7 @@
+   margin-bottom: $spacer * 2;
+ }
+ p {
+-  max-width: 72ch;
++  max-width: 100%;
++  line-height: 1.5;
+ }
+ </style>

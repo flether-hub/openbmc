@@ -1,0 +1,35 @@
+Subject: [PATCH] webui: keep POST descriptions concise
+
+Remove appended phase cautions and internal symbol names from displayed
+POST meanings. Keep sequence classification and boot state logic intact.
+
+Upstream-Status: Inappropriate [CEB-GNRD presentation]
+
+--- a/src/utils/amiPostCodes.js
++++ b/src/utils/amiPostCodes.js
+@@ -85,11 +85,5 @@
+   const project = key && catalog.gnrdCodes?.[key];
+   if (project && context !== 'acpi') {
+-    let text = `${labels.gnrdDefinition[language]} / ${project.phase}: ${project.description[language]} (${project.symbol})`;
+-    if (key === 'AF' && ['intelPlatform', 'intelMemory'].includes(context)) {
+-      text += `; ${labels.earlyExitConflict[language]}`;
+-    } else if (!context || ['unresolved', 'platformUnknown'].includes(context)) {
+-      text += `; ${labels.sequenceUnresolved[language]}`;
+-    }
+-    return text;
++    return `${project.phase}: ${project.description[language]}`;
+   }
+   if (context === 'intelMemory') {
+@@ -97,5 +91,5 @@
+   }
+   if (['intelPlatform', 'platformUnknown', 'unresolved'].includes(context)) {
+-    return `${labels[context][language]}: ${unmatched}`;
++    return unmatched;
+   }
+   if (context === 'acpi' && catalog.acpi[key]) {
+@@ -108,5 +102,4 @@
+     const error = entry.kind === 'error' ? (language === 'zh' ? ' 错误' : ' error') : '';
+     text = `${labels.amiReference[language]} / ${entry.phase}${error}: ${entry.description[language]}`;
+-    if (['reserved', 'oem'].includes(entry.kind)) text += `; ${unmatched}`;
+   }
+   return text;

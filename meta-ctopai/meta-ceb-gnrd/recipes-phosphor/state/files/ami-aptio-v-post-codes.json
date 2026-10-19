@@ -1831,8 +1831,8 @@
       "zh": "配置内存 RAS（可靠性、可用性与可维护性）"
     },
     "BF": {
-      "en": "MRC start/stop checkpoint; the byte alone does not distinguish start from stop",
-      "zh": "MRC 开始/结束检查点；单个码无法区分开始或结束"
+      "en": "MRC start/stop checkpoint",
+      "zh": "MRC 开始/结束检查点"
     },
     "7E": {
       "en": "Memory initialization pipeline synchronization",
@@ -1899,8 +1899,8 @@
       "kind": "checkpoint",
       "symbol": "DXE_EXIT_BOOT_SERVICES",
       "description": {
-        "en": "ExitBootServices checkpoint; does not prove the operating system has started successfully",
-        "zh": "退出 UEFI 引导服务检查点；不代表操作系统已成功启动"
+        "en": "ExitBootServices checkpoint",
+        "zh": "退出 UEFI 引导服务检查点"
       },
       "sourcePath": "Intel/ServerPlatformPkg/Library/PlatformPostCodeMapLib/PlatformPostCodeMapLib.c",
       "basis": "project-supplied-source-definition",
@@ -1923,8 +1923,8 @@
       "kind": "checkpoint",
       "symbol": "CHECKPOINT_MAJOR_MRC_START_STOP",
       "description": {
-        "en": "MRC start/stop checkpoint; the byte alone does not distinguish start from stop",
-        "zh": "MRC 开始/结束检查点；单个码无法区分开始或结束"
+        "en": "MRC start/stop checkpoint",
+        "zh": "MRC 开始/结束检查点"
       },
       "sourcePath": "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h",
       "basis": "project-supplied-source-definition",
@@ -1982,8 +1982,8 @@
         "en": "Allow memory training to finish. If progress stalls, check supported DIMM types and population order. With AC disconnected, isolate using the board-required minimum configuration and known-good memory; correlate serial output and event logs."
       },
       "nvram": {
-        "zh": "检查近期 BIOS 设置变更。若厂商流程要求恢复默认或清 CMOS，先记录自定义设置；仅凭此码不能确定是电池或 NVRAM 损坏。",
-        "en": "Review recent BIOS setting changes. Record custom settings before following a vendor procedure to load defaults or clear CMOS. This checkpoint alone does not prove a battery or NVRAM fault."
+        "zh": "检查近期 BIOS 设置变更。若厂商流程要求恢复默认或清 CMOS，先记录自定义设置。",
+        "en": "Review recent BIOS setting changes. Record custom settings before following a vendor procedure to load defaults or clear CMOS."
       },
       "pcie": {
         "zh": "检查近期新增的 PCIe 设备、固件与资源配置；断开 AC 后逐一减少扩展卡，用最小配置对比启动结果。",
@@ -1994,16 +1994,16 @@
         "en": "Check whether USB devices and virtual media respond. Preserve diagnostics, then reduce nonessential USB devices when doing so will not interrupt an installation or update."
       },
       "storage": {
-        "zh": "核对存储设备识别、连接和启动顺序；该参考码属于传统 IDE/SATA 检测，不能直接据此判定 NVMe 故障。",
-        "en": "Check storage detection, connections and boot order. This reference checkpoint concerns legacy IDE/SATA detection and does not by itself identify an NVMe failure."
+        "zh": "核对存储设备识别、连接和启动顺序。",
+        "en": "Check storage detection, connections and boot order."
       },
       "optionRom": {
         "zh": "检查 HBA、RAID、网卡等扩展卡的 Option ROM 与启动配置；对照厂商兼容性说明逐项排除，先记录原设置。",
         "en": "Review Option ROM and boot settings for add-in cards such as HBA, RAID and network adapters. Record existing settings and isolate devices using vendor compatibility guidance."
       },
       "boot": {
-        "zh": "检查启动设备、引导程序以及后续 KVM/串口输出。到达引导交接检查点不代表操作系统已成功启动。",
-        "en": "Check the selected boot device, boot loader and subsequent KVM or serial output. Reaching a boot handoff checkpoint does not prove that the operating system started successfully."
+        "zh": "检查启动设备、引导程序以及后续 KVM/串口输出。",
+        "en": "Check the selected boot device, boot loader and subsequent KVM or serial output."
       }
     },
     "amiAdvice": {

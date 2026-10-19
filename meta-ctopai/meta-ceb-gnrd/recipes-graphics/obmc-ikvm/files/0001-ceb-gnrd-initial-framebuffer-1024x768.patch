@@ -1,0 +1,19 @@
+Subject: [PATCH] ikvm: initialize the framebuffer at 1024x768
+
+Use 1024x768 for the initial CEB-GNRD VNC framebuffer. Video format and
+timing detection continue to replace these dimensions with the actual
+capture resolution once the video device supplies it.
+
+Upstream-Status: Inappropriate [CEB-GNRD initial display size]
+
+--- a/ikvm_video.cpp
++++ b/ikvm_video.cpp
+@@ -28,7 +28,7 @@
+ 
+ Video::Video(const std::string& p, Input& input, int fr, int sub) :
+     resizeAfterOpen(false), timingsError(false), fd(-1), frameRate(fr),
+-    lastFrameIndex(-1), height(600), width(800), subSampling(sub), input(input),
++    lastFrameIndex(-1), height(768), width(1024), subSampling(sub), input(input),
+     path(p), bitsPerSample(8), bytesPerPixel(4), samplesPerPixel(3)
+ {}
+ 
