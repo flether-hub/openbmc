@@ -1,8 +1,9 @@
 #!/bin/bash
 # Independent cgroup: an exited/timed-out BIOS updater cannot kill this holder.
-# The marker is removed only after SPI detach and verified GPIO hand-back.
+# Markers are removed only after SPI detach and successful GPIO hand-back.
 set -euo pipefail
 [[ -d /run/ceb-gnrd-bios-flash-held ]] || exit 1
+[[ -e /var/lib/ceb-gnrd/bios-flash-held ]] || exit 1
 mkdir -p /run/lock
 exec 6>/run/lock/ceb-gnrd-reboot-guard.lock
 flock -s 6
@@ -16,7 +17,7 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
-trap 'exit 0' TERM INT
+trap 'exit 0' TERM INT HUP
 read -r chip line <<< "$(gpiofind BMC_BIOS_FLASH_SELECT)"
 [[ -n "${chip:-}" && -n "${line:-}" ]] || exit 1
 gpioset --mode=signal "$chip" "${line}=1" &

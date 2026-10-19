@@ -1,0 +1,77 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] power: notify resident watchdog after a host hard reset
+
+A hard reset does not necessarily drop chassis power-good. Notify the
+resident host watchdog after a successful reset GPIO assertion so that it
+does not carry an old OS countdown into the new BIOS boot. Also handle an
+unmasked reset-button edge on a powered host if the board defines one.
+Software button passthrough must succeed before emitting the notification.
+
+Rejected firmware-interlock requests never reach reset(), failed GPIO
+assertions do not emit, and POST-only warm reset detection is unchanged.
+Actual chassis Off is handled independently by the watchdog's state match.
+
+Upstream-Status: Inappropriate [CEB-GNRD host lifecycle]
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -1606,9 +1606,31 @@
+     });
+ }
+ 
++static void notifyHostHardReset()
++{
++    // Emit only after an actual reset assertion, never for POST deassertion.
++    // The resident watchdog consumes this in its own event loop. No delayed
++    // Properties.Set/retry can accidentally disable the next boot's timer.
++    try
++    {
++        const std::string path = "/xyz/openbmc_project/state/chassis" + node;
++        auto signal = conn->new_signal(
++            path.c_str(), "com.ctopai.CebGnrd.HostLifecycle", "HardReset");
++        signal.signal_send();
++    }
++    catch (const std::exception& e)
++    {
++        lg2::error("Failed to notify host watchdog of hard reset: {ERROR}",
++                   "ERROR", e.what());
++    }
++}
++
+ static void reset()
+ {
+-    assertGPIOForMs(resetOutConfig, TimerMap["ResetPulseMs"]);
++    if (assertGPIOForMs(resetOutConfig, TimerMap["ResetPulseMs"]) == 0)
++    {
++        notifyHostHardReset();
++    }
+ }
+ 
+ static void gracefulPowerOffTimerStart()
+@@ -2279,6 +2301,9 @@
+ static void resetButtonHandler(bool state)
+ {
+     bool asserted = state == resetButtonConfig.polarity;
++    const bool hostReset = asserted && !resetButtonMask &&
++        getChassisState(powerState) ==
++            "xyz.openbmc_project.State.Chassis.PowerState.On";
+     resetButtonIface->set_property("ButtonPressed", asserted);
+     if (asserted)
+     {
+@@ -2301,8 +2326,15 @@
+     {
+         lg2::error("{GPIO_NAME} reset button passthrough failed", "GPIO_NAME",
+                    resetOutConfig.lineName);
++        return;
+     }
+ #endif
++    // In hardware passthrough mode the unmasked edge observes the reset;
++    // in software passthrough mode the output assertion above must succeed.
++    if (hostReset)
++    {
++        notifyHostHardReset();
++    }
+ }
+ 
+ #ifdef CHASSIS_SYSTEM_RESET

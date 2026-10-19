@@ -12,17 +12,45 @@ readonly FORCE_OFF_PULSE_S=9
 FLASH_SELECT_PID=""
 FLASH_OWNERSHIP_SELECTED=0
 REBOOT_GUARD_HELD=0
+PERSISTENT_MARKER_DIRTY=0
 BIOS_SPI_DEVICE=""
 readonly BIOS_SPI_COMPATIBLE="ctopai,ceb-gnrd-host-bios"
 readonly OWNERSHIP_MARKER=/run/ceb-gnrd-bios-flash-held
+readonly PERSISTENT_MARKER=/var/lib/ceb-gnrd/bios-flash-held
 readonly OWNER_SERVICE=ceb-gnrd-bios-flash-owner.service
+readonly RECOVERY_SERVICE=ceb-gnrd-bios-flash-recover.service
+readonly POWER_CONTROL_SERVICE=xyz.openbmc_project.Chassis.Control.Power@0.service
 RECOVER_ONLY=0
+BOOT_RECOVERY=0
+RECOVERY_PENDING=0
+MANUAL_RECOVERY=0
+RESUME_POWER_CONTROL=0
 
-if [[ $# -eq 1 && "$1" == --recover-ownership ]]; then
+if [[ $# -eq 1 && "$1" == --boot-recover-ownership ]]; then
     RECOVER_ONLY=1
+    BOOT_RECOVERY=1
+elif [[ $# -eq 1 && ( "$1" == --recover-ownership || "$1" == --recover-if-held ) ]]; then
+    RECOVER_ONLY=1
+    if [[ "$1" == --recover-ownership ]]; then
+        MANUAL_RECOVERY=1
+    fi
+    if [[ "$1" == --recover-if-held && ! -e "$OWNERSHIP_MARKER" && ! -e "$PERSISTENT_MARKER" ]]; then
+        exit 0
+    fi
 elif [[ $# -ne 1 || ! -d "$1" ]]; then
     echo "Usage: $0 <directory-containing-BIOS-image> | --recover-ownership" >&2
     exit 2
+fi
+
+# Block host starts before boot recovery can fail, including old firmware's
+# lost /run marker. Manual recovery first obtains the programmer locks below.
+if (( RECOVER_ONLY )); then
+    if [[ -e "$OWNERSHIP_MARKER" || -e "$PERSISTENT_MARKER" ]]; then
+        RECOVERY_PENDING=1
+    fi
+    if (( BOOT_RECOVERY )); then
+        mkdir -p "$OWNERSHIP_MARKER"
+    fi
 fi
 
 # Serialize ownership changes and writes, including manually invoked updates.
@@ -39,21 +67,20 @@ flock -s -n 8 || {
     echo "ERROR: A CPLD update is active; BIOS update is blocked." >&2
     exit 1
 }
+if (( RECOVER_ONLY && ! BOOT_RECOVERY )); then
+    mkdir -p "$OWNERSHIP_MARKER"
+fi
 
 # Recheck after acquiring the update locks. A static BMC update remains pending
 # until reboot, including if bmcweb or the software updater daemon restarted.
-if [[ -e /run/initramfs/bmc-partitions.txt ||
-      -e /run/initramfs/ceb-gnrd-update-incomplete ]]; then
+if (( ! RECOVER_ONLY )) && [[ -e /run/initramfs/bmc-partitions.txt ||
+                            -e /run/initramfs/ceb-gnrd-update-incomplete ]]; then
     echo "ERROR: BMC firmware update is staged; restart the BMC before updating BIOS." >&2
     exit 1
 fi
-if [[ -e "$OWNERSHIP_MARKER" && "$RECOVER_ONLY" == 0 ]]; then
+if (( ! RECOVER_ONLY )) && [[ -e "$OWNERSHIP_MARKER" || -e "$PERSISTENT_MARKER" ]]; then
     echo "ERROR: BIOS ownership recovery required: bios-update.sh --recover-ownership" >&2
     exit 1
-fi
-if [[ "$RECOVER_ONLY" == 1 && ! -d "$OWNERSHIP_MARKER" ]]; then
-    echo "No pending BIOS ownership recovery."
-    exit 0
 fi
 
 # Progress for the web page: the image directory is /tmp/images/<version id>, and the
@@ -229,7 +256,12 @@ flock -n 7 || {
     echo "ERROR: Another host firmware programmer is active." >&2
     exit 1
 }
-wait_for_host_off
+# Returning ownership only drives the mux low, so it is also safe when the
+# host is already running. Boot recovery must not wait for power-control's
+# D-Bus service: that service starts only after this recovery has completed.
+if (( ! RECOVER_ONLY )); then
+    wait_for_host_off
+fi
 
 find_bios_mtd() {
     local entry name size
@@ -268,6 +300,21 @@ find_bios_spi_device() {
     BIOS_SPI_DEVICE=${matches[0]}
 }
 
+wait_for_recovery_devices() {
+    local deadline=$((SECONDS + 10))
+    # udev-trigger completion does not guarantee that deferred probes have
+    # registered both devices. Keep the host interlock while waiting briefly.
+    while (( SECONDS < deadline )); do
+        if find_bios_spi_device >/dev/null 2>&1 &&
+            timeout -k 1 1 gpiofind "$FLASH_SELECT_GPIO" >/dev/null 2>&1; then
+            return 0
+        fi
+        (( SECONDS >= deadline )) || sleep 1
+    done
+    echo "ERROR: BIOS SPI device or $FLASH_SELECT_GPIO was not ready within 10 seconds; host starts remain blocked." >&2
+    return 1
+}
+
 reprobe_bios_spi_nor() {
     local driver_dir=/sys/bus/spi/drivers/spi-nor
     [[ -w "$driver_dir/bind" ]] || return 1
@@ -287,16 +334,25 @@ release_bios_spi_nor() {
     if [[ -z "$BIOS_SPI_DEVICE" ]]; then
         find_bios_spi_device || return 1
     fi
-    if [[ -e "$BIOS_SPI_DEVICE/driver" ]]; then
-        [[ "$(readlink -f "$BIOS_SPI_DEVICE/driver")" == /sys/bus/spi/drivers/spi-nor ]] || {
-            echo "ERROR: BIOS SPI device has an unexpected driver." >&2
-            return 1
-        }
-        # Remove MTD access before handing the shared chip back to the CPU.
-        printf '%s' "${BIOS_SPI_DEVICE##*/}" > /sys/bus/spi/drivers/spi-nor/unbind || return 1
-        [[ ! -e "$BIOS_SPI_DEVICE/driver" ]] || return 1
+    # The unbind worker owns this lock until it exits. A stuck kernel remove
+    # may already have removed the driver symlink; a retry must not mistake
+    # that for a completed detach and hand back the flash while it is busy.
+    if ! timeout -k 2 15 flock -n /run/lock/ceb-gnrd-bios-spi-detach.lock \
+        bash -ec '
+            device=$1
+            if [[ -e "$device/driver" ]]; then
+                [[ "$(readlink -f "$device/driver")" == /sys/bus/spi/drivers/spi-nor ]] || {
+                    echo "ERROR: BIOS SPI device has an unexpected driver." >&2
+                    exit 1
+                }
+                printf "%s" "${device##*/}" > /sys/bus/spi/drivers/spi-nor/unbind
+                [[ ! -e "$device/driver" ]]
+            fi
+            printf "\n" > "$device/driver_override"
+        ' _ "$BIOS_SPI_DEVICE"; then
+        echo "ERROR: Timed out or failed detaching BIOS SPI; retaining the host interlock." >&2
+        return 1
     fi
-    printf '\n' > "$BIOS_SPI_DEVICE/driver_override" || return 1
     BIOS_SPI_DEVICE=""
 }
 
@@ -326,23 +382,29 @@ set_flash_select() {
 return_flash_to_host() {
     # Caller has already detached the SPI driver. Keep the marker/host lock
     # across the GPIO handoff, including if stop or gpioset fails.
-    systemctl stop "$OWNER_SERVICE" || return 1
+    timeout -k 2 10 systemctl stop "$OWNER_SERVICE" || return 1
     set_flash_select 0 || return 1
+    # The persistent record is cleared only after SPI detach and the GPIO
+    # hand-back succeed. A read-only/full rwfs leaves a diagnosable interlock.
+    if [[ -e "$PERSISTENT_MARKER" ]]; then
+        PERSISTENT_MARKER_DIRTY=1
+        rm "$PERSISTENT_MARKER" || return 1
+    fi
+    if (( PERSISTENT_MARKER_DIRTY )); then
+        timeout -k 2 15 sync || return 1
+        PERSISTENT_MARKER_DIRTY=0
+    fi
     rmdir "$OWNERSHIP_MARKER" || return 1
     FLASH_OWNERSHIP_SELECTED=0
 }
 
 retain_flash_fault() {
-    # Release any local low-level holder before restarting the independent
-    # high-level holder. The marker blocks On/Reset, BMC reboot and new jobs.
-    if [[ -n "$FLASH_SELECT_PID" ]]; then
-        kill "$FLASH_SELECT_PID" 2>/dev/null || true
-        wait "$FLASH_SELECT_PID" 2>/dev/null || true
-        FLASH_SELECT_PID=""
-    fi
-    systemctl start "$OWNER_SERVICE" ||
-        echo "ERROR: BIOS GPIO holder unavailable; ownership marker remains blocking power requests." >&2
-    echo "ERROR: BIOS ownership recovery required; keep Host off. Run bios-update.sh --recover-ownership after resolving SPI/GPIO errors." >&2
+    # Never select high while recovering: the host may already be running
+    # after a BMC restart. Preserve the interlock and any existing holder.
+    mkdir -p "$OWNERSHIP_MARKER" || true
+    local message="BIOS ownership recovery failed; host starts remain blocked. Run bios-update.sh --recover-ownership after resolving SPI/GPIO/storage errors."
+    echo "ERROR: $message" >&2
+    logger -p user.err -t bios-update "$message" || true
 }
 
 request_power_transition() {
@@ -362,10 +424,18 @@ request_power_transition() {
 cleanup() {
     local result=$?
     trap - EXIT
+    trap '' HUP INT TERM
+    set +e
     if (( FLASH_OWNERSHIP_SELECTED )); then
+        if (( result != 0 )); then
+            echo "ERROR: BIOS operation failed (status $result); attempting to return flash ownership to BIOS." >&2
+        fi
         if ! release_bios_spi_nor || ! return_flash_to_host; then
             retain_flash_fault
-            exit 1
+            result=1
+        elif (( result != 0 )); then
+            logger -p user.warning -t bios-update \
+                "BIOS operation failed; flash ownership returned to BIOS. Image validity is unknown; host power-on was not requested." || true
         fi
     fi
     if [[ -n "$FLASH_SELECT_PID" ]]; then
@@ -379,32 +449,56 @@ cleanup() {
         REBOOT_GUARD_HELD=0
         /usr/bin/obmc-flash-bmc rebootguarddisable || result=1
     fi
+    if (( RESUME_POWER_CONTROL && result == 0 )); then
+        # A failed required boot-recovery unit also prevents power-control
+        # from starting. Release all programmer locks before queuing its
+        # dependency chain; a new recovery process must be able to acquire
+        # them immediately. Keep bios-power-managed to suppress AC restore.
+        exec 7>&- 8>&- 9>&-
+        if timeout -k 2 10 systemctl reset-failed "$RECOVERY_SERVICE" "$POWER_CONTROL_SERVICE" &&
+            timeout -k 2 10 systemctl --no-block start "$RECOVERY_SERVICE" "$POWER_CONTROL_SERVICE"; then
+            echo "Power-control service recovery queued; automatic host power-on remains suppressed."
+        else
+            echo "ERROR: BIOS ownership was returned, but power-control service recovery could not be queued." >&2
+            result=1
+        fi
+    fi
     exit "$result"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # This reference outlives a restart of the software updater daemon. The
 # service's ExecStopPost reconciles the guard after unexpected shell exits.
-exec 6>/run/lock/ceb-gnrd-reboot-guard.lock
-flock -s 6
-REBOOT_GUARD_HELD=1
-/usr/bin/obmc-flash-bmc rebootguardenable
+if (( ! BOOT_RECOVERY )); then
+    exec 6>/run/lock/ceb-gnrd-reboot-guard.lock
+    flock -s 6
+    REBOOT_GUARD_HELD=1
+    /usr/bin/obmc-flash-bmc rebootguardenable
+fi
 
 # This BIOS operation supersedes this boot's pending AC restore policy, even
 # if that timer expires after ownership has been released. A successful update
 # performs its own power cycle; ownership-only recovery must not boot an
 # unverified image. /run clears this decision at the next BMC boot.
-: > /run/ceb-gnrd-bios-power-managed
+if (( ! BOOT_RECOVERY || RECOVERY_PENDING )); then
+    : > /run/ceb-gnrd-bios-power-managed
+fi
 
 if (( RECOVER_ONLY )); then
+    if (( BOOT_RECOVERY )); then
+        wait_for_recovery_devices
+    fi
     FLASH_OWNERSHIP_SELECTED=1
     find_bios_spi_device
-    systemctl start "$OWNER_SERVICE"
     release_bios_spi_nor
     return_flash_to_host
-    echo "BIOS ownership recovered. Host remains off; image validity has not been checked."
+    # Stop-post recovery must not start services. Only an explicit manual
+    # recovery repairs the service chain after a failed boot recovery.
+    RESUME_POWER_CONTROL=$MANUAL_RECOVERY
+    echo "BIOS ownership returned to host. No host power transition requested; image validity has not been checked."
     exit 0
 fi
 
@@ -413,6 +507,12 @@ echo "Selecting BMC ownership of BIOS flash via $FLASH_SELECT_GPIO"
 set_progress 25
 mkdir "$OWNERSHIP_MARKER"
 FLASH_OWNERSHIP_SELECTED=1
+# Persist intent before the first high level, so a watchdog reset cannot lose
+# the unfinished update indication along with /run. Do not select BMC on a
+# read-only/full filesystem or a failed flush.
+mkdir -p "${PERSISTENT_MARKER%/*}"
+: > "$PERSISTENT_MARKER"
+timeout -k 2 15 sync
 systemctl start "$OWNER_SERVICE"
 sleep 5
 set_progress 28

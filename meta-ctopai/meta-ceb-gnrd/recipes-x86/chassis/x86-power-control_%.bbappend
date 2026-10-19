@@ -10,6 +10,7 @@ SRC_URI:append = " \
     file://0006-ceb-gnrd-block-host-start-during-firmware-programming.patch \
     file://0007-ceb-gnrd-ac-restore-power-good-timeout.patch \
     file://0008-ceb-gnrd-resume-pending-ac-restore.patch \
+    file://0009-ceb-gnrd-notify-watchdog-after-hard-reset.patch \
     "
 
 EXTRA_OEMESON:append = " \

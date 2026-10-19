@@ -604,6 +604,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * POST 只保留最近一次 Host 启动，每轮最多 512 条；冷启动/热复位切换历史。BMC或 POST服务重启恢复当前轮，不以空内存缓存作为新 Host 启动。按 4F/60、90、AD、AF 等锚点判断 AMI/Intel 参考上下文；原始码仍保留，未知/OEM码不强行判为错误。
 * Web POST 解码优先采用项目于2026-10-19提供的BIOS源码定义：`7E=CHECKPOINT_MAJOR_PIPE_SYNC`（内存流水线同步）、`BC=CHECKPOINT_MAJOR_RAS_CONFIG`（内存RAS配置）、`BF=CHECKPOINT_MAJOR_MRC_START_STOP`（MRC开始/结束，不能固定判为完成）、`C6=CHECKPOINT_MAJOR_DIMM_INFO`（DIMM信息）、`CE=CHECKPOINT_MAJOR_MEM_LATE`（内存初始化后期）、`AF=DXE_EXIT_BOOT_SERVICES`（退出UEFI引导服务检查点）。来源路径为`Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h`及`Intel/ServerPlatformPkg/Library/PlatformPostCodeMapLib/PlatformPostCodeMapLib.c`；未提供对应BIOS/RC/BKC版本，其他Intel码仍为跨平台参考，早期AF及缺失阶段的序列仍显示提示，不据单码判定OS启动成功。
 * GNR-D BWG（文档762471，Rev.0.9，2025-02，第36–39页）说明Port 80h路由、早期`0x80`及后续`0x80–0x83`解码，没有给出完整POST码表。当前BMC只监听I/O端口`0x80`；端口地址不等于POST码值，单字节采样不能还原完整的16位FSP码，亦不把BIOS Mailbox的`0x80`命令解释成POST码。
+* Web POST 页面常显阅读说明；有明确序列上下文的记录可展开持续停码时的排查参考。外部故障排查文档仅补充检查建议，不覆盖项目 BIOS 定义，不凭单码判定故障部件、DIMM 槽位或启动成功。
 * 本次完整 journal 在 RAM `/run/log/journal`，最多约 8 MiB；警告及以上文本保存在 `/var/log/bmc-system.log`，每文件 512 KiB、5个旧文件。SEL每文件 15 KiB、1个旧文件；Redfish日志每文件 64 KiB、1个旧文件，由 rsyslog 写入时轮转。定时器每分钟监控 RWFS 空间。
 * 普通重启不主动清除持久日志；重写 RWFS 的升级按白名单恢复设置，SEL/Redfish/系统警告日志不在白名单中，不能承诺保留。恢复出厂清除 RWFS；U-Boot环境位于独立分区。
 * SSH 使用 Dropbear，现代 SCP走 SFTP（保留 openssh-sftp-server）；旧 `scp -O` 和 rsync 不随本镜像提供。
@@ -751,8 +752,9 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 * BMC分区升级选择写入 `bmc-partitions.txt`，后端验证后暂存到 `/run/initramfs`，重启时由 initramfs更新。kernel/rofs 成对，U-Boot/环境须显式选择。RWFS重写时按通用与板级白名单恢复设置；日志不在保留列表。
 * initramfs 检查备份、刷写及恢复的退出状态。失败时停止后续擦写/自动重启，继续喂看门狗并进入串口 `update-recovery#`，保留 `/run/save`；此时正常 Web/SSH 服务不可用。备份失败会在刷写前停止。先排除存储或挂载错误并确认 RAM 备份完整，再用 `/run/initramfs/update --no-flash --no-save-files --restore-files --no-clean-saved-files` 恢复已有备份；该命令不会重刷镜像或用空 RWFS 覆盖备份。确认镜像及配置均已恢复后才手动重启；断电仍会丢失 RAM 备份。
 * BIOS上传包需包含完整 64 MiB镜像。`bios-update.sh` 等待稳定 Host Off、持有升级/Host Flash锁，切换 GPIOM1后显式绑定 SPI-NOR，按 `bios-layout.txt` 和用户区域选择刷写。默认不改 nac0/nac1；选中这些区域需确认。解除绑定和恢复所有权后按现有流程请求主机重新上电。
-* BIOS Flash 的高电平保持由独立的 `ceb-gnrd-bios-flash-owner.service` 承担。升级脚本异常退出或 SPI 解绑失败后，`/run/ceb-gnrd-bios-flash-held` 标记保留，阻止 Host 开机/复位、BMC 重启及新的固件升级。该标记保留于当前 BMC 启动周期，不代表镜像校验成功。AC 恢复自动开机受升级互锁约束：CPLD 升级期间延后执行；BIOS 升级/所有权恢复在确认 Host Off 后通过 `/run/ceb-gnrd-bios-power-managed` 取消本次启动尚未执行的 AC 恢复，由成功的 BIOS 升级流程负责随后上电，所有权恢复则保持关机。配置的 AC 恢复策略不变。
-* BIOS 所有权异常时，先检查 `journalctl -u 'obmc-flash-host-bios@*' -u ceb-gnrd-bios-flash-owner.service` 并排除 SPI/GPIO 错误，再在 Host 关机后执行 `bios-update.sh --recover-ownership`。恢复命令重新确认稳定 Off、解绑 SPI-NOR、归还 Flash 控制权后才清除标记；不刷写镜像、不自动开机，也不验证此前刷写是否完整。不要直接删除标记或手工停止保持服务来绕过恢复。
+* BIOS Flash 的高电平保持由独立的 `ceb-gnrd-bios-flash-owner.service` 承担；切换前持久保存 `/var/lib/ceb-gnrd/bios-flash-held`，并建立 `/run/ceb-gnrd-bios-flash-held` 互锁。升级失败时，退出清理及服务停止后处理会尝试解绑 SPI-NOR、拉低选择 GPIO，将控制权归还 BIOS；解绑或交还失败时保留互锁。每次 BMC 启动由 `ceb-gnrd-bios-flash-recover.service` 在电源管理启动前核对并交还，即使旧 `/run` 标记已丢失也不跳过。异常恢复不重新拉高选择 GPIO；镜像完整性须另行确认。
+* BIOS 所有权异常时，先检查 `journalctl -u 'obmc-flash-host-bios@*' -u ceb-gnrd-bios-flash-owner.service -u ceb-gnrd-bios-flash-recover.service` 并排除 SPI/GPIO/存储错误，再执行 `bios-update.sh --recover-ownership`。恢复命令仅解绑和交还，不要求 Host Off、不刷写或验证镜像；交还及持久标记同步成功后才解除互锁。显式手工恢复成功后会排队启动恢复服务及电源管理，随后用 `systemctl status ceb-gnrd-bios-flash-recover.service xyz.openbmc_project.Chassis.Control.Power@0.service --no-pager` 确认结果。不要直接删除标记或手工停止保持服务来绕过恢复。
+* AC 恢复自动开机仍受升级互锁约束：CPLD 升级期间延后执行；BIOS 升级、手工所有权恢复及检测到未完成交还的开机恢复通过 `/run/ceb-gnrd-bios-power-managed` 取消本次启动尚未执行的 AC 恢复。只有成功的 BIOS 升级流程主动请求随后上电；所有权恢复不请求 Host 电源切换，也不更改配置的 AC 恢复策略。
 * CPLD使用 `ceb-gnrd-cpld-update.py`、`cpld_jtag.py` 和 `ceb-gnrd-jtag.c`。仅接受批准的 `.bit`格式、IDCODE/feature code及 primary大小；primary最大 384 KiB，不写 Golden区。任务最多 10分钟，要求 Host Off；逐页 Flash readback验证通过才报告成功，随后整板 AC power cycle生效。
 * 运行镜像与 Golden镜像的 persist_bit=1 已由板卡负责人确认，并登记在 `cpld-update.json`。`recovery.json` 持久化准确的镜像/Flash哈希及恢复条件，擦除中断后只有匹配的已批准计划才能重试；它不是任意镜像通用解锁。
 * BMC/BIOS/CPLD共用固件升级互斥和重启保护；Host Flash期间阻止Host开机/复位及BMC正常重启。升级进程退出时只释放自己的引用，最后一个引用释放后清理重启保护。
@@ -770,6 +772,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 * `ceb-gnrd-alert-led.py` 汇总电压Critical、温度UNR及CPU/DIMM UC、600秒BIOS启动超时和Host watchdog。阈值源暂时消失不当作恢复；故障缓存保留到对应的有效状态明确解除。Host Off清除Host供电传感器的失读状态。
 * BIOS 超时先在内存锁存并尝试记录 SEL，再独立保存锁存文件；文件写入失败每 30 秒重试，不中断告警处理或重新开始 600 秒等待。CPU_MAX_TEMP / DIMM_MAX_TEMP 的 UNC、UC、UNR 阈值均只读，IPMI SDR 同样声明不可写。
 * BIOS超时在后续POST complete时解除；Host watchdog状态锁存到BMC重启。`enclosure_fault` 映射到GPIOI5的fault LED，告警期间定期重发组状态。
+* 常驻 IPMI watchdog 在实际 Chassis DC Off 或 BMC 成功发起硬复位时停掉旧计时器，服务继续提供配置接口，避免旧倒计时影响下一轮 BIOS 启动。POST-only 热复位不触发停表；当前板未接入实体 Reset 输入，不能依此识别独立的外部硬件复位。
 
 ### 电源、UID、POST与启动设置
 
@@ -778,6 +781,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 * 来电恢复策略默认AlwaysOn，只在已识别AC上电时应用；单独BMC重启保留Host当前状态。未知复位来源不授权自动主机上电。AC恢复策略触发的自动开机等待Power Good最多60秒（`ACRestorePowerOKWatchdogMs=60000`）；普通开机和电源循环仍使用8秒（`PowerOKWatchdogMs=8000`）。超时仍记录上电失败。
 * 同一次BMC启动内，AC恢复任务在 `/run/ceb-gnrd-power-restore-host0/state.json` 保存待执行、已完成或已取消状态。电源服务重启会按原策略、断电前电源状态及原启动截止时间恢复等待；已执行、手动电源操作或BIOS接管所取消的任务不重放。该记录不跨BMC重启保留。
 * PSU“预测故障”（`PredictiveFailure`）须连续有效采样保持10秒，且复查仍告警后才更新健康状态和记录事件；恢复、读取失败或供电状态不适用时取消待确认告警。已确认告警恢复时立即解除。严重故障、风扇故障及AC丢失事件不使用此延迟。整机AC断电后若BMC在确认前掉电，则不会记录待确认的预测故障；余电持续超过10秒时仍可能记录。
+* PSU 事件连续读失败或读到格式错误时保留已确认告警，不以合成的零值报告恢复；收到有效正常值后才解除。既有供电状态适用规则仍生效，读取失败仍会取消尚未确认的预测故障计时。
 * BMC重启原因结合bootstatus与干净关机标记识别；正常shutdown/reboot不因ASPEED watchdog复位机制被直接当作异常watchdog。异常watchdog写入SEL；BMC Ready/正常状态变化按信息级别记录。
 * `ceb-gnrd-health` 为ObjectMapper、EntityManager、bmcweb和ipmid设置Restart/启动限制及OnFailure=Quiesce；本层fan-settings、temp-max、alert-led、boot-progress仅自动重启，不因单次服务失败直接Quiesce。Quiesced自动BMC重启限制为1次，计数保存在RWFS，正常运行15分钟后清零；持久故障留待人工处理。上游未报活的服务不能靠WatchdogSec检测卡死，本层notify服务按各自主循环报活。
 * POST捕获来自port0x80。`phosphor-post-code-manager_%.bbappend` 设置max-boot-cycle-count=1、每轮512条。Host重启边界清理上一轮；服务/BMC重启恢复当前轮；`ceb-gnrd-post-history-limit.py` 检查并迁移历史/元数据。
@@ -811,6 +815,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 * 未配置PLDM BIOS属性/更新、SMBIOS系统/CPU/DIMM清单和DCMI；MCTP独立保留。BIOS版本未上报时Web显示N/A。
 * biosconfig-manager提供BMC侧配置服务，实际UEFI BIOS菜单交互仍需BIOS协议与属性上报配合，不能因守护进程已安装就宣称远程Setup可用。
 * 虚拟媒体仅支持本地浏览器ISO；内部菜单切换保持连接，浏览器刷新/关闭会断开。后台标签休眠也可能造成WebSocket断流。独立挂载窗口方案未实现。
+* 虚拟媒体代理的 `splice()` 遇到 `EINTR`/`EAGAIN` 时返回信号和 I/O 处理循环，正常子进程退出不再被当作连接故障；真实断流仍结束会话。
 * KVM键释放失败可能造成重复字符，尚未修复；收到ENOLINK时需核对主机视频输出状态。
 * 仍需确认GPIO在异常复位/升级中断时的板级电平、CPLD交接/Golden恢复、不同PSU通道、风扇曲线负载、RGMII/NC-SI时序、RTC断电保持和UART/VUART主机端实际输入输出。
 * D3V0_BAT0应按实际R542/Q39焊接与分压校准。已确认的PHY地址1及当前rgmii-id配置不再列为地址2待猜测。

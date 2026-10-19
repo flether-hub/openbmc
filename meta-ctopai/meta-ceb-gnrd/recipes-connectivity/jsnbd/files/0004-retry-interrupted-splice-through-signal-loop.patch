@@ -1,0 +1,144 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] nbd-proxy: handle interrupted splice through the signal loop
+
+Upstream-Status: Pending
+
+A successful asynchronous start hook raises SIGCHLD. If it interrupts a
+blocked splice, the old proxy tears down otherwise healthy virtual media.
+Return EINTR and EAGAIN to the signal-first main loop without logging a
+transport failure. Successful short transfers still advance by exactly the
+number of bytes returned; a negative splice result has consumed no bytes.
+
+Use nonblocking forwarding descriptors and splice, with an interruptible
+output/signal poll before transfer. This also closes the window where a
+signal arrives just before a new blocking splice and would leave shutdown
+waiting indefinitely for a stalled browser. Leave the read/write fallback
+unchanged; the Linux target enables HAVE_SPLICE.
+
+--- a/nbd-proxy.c
++++ b/nbd-proxy.c
+@@ -194,10 +194,34 @@
+ static int copy_fd(struct ctx* ctx, int fd_in, int fd_out)
+ {
+ #ifdef HAVE_SPLICE
++    struct pollfd pollfds[2] = {
++        {.fd = fd_out, .events = POLLOUT},
++        {.fd = ctx->signal_pipe[0], .events = POLLIN},
++    };
+     int rc;
+ 
+-    rc = splice(fd_in, NULL, fd_out, NULL, ctx->bufsize, 0);
++    /* The output can be backpressured even when the input is readable.
++     * Wait for it together with the signal pipe, so a normal SIGCHLD can
++     * return to the main loop and SIGTERM never waits for a stalled peer.
++     */
++    rc = poll(pollfds, 2, -1);
+     if (rc < 0)
++    {
++        if (errno != EINTR)
++            warn("poll output failed");
++        return -1;
++    }
++    if (pollfds[1].revents)
++    {
++        errno = EINTR;
++        return -1;
++    }
++
++    /* Both endpoints are nonblocking. A signal arriving after poll cannot
++     * strand us in splice with its notification already queued in the pipe.
++     */
++    rc = splice(fd_in, NULL, fd_out, NULL, ctx->bufsize, SPLICE_F_NONBLOCK);
++    if (rc < 0 && errno != EINTR && errno != EAGAIN)
+         warn("splice");
+ 
+     return rc;
+@@ -247,6 +271,7 @@
+ 
+ static void signal_handler(int signal)
+ {
++    int saved_errno = errno;
+     int rc;
+ 
+     rc = write(signal_pipe_fd, &signal, sizeof(signal));
+@@ -254,6 +279,7 @@
+     /* not a lot we can do here but exit... */
+     if (rc != sizeof(signal))
+         exit(EXIT_FAILURE);
++    errno = saved_errno;
+ }
+ 
+ static int setup_signals(struct ctx* ctx)
+@@ -572,6 +598,22 @@
+     int rc, n_fd;
+     unsigned long long to_browser = 0, to_client = 0;
+ 
++#ifdef HAVE_SPLICE
++    /* SPLICE_F_NONBLOCK controls pipe waits; sockets also need O_NONBLOCK.
++     * These descriptors are owned by this proxy and close with the session.
++     */
++    const int copy_fds[] = {ctx->sock_client, STDIN_FILENO, STDOUT_FILENO};
++    for (size_t i = 0; i < sizeof(copy_fds) / sizeof(copy_fds[0]); i++)
++    {
++        int flags = fcntl(copy_fds[i], F_GETFL);
++        if (flags < 0 || fcntl(copy_fds[i], F_SETFL, flags | O_NONBLOCK) < 0)
++        {
++            warn("can't make forwarding fd nonblocking");
++            return -1;
++        }
++    }
++#endif
++
+     /* main proxy: forward data between stdio & socket */
+     pollfds[0].fd = ctx->sock_client;
+     pollfds[0].events = POLLIN;
+@@ -596,9 +638,24 @@
+             break;
+         }
+ 
++        /* Drain queued lifecycle notifications before entering I/O again.
++         * A successful setup hook exits normally and must not eject media.
++         */
++        if (pollfds[2].revents)
++        {
++            rc = process_signal_pipe(ctx, &exit);
++            if (rc || exit)
++                break;
++            continue;
++        }
++
+         if (pollfds[0].revents)
+         {
+             rc = copy_fd(ctx, ctx->sock_client, STDOUT_FILENO);
++#ifdef HAVE_SPLICE
++            if (rc < 0 && (errno == EINTR || errno == EAGAIN))
++                continue;
++#endif
+             if (rc <= 0)
+             {
+                 fprintf(stderr, "virtual-media[%s,pid=%ld]: NBD->browser closed/error rc=%d errno=%d revents=%x\n",
+@@ -615,6 +672,10 @@
+         if (pollfds[1].revents)
+         {
+             rc = copy_fd(ctx, STDIN_FILENO, ctx->sock_client);
++#ifdef HAVE_SPLICE
++            if (rc < 0 && (errno == EINTR || errno == EAGAIN))
++                continue;
++#endif
+             if (rc <= 0)
+             {
+                 fprintf(stderr, "virtual-media[%s,pid=%ld]: browser->NBD closed/error rc=%d errno=%d revents=%x\n",
+@@ -628,13 +689,6 @@
+             to_client += (unsigned)rc;
+         }
+ 
+-        if (pollfds[2].revents)
+-        {
+-            rc = process_signal_pipe(ctx, &exit);
+-            if (rc || exit)
+-                break;
+-        }
+-
+         if (pollfds[3].revents)
+         {
+             rc = udev_process(ctx);

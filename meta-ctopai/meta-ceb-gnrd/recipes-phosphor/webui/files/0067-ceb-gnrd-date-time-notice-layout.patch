@@ -1,0 +1,34 @@
+From: CEB-GNRD platform <ceb-gnrd@localhost>
+Subject: [PATCH] webui: give the date display notice the full content width
+
+Upstream-Status: Inappropriate [CEB-GNRD settings layout]
+
+Keep the date/time display preference notice permanently visible and use
+the full row instead of half the desktop content width. Keep its sentence
+and Profile Settings link inline with comfortable line spacing, allowing
+natural wrapping on narrow screens while keeping the link label together.
+Only this informational notice changes; the date/time form is untouched.
+
+--- a/src/views/Settings/DateTime/DateTime.vue
++++ b/src/views/Settings/DateTime/DateTime.vue
+@@ -2,14 +2,14 @@
+   <b-container fluid="xl">
+     <page-title />
+     <b-row>
+-      <b-col md="8" xl="6">
++      <b-col cols="12">
+         <alert variant="info" class="mb-4">
+-          <span class="no-underline-link">
++          <p class="mb-0 lh-base no-underline-link">
+             {{ $t('pageDateTime.alert.message') }}
+-            <b-link to="/profile-settings">
+-              {{ $t('pageDateTime.alert.link') }}</b-link
+-            >
+-          </span>
++            <b-link to="/profile-settings" class="fw-semibold text-nowrap">
++              {{ $t('pageDateTime.alert.link') }}
++            </b-link>
++          </p>
+         </alert>
+       </b-col>
+     </b-row>

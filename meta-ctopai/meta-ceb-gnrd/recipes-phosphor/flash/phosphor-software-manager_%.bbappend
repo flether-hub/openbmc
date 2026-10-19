@@ -8,6 +8,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://bios-update.sh \
     file://ceb-gnrd-bios-flash-owner.sh \
     file://ceb-gnrd-bios-flash-owner.service \
+    file://ceb-gnrd-bios-flash-recover.service \
+    file://10-ceb-gnrd-bios-flash-recovery.conf \
     file://bios-layout.txt \
     file://obmc-flash-host-bios@.service \
     "
@@ -46,6 +48,10 @@ do_install:append:ceb-gnrd() {
         ${D}${systemd_system_unitdir}/
     install -m 0644 ${UNPACKDIR}/ceb-gnrd-bios-flash-owner.service \
         ${D}${systemd_system_unitdir}/
+    install -m 0644 ${UNPACKDIR}/ceb-gnrd-bios-flash-recover.service \
+        ${D}${systemd_system_unitdir}/
+    install -Dm0644 ${UNPACKDIR}/10-ceb-gnrd-bios-flash-recovery.conf \
+        ${D}${systemd_system_unitdir}/xyz.openbmc_project.Chassis.Control.Power@0.service.d/10-ceb-gnrd-bios-flash-recovery.conf
     install -Dm0644 ${UNPACKDIR}/10-ceb-gnrd-reboot-guard-cleanup.conf \
         ${D}${systemd_system_unitdir}/xyz.openbmc_project.Software.BMC.Updater.service.d/10-ceb-gnrd-reboot-guard-cleanup.conf
 
@@ -62,6 +68,8 @@ do_install:append:ceb-gnrd() {
 FILES:${PN}-updater:append:ceb-gnrd = " \
     ${sbindir}/ceb-gnrd-bios-flash-owner \
     ${systemd_system_unitdir}/ceb-gnrd-bios-flash-owner.service \
+    ${systemd_system_unitdir}/ceb-gnrd-bios-flash-recover.service \
+    ${systemd_system_unitdir}/xyz.openbmc_project.Chassis.Control.Power@0.service.d/10-ceb-gnrd-bios-flash-recovery.conf \
     ${datadir}/ceb-gnrd/bios-layout.txt \
     ${systemd_system_unitdir}/multi-user.target.wants/xyz.openbmc_project.Software.BMC.Updater.service \
     ${systemd_system_unitdir}/xyz.openbmc_project.Software.BMC.Updater.service.d/10-ceb-gnrd-reboot-guard-cleanup.conf \

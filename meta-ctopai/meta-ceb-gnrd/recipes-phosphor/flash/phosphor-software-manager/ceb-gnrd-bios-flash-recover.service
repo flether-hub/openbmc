@@ -1,0 +1,13 @@
+[Unit]
+Description=Return BIOS flash ownership before host power control starts
+DefaultDependencies=no
+After=local-fs.target systemd-udev-trigger.service
+RequiresMountsFor=/var/lib/ceb-gnrd
+Before=sysinit.target xyz.openbmc_project.Chassis.Control.Power@0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/bios-update.sh --boot-recover-ownership
+TimeoutStartSec=90
+TimeoutStopSec=30

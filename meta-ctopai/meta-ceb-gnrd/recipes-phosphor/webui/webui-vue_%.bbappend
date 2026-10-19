@@ -65,6 +65,8 @@ SRC_URI:append:ceb-gnrd = " \
     file://0063-ceb-gnrd-project-post-code-definitions.patch \
     file://0064-ceb-gnrd-initialize-recovered-fan-settings.patch \
     file://0065-ceb-gnrd-load-all-event-log-pages.patch \
+    file://0066-ceb-gnrd-post-code-troubleshooting.patch \
+    file://0067-ceb-gnrd-date-time-notice-layout.patch \
     file://ami-aptio-v-post-codes.json \
     file://zh-CN.json \
 "

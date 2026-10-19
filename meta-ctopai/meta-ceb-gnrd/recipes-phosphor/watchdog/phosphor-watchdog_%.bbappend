@@ -1,5 +1,9 @@
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/${PN}:"
 
+SRC_URI:append:ceb-gnrd = " \
+    file://0001-ceb-gnrd-stop-watchdog-on-host-lifecycle-end.patch \
+    "
+
 # x86-power-control does not activate the OpenPOWER host-startmin target.
 # Keep the IPMI watchdog provider alive independently of host power state.
 SYSTEMD_OVERRIDE:${PN}:remove:ceb-gnrd = "poweron.conf:phosphor-watchdog@poweron.service.d/poweron.conf"

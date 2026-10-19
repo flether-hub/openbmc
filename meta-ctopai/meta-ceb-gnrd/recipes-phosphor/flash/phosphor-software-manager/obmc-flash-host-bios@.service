@@ -6,7 +6,12 @@ After=mapper-wait@-xyz.openbmc_project-state-chassis0.service
 Type=oneshot
 RemainAfterExit=no
 TimeoutStartSec=1h
+TimeoutStopSec=90
+# Terminate flashrom and the progress reader along with the shell. Stop-post
+# runs only after all of them exit, including when the shell cannot clean up.
+KillMode=control-group
 ExecStart=/usr/sbin/bios-update.sh /tmp/images/%i
+ExecStopPost=/usr/sbin/bios-update.sh --recover-if-held
 ExecStopPost=/usr/bin/obmc-flash-bmc rebootguarddisable
 
 [Install]

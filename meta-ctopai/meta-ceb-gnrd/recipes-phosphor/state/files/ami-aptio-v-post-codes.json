@@ -37,6 +37,12 @@
           "Intel/ServerPlatformPkg/Library/PlatformPostCodeMapLib/PlatformPostCodeMapLib.c",
           "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h"
         ]
+      },
+      {
+        "title": "Server POST Code Troubleshooting Guide & Reference Sheet",
+        "date": "2026-10-19",
+        "pages": "1-2, 7, 9-12",
+        "scope": "Project-supplied cross-platform troubleshooting guide; advice only, not a GNR-D checkpoint mapping"
       }
     ]
   },
@@ -1842,8 +1848,8 @@
     }
   },
   "readingGuidance": {
-    "zh": "按同一启动轮次的接收顺序解读；优先显示项目提供的源码定义，其他 Intel RC 含义仍为跨平台参考。BF 表示 MRC 开始/结束，AF 是 ExitBootServices 检查点，两者均不能单独证明启动成功。Port 80h 是 I/O 地址，不是代码 0x80 的含义；当前仅采集该端口，不能据一个字节还原完整的多字节 FSP 码。",
-    "en": "Interpret receive order within each boot cycle. Project-supplied source definitions take priority; other Intel RC meanings remain cross-platform references. BF is an MRC start/stop checkpoint and AF is ExitBootServices; neither alone proves successful boot. Port 80h is an I/O address, not a definition of code 0x80. Only that port is captured; one byte cannot reconstruct a full multibyte FSP code."
+    "zh": "按同一启动轮次的接收顺序解读，优先采用项目 BIOS 源码定义，其他平台表仅供参考。最后一个码只表示执行位置，不能单独判定器件故障或启动成功。",
+    "en": "Read codes in receive order within each boot cycle. Project BIOS definitions take priority; other platform tables are references. The last checkpoint identifies an execution point, not a failed component or proof of successful boot."
   },
   "sequenceRules": {
     "earlyAmiProgress": [
@@ -1947,6 +1953,90 @@
       "sourcePath": "Intel/CpRcPkg/Include/Memory/MemoryCheckpointCodes.h",
       "basis": "project-supplied-source-definition",
       "versionScope": "BIOS/RC/BKC revision not supplied"
+    }
+  },
+  "troubleshooting": {
+    "title": {
+      "zh": "POST 代码阅读与排查",
+      "en": "Reading and troubleshooting POST codes"
+    },
+    "adviceLabel": {
+      "zh": "持续停码时的排查参考",
+      "en": "If progress remains stalled"
+    },
+    "notes": {
+      "zh": [
+        "内存训练可能持续数分钟。结合完整代码序列、停留时间、KVM/串口画面及事件日志判断；短暂出现某个码不等于故障。",
+        "本项目 BF 表示 MRC 开始/结束，AF 表示 ExitBootServices 检查点。E8 等码在 AMI 与 Intel MRC 中可能含义不同，阶段未确定时不强行归类。",
+        "Port 80h 是采集端口。单个字节不能还原 85xx 错误、MRC 子码或完整 FSP 码，也不能确定 DIMM 槽位。排查前先导出日志，修改硬件前断开 AC 电源。"
+      ],
+      "en": [
+        "Memory training can take several minutes. Compare the full sequence, elapsed time, KVM or serial output and event logs. A briefly displayed code alone does not establish a failure.",
+        "For this project, BF is MRC start/stop and AF is an ExitBootServices checkpoint. Codes such as E8 differ between AMI and Intel MRC; an unknown phase must remain unclassified.",
+        "Port 80h is the capture port. One byte cannot reconstruct an 85xx error, MRC subcode, full FSP code or DIMM slot. Export logs before troubleshooting; disconnect AC before changing hardware."
+      ]
+    },
+    "advice": {
+      "memory": {
+        "zh": "先等待内存训练完成；若长时间无进展，核对支持的 DIMM 类型及插槽顺序。断开 AC 后按主板要求用最小内存配置和已知良好的 DIMM 排查，并对照串口与事件日志定位。",
+        "en": "Allow memory training to finish. If progress stalls, check supported DIMM types and population order. With AC disconnected, isolate using the board-required minimum configuration and known-good memory; correlate serial output and event logs."
+      },
+      "nvram": {
+        "zh": "检查近期 BIOS 设置变更。若厂商流程要求恢复默认或清 CMOS，先记录自定义设置；仅凭此码不能确定是电池或 NVRAM 损坏。",
+        "en": "Review recent BIOS setting changes. Record custom settings before following a vendor procedure to load defaults or clear CMOS. This checkpoint alone does not prove a battery or NVRAM fault."
+      },
+      "pcie": {
+        "zh": "检查近期新增的 PCIe 设备、固件与资源配置；断开 AC 后逐一减少扩展卡，用最小配置对比启动结果。",
+        "en": "Review newly added PCIe devices, firmware and resource settings. With AC disconnected, reduce add-in cards one at a time and compare boot behavior with a minimum configuration."
+      },
+      "usb": {
+        "zh": "检查 USB 设备及虚拟媒体是否响应。保存当前信息后，在不影响正在进行的安装或升级时减少非必要 USB 设备并重新观察。",
+        "en": "Check whether USB devices and virtual media respond. Preserve diagnostics, then reduce nonessential USB devices when doing so will not interrupt an installation or update."
+      },
+      "storage": {
+        "zh": "核对存储设备识别、连接和启动顺序；该参考码属于传统 IDE/SATA 检测，不能直接据此判定 NVMe 故障。",
+        "en": "Check storage detection, connections and boot order. This reference checkpoint concerns legacy IDE/SATA detection and does not by itself identify an NVMe failure."
+      },
+      "optionRom": {
+        "zh": "检查 HBA、RAID、网卡等扩展卡的 Option ROM 与启动配置；对照厂商兼容性说明逐项排除，先记录原设置。",
+        "en": "Review Option ROM and boot settings for add-in cards such as HBA, RAID and network adapters. Record existing settings and isolate devices using vendor compatibility guidance."
+      },
+      "boot": {
+        "zh": "检查启动设备、引导程序以及后续 KVM/串口输出。到达引导交接检查点不代表操作系统已成功启动。",
+        "en": "Check the selected boot device, boot loader and subsequent KVM or serial output. Reaching a boot handoff checkpoint does not prove that the operating system started successfully."
+      }
+    },
+    "amiAdvice": {
+      "2B": "memory",
+      "2C": "memory",
+      "2D": "memory",
+      "2E": "memory",
+      "2F": "memory",
+      "31": "memory",
+      "50": "memory",
+      "51": "memory",
+      "52": "memory",
+      "53": "memory",
+      "54": "memory",
+      "55": "memory",
+      "61": "nvram",
+      "92": "pcie",
+      "93": "pcie",
+      "94": "pcie",
+      "95": "pcie",
+      "96": "pcie",
+      "D4": "pcie",
+      "9A": "usb",
+      "9B": "usb",
+      "9C": "usb",
+      "9D": "usb",
+      "A2": "storage",
+      "B2": "optionRom",
+      "AD": "boot",
+      "AE": "boot",
+      "AF": "boot",
+      "D9": "boot",
+      "DA": "boot"
     }
   }
 }

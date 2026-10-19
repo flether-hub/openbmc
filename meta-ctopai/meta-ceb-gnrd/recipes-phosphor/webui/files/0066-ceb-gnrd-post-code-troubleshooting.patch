@@ -1,0 +1,156 @@
+Subject: [PATCH] post codes: add scoped troubleshooting advice
+
+Keep the existing GNR-D definitions and sequence interpretation. Add a
+permanent information panel and per-row advice only where the
+sequence supports the interpretation. Ambiguous and multibyte values do
+not acquire an assumed memory fault or slot diagnosis. No boot state or
+severity is inferred from the troubleshooting text.
+
+Upstream-Status: Inappropriate [CEB-GNRD POST presentation]
+
+--- a/src/utils/amiPostCodes.js
++++ b/src/utils/amiPostCodes.js
+@@ -112,9 +112,28 @@
+   return text;
+ }
+ 
++// Advice follows the already-established interpretation. Never turn an
++// ambiguous byte or an old platform table into a GNR-D fault diagnosis.
++function postCodeAdvice(value, locale, context) {
++  const key = codeKey(value);
++  if (!key || context === 'acpi') return '';
++  const language = String(locale).startsWith('zh') ? 'zh' : 'en';
++  const guide = catalog.troubleshooting;
++  let topic;
++  if (context === 'intelMemory' && catalog.intelMemory[key]) {
++    topic = 'memory';
++  } else if (context === 'ami') {
++    // A project MRC definition overrides an overlapping late AMI code too.
++    if (catalog.gnrdCodes?.[key]?.phase === 'Intel MRC') return '';
++    topic = guide.amiAdvice[key];
++  }
++  return guide.advice[topic]?.[language] || '';
++}
++
+ export function describePostCodeLogs(rows, locale) {
+   const groups = new Map();
+   const descriptions = new Map();
++  const advice = new Map();
+   for (const row of rows) {
+     descriptions.set(row, describePostCode(row.postCode, locale));
+     const cycle = Number(row.bootCount);
+@@ -137,12 +156,27 @@
+     for (const row of [...group].sort((a, b) => a.index - b.index)) {
+       const context = consumeContext(state, codeKey(row.postCode));
+       descriptions.set(row, describePostCode(row.postCode, locale, context));
++      advice.set(row, postCodeAdvice(row.postCode, locale, context));
+     }
+   }
+-  return rows.map((row) => ({ ...row, description: descriptions.get(row) }));
++  return rows.map((row) => ({
++    ...row,
++    description: descriptions.get(row),
++    troubleshooting: advice.get(row) || '',
++  }));
+ }
+ 
+ export function postCodeReadingGuidance(locale) {
+   const language = String(locale).startsWith('zh') ? 'zh' : 'en';
+   return catalog.readingGuidance[language];
+ }
++
++export function postCodeTroubleshootingGuide(locale) {
++  const language = String(locale).startsWith('zh') ? 'zh' : 'en';
++  const guide = catalog.troubleshooting;
++  return {
++    title: guide.title[language],
++    adviceLabel: guide.adviceLabel[language],
++    notes: guide.notes[language],
++  };
++}
+--- a/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
++++ b/src/views/Logs/PostCodeLogs/PostCodeLogs.vue
+@@ -1,7 +1,15 @@
+ <template>
+   <b-container fluid="xl" class="logs-page">
+     <page-title />
+-    <p class="text-muted">{{ readingGuidance }}</p>
++    <alert variant="info" class="post-code-guidance mb-4">
++      <h2 class="h6 mb-2">{{ troubleshootingGuide.title }}</h2>
++      <p class="mb-2">{{ readingGuidance }}</p>
++      <ul class="post-code-guidance-list mb-0">
++        <li v-for="note in troubleshootingGuide.notes" :key="note">
++          {{ note }}
++        </li>
++      </ul>
++    </alert>
+     <b-row class="align-items-start">
+       <b-col sm="8" xl="6" class="d-sm-flex align-items-end mb-4">
+         <search
+@@ -109,6 +117,13 @@
+             <p class="mb-0">{{ $filters.formatTime(value) }}</p>
+           </template>
+ 
++          <template #cell(description)="{ item }">
++            <p class="mb-0">{{ item.description }}</p>
++            <details v-if="item.troubleshooting" class="post-code-advice mt-2">
++              <summary>{{ troubleshootingGuide.adviceLabel }}</summary>
++              <p class="mb-0 mt-1">{{ item.troubleshooting }}</p>
++            </details>
++          </template>
+         </b-table>
+       </b-col>
+     </b-row>
+@@ -146,6 +161,7 @@
+ import createLiveRefreshMixin from '@/components/Mixins/LiveRefreshMixin';
+ import IconDelete from '@carbon/icons-vue/es/trash-can/20';
+ import IconExport from '@carbon/icons-vue/es/document--export/20';
++import Alert from '@/components/Global/Alert';
+ import PageTitle from '@/components/Global/PageTitle';
+ import Search from '@/components/Global/Search';
+ import TableCellCount from '@/components/Global/TableCellCount';
+@@ -176,11 +192,13 @@
+ import {
+   describePostCodeLogs,
+   postCodeReadingGuidance,
++  postCodeTroubleshootingGuide,
+ } from '@/utils/amiPostCodes';
+ import { useModal } from 'bootstrap-vue-next';
+ 
+ export default {
+   components: {
++    Alert,
+     IconDelete,
+     IconExport,
+     PageTitle,
+@@ -260,6 +278,9 @@
+     };
+   },
+   computed: {
++    troubleshootingGuide() {
++      return postCodeTroubleshootingGuide(this.$i18n.locale);
++    },
+     readingGuidance() {
+       return postCodeReadingGuidance(this.$i18n.locale);
+     },
+@@ -359,6 +380,20 @@
+ 
+ 
+ <style scoped>
++.post-code-guidance-list {
++  padding-inline-start: 1.25rem;
++}
++.post-code-guidance-list li + li {
++  margin-top: 0.5rem;
++}
++.post-code-advice {
++  padding: 0.5rem 0.75rem;
++  border-inline-start: 3px solid #c6d7f2;
++  background-color: #f4f7fb;
++  color: #43536a;
++  font-size: 0.875rem;
++  line-height: 1.5;
++}
+ :deep(.post-code-description) {
+   min-width: 20rem;
+   max-width: 40rem;

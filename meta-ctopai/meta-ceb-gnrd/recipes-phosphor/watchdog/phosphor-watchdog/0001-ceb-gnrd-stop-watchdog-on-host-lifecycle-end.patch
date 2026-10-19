@@ -1,0 +1,102 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] watchdog: stop old host timer on power off and hard reset
+
+The CEB-GNRD IPMI watchdog provider stays alive in multi-user.target, so it
+cannot rely on the OpenPOWER service conflicts to stop the host timer.
+Listen for actual chassis Off and the board power controller's hard-reset
+signal. Cancel the timer directly in the watchdog event loop; keep its
+configuration and D-Bus provider available for the next Set/Reset command.
+
+Do not treat CurrentHostState Off or POST deassertion as a hard reset:
+x86-power-control also uses those for BIOS software warm resets. Do not
+schedule asynchronous retry jobs which could disable the next boot's timer.
+This board service has no fallback timer.
+
+Upstream-Status: Inappropriate [CEB-GNRD host lifecycle]
+
+diff --git a/src/mainapp.cpp b/src/mainapp.cpp
+--- a/src/mainapp.cpp
++++ b/src/mainapp.cpp
+@@ -21,6 +21,7 @@
+ #include <phosphor-logging/elog.hpp>
+ #include <phosphor-logging/log.hpp>
+ #include <sdbusplus/bus.hpp>
++#include <sdbusplus/bus/match.hpp>
+ #include <sdbusplus/exception.hpp>
+ #include <sdbusplus/server/manager.hpp>
+ #include <sdeventplus/event.hpp>
+@@ -31,8 +32,10 @@
+ 
+ #include <functional>
+ #include <iostream>
++#include <map>
+ #include <optional>
+ #include <string>
++#include <variant>
+ 
+ using phosphor::watchdog::Watchdog;
+ using sdbusplus::xyz::openbmc_project::State::server::convertForMessage;
+@@ -245,6 +248,63 @@
+                           false));
+         }
+ 
++        // The board keeps this provider alive while the host is off. Stop an
++        // armed timer at the end of its host lifecycle, without stopping the
++        // provider or queuing a later D-Bus disable that could hit a new timer.
++        // The board service deliberately has no fallback watchdog.
++        auto stopHostWatchdog = [&watchdog](const char* reason) {
++            if (watchdog.enabled())
++            {
++                watchdog.enabled(false);
++                log<level::INFO>("watchdog: stopped at host lifecycle boundary",
++                                 entry("REASON=%s", reason));
++            }
++        };
++        sdbusplus::match chassisOffMatch(
++            bus,
++            "type='signal',sender='xyz.openbmc_project.State.Chassis',"
++            "path='/xyz/openbmc_project/state/chassis0',"
++            "interface='org.freedesktop.DBus.Properties',"
++            "member='PropertiesChanged',"
++            "arg0='xyz.openbmc_project.State.Chassis'",
++            [&stopHostWatchdog](sdbusplus::message_t& message) {
++                // CurrentHostState also reports Off during a POST warm reset.
++                // CurrentPowerState stays On until power-good actually drops,
++                // including shutdown and power-cycle transition states.
++                std::string interface;
++                std::map<std::string,
++                         std::variant<bool, uint64_t, std::string>> properties;
++                try
++                {
++                    message.read(interface, properties);
++                }
++                catch (const std::exception& e)
++                {
++                    log<level::ERR>("watchdog: cannot read chassis state change",
++                                    entry("ERROR=%s", e.what()));
++                    return;
++                }
++                auto property = properties.find("CurrentPowerState");
++                if (property == properties.end())
++                {
++                    return;
++                }
++                const auto* state = std::get_if<std::string>(&property->second);
++                if (state != nullptr &&
++                    *state == "xyz.openbmc_project.State.Chassis.PowerState.Off")
++                {
++                    stopHostWatchdog("chassis power off");
++                }
++            });
++        sdbusplus::match hardResetMatch(
++            bus,
++            "type='signal',sender='xyz.openbmc_project.State.Chassis',"
++            "path='/xyz/openbmc_project/state/chassis0',"
++            "interface='com.ctopai.CebGnrd.HostLifecycle',member='HardReset'",
++            [&stopHostWatchdog](sdbusplus::message_t&) {
++                stopHostWatchdog("host hard reset");
++            });
++
+         // Claim the bus
+         bus.request_name(service.c_str());
+ 

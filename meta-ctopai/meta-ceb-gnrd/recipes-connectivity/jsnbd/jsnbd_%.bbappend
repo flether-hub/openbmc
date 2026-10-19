@@ -1,4 +1,4 @@
 # Keep the real NBD/USB path and disconnect the gadget before cleanup.
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
-SRC_URI:append:ceb-gnrd = " file://0001-stop-reaping-on-echild-and-serialize-gadget-cleanup.patch file://0002-nbd-client-explicit-default-export.patch file://0003-recover-stale-gadget-before-nbd-connect.patch"
+SRC_URI:append:ceb-gnrd = " file://0001-stop-reaping-on-echild-and-serialize-gadget-cleanup.patch file://0002-nbd-client-explicit-default-export.patch file://0003-recover-stale-gadget-before-nbd-connect.patch file://0004-retry-interrupted-splice-through-signal-loop.patch"
 RDEPENDS:${PN}:append:ceb-gnrd = " util-linux-flock psmisc"

@@ -1,0 +1,46 @@
+Subject: [PATCH] psu: retain asserted events when hardware reads fail
+
+Reaching the read error threshold must not synthesize a zero reading. That
+would clear an existing source and, if it was the last source in its group,
+publish a recovery and mark the PSU functional without hardware evidence.
+Keep the last valid value and group assertions while the read is unknown;
+a subsequent valid zero can clear them through the normal grouped path.
+
+Require parsing to consume the entire value, allowing the normal sysfs
+newline. A malformed value such as "0garbage" must not become a recovery.
+Read/parse errors still cancel an unconfirmed predictive warning, and the
+existing explicit power-state eligibility policy is unchanged.
+
+Upstream-Status: Pending
+
+--- a/src/psu/PSUEvent.cpp
++++ b/src/psu/PSUEvent.cpp
+@@ -238,10 +238,16 @@
+     else
+     {
+         const char* bufferEnd = buffer.data() + bytesTransferred;
++        // sysfs attributes end in a newline. Reject any other trailing data
++        // rather than accepting a numeric prefix as a valid clear reading.
++        if (bufferEnd != buffer.data() && bufferEnd[-1] == '\n')
++        {
++            --bufferEnd;
++        }
+         int nvalue = 0;
+         std::from_chars_result ret =
+             std::from_chars(buffer.data(), bufferEnd, nvalue);
+-        if (ret.ec != std::errc())
++        if (ret.ec != std::errc() || ret.ptr != bufferEnd)
+         {
+             predictionSince.reset();
+             errCount++;
+@@ -258,7 +264,9 @@
+         {
+             lg2::error("Failure to read event at '{PATH}'", "PATH", path);
+         }
+-        updateValue(0);
++        // A failed read does not confirm recovery. Keep the last valid value
++        // and all group assertions until a successful poll clears them.
++        // Pending predictive warnings were cancelled by the error paths.
+         errCount++;
+     }
+     restartRead();
