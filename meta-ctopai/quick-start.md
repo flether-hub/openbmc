@@ -756,6 +756,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 * BIOS 所有权异常时，先检查 `journalctl -u 'obmc-flash-host-bios@*' -u ceb-gnrd-bios-flash-owner.service -u ceb-gnrd-bios-flash-recover.service` 并排除 SPI/GPIO/存储错误，再执行 `bios-update.sh --recover-ownership`。恢复命令仅解绑和交还，不要求 Host Off、不刷写或验证镜像；交还及持久标记同步成功后才解除互锁。显式手工恢复成功后会排队启动恢复服务及电源管理，随后用 `systemctl status ceb-gnrd-bios-flash-recover.service xyz.openbmc_project.Chassis.Control.Power@0.service --no-pager` 确认结果。不要直接删除标记或手工停止保持服务来绕过恢复。
 * AC 恢复自动开机仍受升级互锁约束：CPLD 升级期间延后执行；BIOS 升级、手工所有权恢复及检测到未完成交还的开机恢复通过 `/run/ceb-gnrd-bios-power-managed` 取消本次启动尚未执行的 AC 恢复。只有成功的 BIOS 升级流程主动请求随后上电；所有权恢复不请求 Host 电源切换，也不更改配置的 AC 恢复策略。
 * CPLD使用 `ceb-gnrd-cpld-update.py`、`cpld_jtag.py` 和 `ceb-gnrd-jtag.c`。仅接受批准的 `.bit`格式、IDCODE/feature code及 primary大小；primary最大 384 KiB，不写 Golden区。任务最多 10分钟，要求 Host Off；逐页 Flash readback验证通过才报告成功，随后整板 AC power cycle生效。
+* CPLD 服务先注册接口，再初始化重启保护；没有残留的保护配置时直接就绪。有残留时每次清理限时30秒，失败后间隔5秒重试，最多3次。初始化期间及最终失败后均拒绝升级，状态接口保留错误说明；排除 journal 中的错误后重启 `ceb-gnrd-cpld-update.service` 重试。升级期间仍启用重启保护，烧录及校验成功后仍由用户整板 AC power cycle 激活。
 * 运行镜像与 Golden镜像的 persist_bit=1 已由板卡负责人确认，并登记在 `cpld-update.json`。`recovery.json` 持久化准确的镜像/Flash哈希及恢复条件，擦除中断后只有匹配的已批准计划才能重试；它不是任意镜像通用解锁。
 * BMC/BIOS/CPLD共用固件升级互斥和重启保护；Host Flash期间阻止Host开机/复位及BMC正常重启。升级进程退出时只释放自己的引用，最后一个引用释放后清理重启保护。
 

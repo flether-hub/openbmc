@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import signal
 import subprocess
 import time
 
@@ -31,8 +32,28 @@ HOST_WAIT_SECONDS = 600
 WORKER_EXIT_GRACE_SECONDS = 15
 
 
-def reconcile_reboot_guard(operation):
-    subprocess.run([REBOOT_GUARD_HELPER, operation], check=True, timeout=10)
+def reconcile_reboot_guard(operation, timeout=10):
+    # Kill the helper's whole process group on timeout, including systemctl
+    # children which could otherwise keep the mutation lock after shell exit.
+    with subprocess.Popen([REBOOT_GUARD_HELPER, operation], start_new_session=True) as process:
+        try:
+            result = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise
+        if result:
+            raise subprocess.CalledProcessError(result, process.args)
+
+
+def has_reboot_guard_dropins():
+    for unit in ('reboot', 'poweroff', 'halt'):
+        try:
+            Path(f'/run/systemd/system/{unit}.target.d/reboot-guard.conf').lstat()
+            return True
+        except FileNotFoundError:
+            continue
+    return False
 
 
 class Update(ServiceInterface):
@@ -44,6 +65,7 @@ class Update(ServiceInterface):
         self.locks = []
         self.reboot_guard_fd = None
         self.deadline = 0.0
+        self.startup_ready = False
         self.state = dict(phase='Idle', progress=0, detail='Ready', job='', bootId=boot_id())
         # Jobs belong to this service session. A restart opens a fresh upload
         # form; old activation/recovery receipts are not current job failures.
@@ -53,6 +75,8 @@ class Update(ServiceInterface):
             LOG.warning('Cannot remove previous CPLD receipt: %s', exc)
 
     def ready(self):
+        if not self.startup_ready:
+            return False
         try:
             cfg = configuration()
             features = cfg.get('approved_feature_codes')
@@ -84,6 +108,8 @@ class Update(ServiceInterface):
 
     @method()
     def Start(self, encoded: 's') -> 's':
+        if not self.startup_ready:
+            raise DBusError(INTERFACE + '.Blocked', self.state['detail'])
         if self.task is not None and not self.task.done():
             raise DBusError(INTERFACE + '.Busy', 'Another CPLD update is active')
         image = None
@@ -266,18 +292,44 @@ class Update(ServiceInterface):
                 self.unlock()
 
 
+    async def initialize_reboot_guard(self):
+        self.publish(detail='Initializing firmware reboot protection')
+        # Check once: after a failed daemon-reload the files may already be
+        # removed, but the next attempt must still retry the full helper.
+        needs_cleanup = True
+        for attempt in range(1, 4):
+            try:
+                if attempt == 1:
+                    needs_cleanup = has_reboot_guard_dropins()
+                if needs_cleanup:
+                    await asyncio.to_thread(reconcile_reboot_guard, 'rebootguarddisable', 30)
+                self.startup_ready = True
+                self.publish(phase='Idle', detail='Ready')
+                return
+            except (OSError, subprocess.SubprocessError) as exc:
+                LOG.warning('Startup reboot-guard cleanup attempt %s/3 failed: %s', attempt, exc)
+                self.publish(detail=f'Reboot protection initialization pending (attempt {attempt}/3)')
+                if attempt < 3:
+                    await asyncio.sleep(5)
+        self.publish(phase='Failed', detail='Reboot protection initialization failed; CPLD updates are blocked. Resolve the service journal errors and restart ceb-gnrd-cpld-update.service.')
+
+
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
-    # Recover a stale drop-in after a killed job. Active BIOS/BMC shared
-    # references make this a no-op and retain their protection.
-    await asyncio.to_thread(reconcile_reboot_guard, 'rebootguarddisable')
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     updater = Update(bus)
     bus.export(OBJECT, updater)
     reply = await bus.request_name(SERVICE, NameFlag.DO_NOT_QUEUE)
     if reply != RequestNameReply.PRIMARY_OWNER:
         raise RuntimeError('CPLD update service is already owned')
-    await bus.wait_for_disconnect()
+    # Register the interface first, so a transient cleanup failure does not
+    # crash service startup. Start remains blocked until initialization passes.
+    initialization = asyncio.create_task(updater.initialize_reboot_guard())
+    try:
+        await bus.wait_for_disconnect()
+    finally:
+        initialization.cancel()
+        await asyncio.gather(initialization, return_exceptions=True)
 
 
 if __name__ == '__main__':
