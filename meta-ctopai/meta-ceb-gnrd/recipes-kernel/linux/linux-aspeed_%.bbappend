@@ -21,6 +21,7 @@ SRC_URI:append = " \
         file://0012-spi-nor-detect-board-bios-on-explicit-bind.patch \
         file://0013-ncsi-retry-mandatory-channel-configuration.patch \
         file://0014-ftgmac100-report-ncsi-data-path-readiness.patch \
+        file://0015-ncsi-refresh-link-after-cable-status-updates.patch \
         "
 
 do_patch:append() {

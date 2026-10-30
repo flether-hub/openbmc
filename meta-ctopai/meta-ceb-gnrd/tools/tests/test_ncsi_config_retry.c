@@ -40,6 +40,9 @@
 #define NCSI_DEV_RESHUFFLE 4
 #define NCSI_DEV_RESET 8
 #define NCSI_MODE_LINK 0
+#define NCSI_MODE_TX_ENABLE 1
+#define NCSI_CHANNEL_MONITOR_START 0
+#define ntohl(x) (x) /* Packet fixtures below already contain host-order values. */
 #define NCSI_CAP_BC 0
 #define NCSI_CAP_GENERIC 1
 #define NCSI_CAP_AEN 2
@@ -63,7 +66,10 @@ enum {
 struct ncsi_dev_priv;
 struct list_head { bool empty; };
 struct net_device { unsigned char dev_addr[6]; bool dormant, carrier; };
-struct ncsi_dev { struct net_device *dev; int state; bool link_up; };
+struct ncsi_dev {
+    struct net_device *dev; int state; bool link_up;
+    void (*handler)(struct ncsi_dev *);
+};
 struct ncsi_cmd_arg {
     struct ncsi_dev_priv *ndp;
     unsigned char type, id, package, channel;
@@ -76,19 +82,29 @@ struct ncsi_cmd_arg {
 struct ncsi_channel;
 struct ncsi_package {
     unsigned char id;
+    bool multi_channel;
     struct ncsi_channel *preferred_channel, *channel;
 };
+struct ncsi_channel_mode { unsigned int data[5]; bool enable; };
 struct ncsi_channel {
     unsigned char id;
     int state, lock;
     bool config_failed, reconfigure_needed;
     struct ncsi_package *package;
     struct { unsigned int cap; } caps[3];
-    struct { unsigned int data[4]; } modes[1];
+    struct ncsi_channel_mode modes[2];
     struct { unsigned int major, minor, mf_id; } version;
     struct list_head link;
+    struct { unsigned int state; } monitor;
 };
-struct sk_buff { int unused; };
+struct sk_buff { void *network_header; };
+struct ncsi_pkt_hdr { unsigned char channel; };
+struct ncsi_aen_pkt_hdr { struct ncsi_pkt_hdr common; };
+struct ncsi_aen_lsc_pkt { struct ncsi_aen_pkt_hdr aen; unsigned int status, oem_status; };
+struct ncsi_rsp_gls_pkt {
+    struct { struct ncsi_pkt_hdr common; } rsp;
+    unsigned int status, other, oem_status;
+};
 struct ncsi_request {
     unsigned char id;
     bool used, enabled;
@@ -105,7 +121,7 @@ struct ncsi_dev_priv {
     struct ncsi_cmd_arg config_cmd;
     unsigned int config_retries;
     int config_error;
-    bool config_pending, config_cleanup;
+    bool config_pending, config_cleanup, multi_package;
     struct ncsi_package *active_package;
     struct ncsi_package *test_package;
     struct ncsi_channel *active_channel, *hot_channel;
@@ -120,6 +136,7 @@ struct ncsi_dev_priv {
 
 static unsigned int sent[256], schedules, monitors, frees, timers, reports;
 static unsigned int request_ids[256], id_count;
+static unsigned int up_events;
 static int fail_command = -1, remaining_failures, failure_status;
 static int fail_cleanup = -1;
 static int remaining_cleanup, cleanup_status;
@@ -129,9 +146,11 @@ static void ncsi_free_request(struct ncsi_request *);
 static int ncsi_config_xmit_cmd(struct ncsi_cmd_arg *);
 static bool ncsi_retry_config(struct ncsi_dev_priv *);
 static int ncsi_reset_dev(struct ncsi_dev *);
+static void ncsi_report_link(struct ncsi_dev_priv *, bool);
+static void ncsi_refresh_link(struct ncsi_dev_priv *);
 static void ftgmac100_ncsi_handler(struct ncsi_dev *);
-static void netif_dormant_on(struct net_device *dev) { dev->dormant = true; }
-static void netif_dormant_off(struct net_device *dev) { dev->dormant = false; }
+static void netif_dormant_on(struct net_device *dev) { dev->dormant = true; reports++; }
+static void netif_dormant_off(struct net_device *dev) { dev->dormant = false; up_events++; }
 static void schedule_work(int *work) { (void)work; schedules++; }
 static void timer_delete_sync(int *timer) { (void)timer; timers++; }
 static void consume_skb(struct sk_buff *skb) { if (skb) { frees++; free(skb); } }
@@ -140,16 +159,24 @@ static void list_add_tail_rcu(struct list_head *a, struct list_head *b) { a->emp
 static int dev_set_mac_address(struct net_device *dev, int *mac, void *unused) {
     (void)dev; (void)mac; (void)unused; return 0;
 }
-static void ncsi_report_link(struct ncsi_dev_priv *ndp, bool down) {
-    assert(down); reports++; ndp->ndev.state = ncsi_dev_state_functional;
-    ndp->ndev.link_up = false; ftgmac100_ncsi_handler(&ndp->ndev);
-}
 static void ncsi_start_channel_monitor(struct ncsi_channel *nc) { (void)nc; monitors++; }
 static void ncsi_stop_channel_monitor(struct ncsi_channel *nc) { (void)nc; }
-static void ncsi_process_next_channel(struct ncsi_dev_priv *ndp) {
-    ndp->ndev.state = ncsi_dev_state_functional;
-    ndp->ndev.link_up = ndp->active_channel->state == NCSI_CHANNEL_ACTIVE;
-    ftgmac100_ncsi_handler(&ndp->ndev);
+static int ncsi_process_next_channel(struct ncsi_dev_priv *ndp) {
+    ncsi_report_link(ndp, false);
+    return 0;
+}
+static void *skb_network_header(struct sk_buff *skb) { return skb->network_header; }
+static void ncsi_find_package_and_channel(struct ncsi_dev_priv *ndp, unsigned char id,
+                                         struct ncsi_package **np, struct ncsi_channel **nc) {
+    if (np) *np = ndp->active_package;
+    if (nc) *nc = id == ndp->active_channel->id ? ndp->active_channel : NULL;
+}
+static bool ncsi_channel_is_last(struct ncsi_dev_priv *ndp, struct ncsi_channel *nc) {
+    (void)ndp; (void)nc; return true;
+}
+static int ncsi_update_tx_channel(struct ncsi_dev_priv *ndp, struct ncsi_package *np,
+                                  struct ncsi_channel *off, struct ncsi_channel *on) {
+    (void)ndp; (void)np; (void)off; (void)on; return 0;
 }
 static int ncsi_choose_active_channel(struct ncsi_dev_priv *ndp) {
     assert(!ndp->active_channel->config_failed);
@@ -209,9 +236,11 @@ static void initialize(struct ncsi_dev_priv *ndp, struct ncsi_package *np,
     unsigned int i;
     memset(ndp, 0, sizeof(*ndp)); memset(np, 0, sizeof(*np)); memset(nc, 0, sizeof(*nc));
     memset(sent, 0, sizeof(sent)); schedules = monitors = frees = timers = reports = id_count = 0;
+    up_events = 0;
     fail_command = fail_cleanup = -1; remaining_failures = 0;
     remaining_cleanup = 99; cleanup_status = -ETIMEDOUT;
     ndp->ndev.dev = dev; ndp->ndev.state = ncsi_dev_state_config;
+    ndp->ndev.handler = ftgmac100_ncsi_handler;
     ndp->active_package = ndp->test_package = np; ndp->active_channel = nc;
     ndp->channel_count = 1; ndp->channel_queue.empty = true;
     ndp->request_id = 1; ndp->vlan_vids.empty = true;
@@ -220,8 +249,26 @@ static void initialize(struct ncsi_dev_priv *ndp, struct ncsi_package *np,
     }
     np->id = 1; np->channel = nc; nc->id = 2; nc->package = np;
     nc->state = NCSI_CHANNEL_INVISIBLE; nc->caps[NCSI_CAP_BC].cap = 7;
+    nc->link.empty = true;
     memcpy(dev->dev_addr, expected_mac, 6);
     dev->dormant = dev->carrier = true;
+}
+
+static int poll_link(struct ncsi_dev_priv *ndp, unsigned int status, unsigned int flags) {
+    struct ncsi_rsp_gls_pkt packet = {0};
+    struct sk_buff skb;
+    struct ncsi_request nr = {0};
+    packet.rsp.common.channel = ndp->active_channel->id;
+    packet.status = status; skb.network_header = &packet;
+    nr.ndp = ndp; nr.flags = flags; nr.rsp = &skb;
+    return ncsi_rsp_handler_gls(&nr);
+}
+
+static int aen_link(struct ncsi_dev_priv *ndp, unsigned int status) {
+    struct ncsi_aen_lsc_pkt packet = {0};
+    packet.aen.common.channel = ndp->active_channel->id;
+    packet.status = status;
+    return ncsi_aen_handler_lsc(ndp, &packet.aen);
 }
 
 static void run(struct ncsi_dev_priv *ndp) {
@@ -319,6 +366,68 @@ int main(void) {
     fail_command = NCSI_PKT_CMD_EBF; remaining_failures = 99; failure_status = -EPERM;
     run(&ndp);
     assert(sent[NCSI_PKT_CMD_EBF] == 1 && nc.state == NCSI_CHANNEL_ACTIVE); cases++;
-    printf("PASS: %u NC-SI config/timeout/rejection/send-error/cleanup cases\n", cases);
+    /* Cable changes reported only by polling, with no asynchronous event. */
+    initialize(&ndp, &np, &nc, &dev);
+    ndp.ndev.state = ncsi_dev_state_functional; nc.state = NCSI_CHANNEL_ACTIVE;
+    nc.monitor.state = 3;
+    assert(poll_link(&ndp, 1, 0) == 0);
+    assert(ndp.ndev.link_up && !dev.dormant && dev.carrier && up_events == 1);
+    assert(nc.monitor.state == NCSI_CHANNEL_MONITOR_START); cases++;
+    assert(poll_link(&ndp, 0, 0) == 0);
+    assert(!ndp.ndev.link_up && dev.dormant && dev.carrier); cases++;
+    assert(poll_link(&ndp, 1, 0) == 0);
+    assert(ndp.ndev.link_up && !dev.dormant && up_events == 2); cases++;
+    assert(poll_link(&ndp, 1, 0) == 0);
+    assert(aen_link(&ndp, 1) == 0 && up_events == 2); cases++;
+
+    /* Single-channel insert AEN used to return without notifying the MAC. */
+    initialize(&ndp, &np, &nc, &dev);
+    ndp.ndev.state = ncsi_dev_state_functional; nc.state = NCSI_CHANNEL_ACTIVE;
+    assert(aen_link(&ndp, 1) == 0);
+    assert(ndp.ndev.link_up && !dev.dormant && dev.carrier && up_events == 1); cases++;
+    assert(aen_link(&ndp, 0) == 0);
+    assert(!ndp.ndev.link_up && dev.dormant); cases++;
+    /* Model completion of the normal link-down reconfiguration. */
+    nc.link.empty = true; nc.state = NCSI_CHANNEL_ACTIVE;
+    assert(aen_link(&ndp, 1) == 0);
+    assert(ndp.ndev.link_up && !dev.dormant && up_events == 2); cases++;
+
+    /* If a poll already changed the cached bit, a same-bit AEN must still
+     * repair a stale published state without reconfiguring the channel. */
+    initialize(&ndp, &np, &nc, &dev);
+    ndp.ndev.state = ncsi_dev_state_functional; nc.state = NCSI_CHANNEL_ACTIVE;
+    nc.modes[NCSI_MODE_LINK].data[2] = 1;
+    assert(aen_link(&ndp, 1) == 0);
+    assert(ndp.ndev.link_up && !dev.dormant && up_events == 1); cases++;
+    nc.modes[NCSI_MODE_LINK].data[2] = 0;
+    assert(aen_link(&ndp, 0) == 0);
+    assert(!ndp.ndev.link_up && dev.dormant); cases++;
+
+    /* Background polls must not complete probe/config/suspend, nor expose
+     * an inactive, failed, or queued channel as usable. */
+    for (i = 0; i < 3; i++) {
+        const int phases[] = {ncsi_dev_state_probe, ncsi_dev_state_config, ncsi_dev_state_suspend};
+        initialize(&ndp, &np, &nc, &dev); nc.state = NCSI_CHANNEL_ACTIVE;
+        ndp.ndev.state = phases[i];
+        assert(poll_link(&ndp, 1, 0) == 0);
+        assert(ndp.ndev.state == phases[i] && !ndp.ndev.link_up && dev.dormant && !up_events); cases++;
+    }
+    for (i = 0; i < 3; i++) {
+        initialize(&ndp, &np, &nc, &dev); ndp.ndev.state = ncsi_dev_state_functional;
+        nc.state = i == 0 ? NCSI_CHANNEL_INACTIVE : i == 1 ? NCSI_CHANNEL_FAILED : NCSI_CHANNEL_ACTIVE;
+        if (i == 2) nc.link.empty = false;
+        assert(poll_link(&ndp, 1, 0) == 0);
+        assert(!ndp.ndev.link_up && dev.dormant && !up_events); cases++;
+    }
+    initialize(&ndp, &np, &nc, &dev);
+    ndp.ndev.state = ncsi_dev_state_functional; nc.state = NCSI_CHANNEL_ACTIVE;
+    assert(poll_link(&ndp, 1, NCSI_REQ_FLAG_EVENT_DRIVEN) == 0);
+    assert(!ndp.ndev.link_up && dev.dormant && !up_events); cases++;
+    initialize(&ndp, &np, &nc, &dev);
+    ndp.ndev.state = ncsi_dev_state_functional; nc.state = NCSI_CHANNEL_ACTIVE;
+    ndp.multi_package = np.multi_channel = true;
+    assert(aen_link(&ndp, 1) == 0);
+    assert(ndp.ndev.link_up && !dev.dormant); cases++;
+    printf("PASS: %u NC-SI configuration and cable-readiness cases\n", cases);
     return 0;
 }

@@ -31,15 +31,20 @@ def main():
     manage = (args.source / "net/ncsi/ncsi-manage.c").read_text()
     header = (args.source / "net/ncsi/internal.h").read_text()
     driver = (args.source / "drivers/net/ethernet/faraday/ftgmac100.c").read_text()
+    response = (args.source / "net/ncsi/ncsi-rsp.c").read_text()
+    aen = (args.source / "net/ncsi/ncsi-aen.c").read_text()
     states_start = header.index("enum {\n\tncsi_dev_state_major")
     states_end = header.index("\n};", states_start) + 3
-    functions = ["ncsi_alloc_request", "ncsi_free_request", "ncsi_suspend_channel",
+    functions = ["ncsi_channel_has_link", "ncsi_dev_has_link", "ncsi_report_link", "ncsi_refresh_link",
+                 "ncsi_alloc_request", "ncsi_free_request", "ncsi_suspend_channel",
                  "ncsi_config_cmd_required", "ncsi_config_xmit_cmd",
                  "ncsi_retry_config", "ncsi_configure_channel", "ncsi_reset_dev"]
     extracted = header[states_start:states_end] + "\n" + "\n".join(
         function(manage, name) for name in functions
     )
     extracted += function(driver, "ftgmac100_ncsi_handler")
+    extracted += function(response, "ncsi_rsp_handler_gls")
+    extracted += function(aen, "ncsi_aen_handler_lsc")
     fixture = Path(__file__).with_suffix(".c")
     with tempfile.TemporaryDirectory(prefix="ncsi-config-test-", ignore_cleanup_errors=True) as scratch:
         work = Path(scratch)

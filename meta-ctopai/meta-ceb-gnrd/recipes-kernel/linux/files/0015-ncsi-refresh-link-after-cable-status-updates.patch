@@ -1,0 +1,178 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ncsi: report link readiness after cable status updates
+
+Polling GLS replies update cached link bits but do not notify the MAC. LSC
+AEN also returns without notifying it when a configured single channel
+comes up, or when a preceding poll already updated the same link bit.
+With operational readiness exposed through dormant, cable reinsertion can
+therefore leave networkd waiting forever despite a working NC-SI channel.
+
+Share the existing active-channel link aggregation and refresh the MAC on
+poll/AEN changes while the device is functional. Do not complete or alter
+an in-flight probe/config/suspend state from a background status reply.
+Keep the NC-SI control carrier and channel selection/failover policy.
+
+Upstream-Status: Pending
+---
+--- a/net/ncsi/internal.h
++++ b/net/ncsi/internal.h
+@@ -412,6 +412,7 @@
+ struct ncsi_dev *ncsi_find_dev(struct net_device *dev);
+ int ncsi_process_next_channel(struct ncsi_dev_priv *ndp);
+ bool ncsi_channel_has_link(struct ncsi_channel *channel);
++void ncsi_refresh_link(struct ncsi_dev_priv *ndp);
+ bool ncsi_channel_is_last(struct ncsi_dev_priv *ndp,
+ 			  struct ncsi_channel *channel);
+ int ncsi_update_tx_channel(struct ncsi_dev_priv *ndp,
+--- a/net/ncsi/ncsi-manage.c
++++ b/net/ncsi/ncsi-manage.c
+@@ -48,41 +48,55 @@
+ 	return true;
+ }
+ 
+-static void ncsi_report_link(struct ncsi_dev_priv *ndp, bool force_down)
+-{
+-	struct ncsi_dev *nd = &ndp->ndev;
++static bool ncsi_dev_has_link(struct ncsi_dev_priv *ndp)
++{
+ 	struct ncsi_package *np;
+ 	struct ncsi_channel *nc;
+ 	unsigned long flags;
+-
+-	nd->state = ncsi_dev_state_functional;
+-	if (force_down) {
+-		nd->link_up = 0;
+-		goto report;
+-	}
+-
+-	nd->link_up = 0;
++	bool link_up;
++
+ 	NCSI_FOR_EACH_PACKAGE(ndp, np) {
+ 		NCSI_FOR_EACH_CHANNEL(np, nc) {
+ 			spin_lock_irqsave(&nc->lock, flags);
+-
+-			if (!list_empty(&nc->link) ||
+-			    nc->state != NCSI_CHANNEL_ACTIVE) {
+-				spin_unlock_irqrestore(&nc->lock, flags);
+-				continue;
+-			}
+-
+-			if (ncsi_channel_has_link(nc)) {
+-				spin_unlock_irqrestore(&nc->lock, flags);
+-				nd->link_up = 1;
+-				goto report;
+-			}
+-
++			link_up = list_empty(&nc->link) &&
++				  nc->state == NCSI_CHANNEL_ACTIVE &&
++				  ncsi_channel_has_link(nc);
+ 			spin_unlock_irqrestore(&nc->lock, flags);
+-		}
+-	}
+-
+-report:
++			if (link_up)
++				return true;
++		}
++	}
++
++	return false;
++}
++
++static void ncsi_report_link(struct ncsi_dev_priv *ndp, bool force_down)
++{
++	struct ncsi_dev *nd = &ndp->ndev;
++
++	nd->state = ncsi_dev_state_functional;
++	nd->link_up = !force_down && ncsi_dev_has_link(ndp);
++	nd->handler(nd);
++}
++
++/* Poll replies and LSC AENs can update link bits without running the channel
++ * state machine. Notify the MAC too, but never overwrite an in-flight probe,
++ * configuration or suspend state merely because a status reply arrived.
++ */
++void ncsi_refresh_link(struct ncsi_dev_priv *ndp)
++{
++	struct ncsi_dev *nd = &ndp->ndev;
++	bool link_up;
++
++	if (READ_ONCE(nd->state) != ncsi_dev_state_functional)
++		return;
++
++	link_up = ncsi_dev_has_link(ndp);
++	if (READ_ONCE(nd->state) != ncsi_dev_state_functional ||
++	    READ_ONCE(nd->link_up) == link_up)
++		return;
++
++	WRITE_ONCE(nd->link_up, link_up);
+ 	nd->handler(nd);
+ }
+ 
+--- a/net/ncsi/ncsi-rsp.c
++++ b/net/ncsi/ncsi-rsp.c
+@@ -348,18 +348,20 @@
+ 	if (!nc)
+ 		return -ENODEV;
+ 
++	spin_lock_irqsave(&nc->lock, flags);
+ 	ncm = &nc->modes[NCSI_MODE_LINK];
+ 	ncm->data[2] = ntohl(rsp->status);
+ 	ncm->data[3] = ntohl(rsp->other);
+ 	ncm->data[4] = ntohl(rsp->oem_status);
+-
+-	if (nr->flags & NCSI_REQ_FLAG_EVENT_DRIVEN)
+-		return 0;
+-
+-	/* Reset the channel monitor if it has been enabled */
+-	spin_lock_irqsave(&nc->lock, flags);
+-	nc->monitor.state = NCSI_CHANNEL_MONITOR_START;
++	if (!(nr->flags & NCSI_REQ_FLAG_EVENT_DRIVEN))
++		nc->monitor.state = NCSI_CHANNEL_MONITOR_START;
+ 	spin_unlock_irqrestore(&nc->lock, flags);
++
++	/* Configuration/probe replies are reported by their state machine.
++	 * Background polls must publish cable changes even without an AEN.
++	 */
++	if (!(nr->flags & NCSI_REQ_FLAG_EVENT_DRIVEN))
++		ncsi_refresh_link(ndp);
+ 
+ 	return 0;
+ }
+--- a/net/ncsi/ncsi-aen.c
++++ b/net/ncsi/ncsi-aen.c
+@@ -86,8 +86,11 @@
+ 			    "NCSI: Inactive channel %u received AEN!\n",
+ 			    nc->id);
+ 
+-	if ((had_link == has_link) || chained)
+-		return 0;
++	if ((had_link == has_link) || chained) {
++		if (!chained)
++			ncsi_refresh_link(ndp);
++		return 0;
++	}
+ 
+ 	if (!ndp->multi_package && !nc->package->multi_channel) {
+ 		if (had_link) {
+@@ -98,7 +101,10 @@
+ 			spin_unlock_irqrestore(&ndp->lock, flags);
+ 			return ncsi_process_next_channel(ndp);
+ 		}
+-		/* Configured channel came up */
++		/* A configured channel needs no reconfiguration on cable insert,
++		 * but the MAC/network manager still needs the readiness event.
++		 */
++		ncsi_refresh_link(ndp);
+ 		return 0;
+ 	}
+ 
+@@ -134,6 +140,7 @@
+ 	/* Leave configured channels active in a multi-channel scenario so
+ 	 * AEN events are still received.
+ 	 */
++	ncsi_refresh_link(ndp);
+ 	return 0;
+ }
+ 
