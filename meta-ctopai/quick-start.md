@@ -149,7 +149,7 @@ source oe-init-build-env build/ceb-gnrd
 | `image-rofs` | SquashFS-XZ 根文件系统，用于 `bootnet` / `netupdate` |
 | `image-rwfs` | JFFS2 可写分区镜像 |
 
-固件发行版本由 `meta-ctopai/conf/distro/ctopai-openbmc.conf` 的 `DISTRO_VERSION` 指定：当前为 `2.1.0`，Web 和 `/etc/os-release` 使用此字符串，IPMI `mc info` 显示 `2.01`。Git 标签 `2.00-golden-release` 标记的是此前的 2.00 发布提交，不会随工作区版本修改而移动。
+固件发行版本由 `meta-ctopai/conf/distro/ctopai-openbmc.conf` 的 `DISTRO_VERSION` 指定：当前为 `2.2.0`，Web 和 `/etc/os-release` 使用此字符串，IPMI `mc info` 显示 `2.02`。Git 标签 `2.00-golden-release` 标记的是此前的 2.00 发布提交，不会随工作区版本修改而移动。
 
 编程器烧录后，整片读回 64 MiB 并与实际烧录的原始文件比较。若出现 `unable to read id index table` 或其他 SquashFS 挂载错误，先核对文件格式、完整性、烧录偏移和高地址区域；完整启动日志与读回文件可帮助区分镜像问题和 SPI 读取问题。
 
@@ -597,7 +597,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 
 ### 4. IPMI、日志和保留策略
 
-* `ipmitool mc info`：Device ID 32、Device Revision 2、Manufacturer ID 49871、Product ID 59380（0xE7F4）；当前发行版本对应 Firmware Revision 2.01。
+* `ipmitool mc info`：Device ID 32、Device Revision 2、Manufacturer ID 49871、Product ID 59380（0xE7F4）；当前发行版本对应 Firmware Revision 2.02。
 * `ipmitool raw 0x30 0x01` 读取六个风扇，返回 25 字节。设置示例：`ipmitool raw 0x30 0x02 0xFF 0x01 0x3C 0x01`，全部固定 60%并保留；设置需要 Admin。
 * CPU 温度上限 UNC/UC/UNR 为 90/98/105°C，DIMM 为 80/85/95°C。电压使用 LC/UC；风扇没有转速阈值告警。板级私有 UNR接口不会触发 HardShutdown。
 * Host Off 时 CPU/DIMM 值为 0，停止 Host 供电传感器失读告警；Host On 失读时发布至少 70°C 的保护输入，保留更高的最后读值，直到恢复有效采样或确认 DC Off。告警使用真实读值，不用保护值制造温度告警。
@@ -609,7 +609,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * 普通重启不主动清除持久日志；重写 RWFS 的升级按白名单恢复设置，SEL/Redfish/系统警告日志不在白名单中，不能承诺保留。恢复出厂清除 RWFS；U-Boot环境位于独立分区。
 * SSH 使用 Dropbear，现代 SCP走 SFTP（保留 openssh-sftp-server）；旧 `scp -O` 和 rsync 不随本镜像提供。
 
-* FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式，默认值已经填在输入行里，可以直接修改，直接回车则采用默认值。默认值：制造商 `CTOPAI`，Board/Product 名称 `CEB-GNR-D`，Chassis PN `93-XXXXX-XX`、Board PN `91-59380-A0`、Product PN `81-59380-A0`，Product 版本 `v1.0`，Product 资产标签 `Xeon6-SOC`，Board / Product FRU file ID `0`，序列号为生成当天 UTC 日期 `YYMMDD` 加 `0001`，例如 `2610060001`（序号可手动修改，不自动递增）。输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成镜像须不超过 EEPROM 容量），再用 `ipmitool fru print 0` 核对。
+* FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式，默认值已经填在输入行里，可以直接修改，直接回车则采用默认值。默认值：制造商 `CTOPAI`，Board/Product 名称 `CEB-GNR-D`，Chassis PN `93-XXXXX-XX`、Board PN `91-59380-A0`、Product PN `81-59380-A0`，Product 版本 `v1.0`，Product 资产标签 `Xeon6-SOC`，Board / Product FRU file ID `0`，Board 生产日期默认为本次生成开始时的 BMC UTC 时间（精确到分钟，可手动修改；超出 FRU 时间字段范围时默认为未指定），序列号为生成当天 UTC 日期 `YYMMDD` 加 `0001`，例如 `2610060001`（序号可手动修改，不自动递增）。输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成镜像须不超过 EEPROM 容量），再用 `ipmitool fru print 0` 核对。
 
 ## 七、验证清单
 
@@ -631,7 +631,7 @@ scp -P 2222 root@127.0.0.1:/tmp/ceb-gnrd-check.tar.gz .   # 在 Ubuntu 上取回
 systemctl --failed --no-pager                 # QEMU 缺少 KCS、eSPI、PECI 等硬件，对应服务失败属预期
 journalctl -b -p err --no-pager | tail -40
 ip addr show eth0                              # QEMU 里 DHCP 第一个租约应为 192.168.185.200
-cat /etc/os-release | head                     # VERSION_ID 应为 2.1.0；ipmitool mc info 的 Firmware Revision 应为 2.01
+cat /etc/os-release | head                     # VERSION_ID 应为 2.2.0；ipmitool mc info 的 Firmware Revision 应为 2.02
 ipmitool mc info                               # Manufacturer Name CTOPAI，Product Name CEB-GNR-D
 ```
 
@@ -731,7 +731,7 @@ SSTATE_DIR = "/home/test/yocto-cache/sstate"
 
 ## 九、板卡层实现说明
 
-本章按实际代码入口说明工作机制，硬件引脚与地址见 `port_guide.xlsx`。校对日期为 2026-10-14；工作区包含 `DISTRO_VERSION=2.1.0` 的版本调整。代码存在不等于全部硬件场景已经验证。
+本章按实际代码入口说明工作机制，硬件引脚与地址见 `port_guide.xlsx`。校对日期为 2026-10-14；工作区包含 `DISTRO_VERSION=2.2.0` 的版本调整。代码存在不等于全部硬件场景已经验证。
 
 ### Flash、启动与升级
 

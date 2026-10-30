@@ -6,6 +6,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI:append = " \
     file://0001-ipmitool-fru-add-gen-command.patch \
     file://0002-ipmitool-add-ceb-gnrd-product-name.patch \
+    file://0003-ipmitool-fru-default-manufacturing-time-from-bmc.patch \
     "
 
 # ipmitool shows the Manufacturer Name of "mc info" by looking the ID up in the
