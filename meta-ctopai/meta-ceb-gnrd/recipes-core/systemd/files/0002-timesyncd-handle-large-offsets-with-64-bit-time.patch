@@ -1,0 +1,91 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] timesyncd: keep large clock offsets in time_t
+
+On 32-bit ARM with _TIME_BITS=64, time_t and timex.time.tv_sec are
+64-bit, but long is still 32-bit. Casting a roughly 72-year offset from
+2098 back to 2026 to long overflows before clock_adjtime() is called.
+The resulting seconds/nanoseconds pair is invalid and NTP cannot recover
+without a manual clock correction. Split the offset using time_t instead.
+
+Only mark a jump and publish/save a synchronized timestamp after the
+adjustment succeeds. On failure keep processing replies and rearming
+the normal poll timer, without reporting initial synchronization.
+
+Upstream-Status: Pending
+---
+--- a/src/timesync/timesyncd-manager.c
++++ b/src/timesync/timesyncd-manager.c
+@@ -257,9 +257,11 @@
+                 tmx = (struct timex) {
+                         .modes = ADJ_STATUS | ADJ_NANO | ADJ_SETOFFSET | ADJ_MAXERROR | ADJ_ESTERROR,
+ 
+-                        /* ADJ_NANO uses nanoseconds in the microseconds field */
+-                        .time.tv_sec = (long)offset,
+-                        .time.tv_usec = (offset - (double) (long) offset) * NSEC_PER_SEC,
++                        /* time_t may be 64-bit even when long is 32-bit. Keep the whole
++                         * offset when splitting seconds and nanoseconds. ADJ_NANO uses
++                         * nanoseconds in the microseconds field. */
++                        .time.tv_sec = (time_t) offset,
++                        .time.tv_usec = (offset - (double) (time_t) offset) * NSEC_PER_SEC,
+                 };
+ 
+                 /* the kernel expects -0.3s as {-1, 7000.000.000} */
+@@ -268,7 +270,6 @@
+                         tmx.time.tv_usec += NSEC_PER_SEC;
+                 }
+ 
+-                m->jumped = true;
+                 log_debug("  adjust (jump): %+.3f sec", offset);
+         }
+ 
+@@ -291,6 +292,9 @@
+ 
+         if (clock_adjtime(CLOCK_REALTIME, &tmx) < 0)
+                 return -errno;
++
++        if (fabs(offset) >= NTP_MAX_ADJUST)
++                m->jumped = true;
+ 
+         m->drift_freq = tmx.freq;
+ 
+@@ -415,7 +419,7 @@
+         triple_timestamp dts;
+         ssize_t len;
+         double origin, receive, trans, dest, delay, offset, root_distance;
+-        bool spike;
++        bool spike, adjusted = false;
+         int leap_sec, r;
+ 
+         assert(source);
+@@ -577,13 +581,15 @@
+                 r = manager_adjust_clock(m, offset, leap_sec);
+                 if (r < 0)
+                         log_error_errno(r, "Failed to call clock_adjtime(): %m");
+-
+-                (void) manager_save_time_and_rearm(m, dts.realtime);
+-
+-                /* If touch fails, there isn't much we can do. Maybe it'll work next time. */
+-                r = touch("/run/systemd/timesync/synchronized");
+-                if (r < 0)
+-                        log_debug_errno(r, "Failed to touch /run/systemd/timesync/synchronized, ignoring: %m");
++                else {
++                        adjusted = true;
++                        (void) manager_save_time_and_rearm(m, dts.realtime);
++
++                        /* Publish synchronization only after the clock adjustment succeeds. */
++                        r = touch("/run/systemd/timesync/synchronized");
++                        if (r < 0)
++                                log_debug_errno(r, "Failed to touch /run/systemd/timesync/synchronized, ignoring: %m");
++                }
+         }
+ 
+         /* Save NTP response */
+@@ -615,7 +621,7 @@
+                 (void) sd_notifyf(false, "STATUS=Contacted time server %s (%s).", strna(pretty), m->current_server_name->string);
+         }
+ 
+-        if (!spike && !m->synchronized) {
++        if (adjusted && !m->synchronized) {
+                 m->synchronized = true;
+ 
+                 log_struct(LOG_INFO,

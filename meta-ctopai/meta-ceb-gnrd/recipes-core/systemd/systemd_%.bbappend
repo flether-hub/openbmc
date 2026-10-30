@@ -1,5 +1,8 @@
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
-SRC_URI:append:ceb-gnrd = " file://0001-hostnamed-allow-networkd-transient-hostname-without-polkit.patch"
+SRC_URI:append:ceb-gnrd = " \
+    file://0001-hostnamed-allow-networkd-transient-hostname-without-polkit.patch \
+    file://0002-timesyncd-handle-large-offsets-with-64-bit-time.patch \
+"
 
 # timesyncd is compiled and packaged in systemd by the Phosphor recipe, but
 # OE only registers selected split packages with the systemd class. Register
