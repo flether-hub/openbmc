@@ -609,7 +609,7 @@ devtool finish bmcweb ../meta-ctopai/meta-ceb-gnrd
 * 普通重启不主动清除持久日志；重写 RWFS 的升级按白名单恢复设置，SEL/Redfish/系统警告日志不在白名单中，不能承诺保留。恢复出厂清除 RWFS；U-Boot环境位于独立分区。
 * SSH 使用 Dropbear，现代 SCP走 SFTP（保留 openssh-sftp-server）；旧 `scp -O` 和 rsync 不随本镜像提供。
 
-* FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式，默认值已经填在输入行里，可以直接修改，直接回车则采用默认值。默认值：制造商 `CTOPAI`，Board/Product 名称 `CEB-GNR-D`，Chassis PN `93-XXXXX-XX`、Board PN `91-59380-A0`、Product PN `81-59380-A0`，Product 版本 `v1.0`，Product 资产标签 `Xeon6-SOC`，Board / Product FRU file ID `0`，Board 生产日期默认为本次生成开始时的 BMC UTC 时间（精确到分钟，可手动修改；超出 FRU 时间字段范围时默认为未指定），序列号为生成当天 UTC 日期 `YYMMDD` 加 `0001`，例如 `2610060001`（序号可手动修改，不自动递增）。输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成镜像须不超过 EEPROM 容量），再用 `ipmitool fru print 0` 核对。
+* FRU 生成：`ipmitool fru gen [文件名]`（默认 `fru.bin`）。会依次提示 Chassis、Board、Product 三个区域的每个字段，每项都显示含义/格式，默认值已经填在输入行里，可以直接修改，直接回车则采用默认值。默认值：制造商 `CTOPAI`，Board/Product 名称 `CEB-GNR-D`，Chassis PN `93-XXXXX-XX`、Board PN `91-59380-A0`、Product PN `81-59380-A0`，Product 版本 `v1.0`，Product 资产标签 `Xeon6-SOC`，Board / Product FRU file ID `0`，Board 生产日期默认为本次生成开始时的 BMC UTC 时间（精确到分钟，可手动修改；超出 FRU 时间字段范围时仍显示当前时间，并提示校正 BMC 时间或修改生产日期），序列号为生成当天 UTC 日期 `YYMMDD` 加 `0001`，例如 `2610060001`（序号可手动修改，不自动递增）。输入不合法会提示重输，标准输入不是终端时全部用默认值；字段是可打印 ASCII，最长 63 个字符，日期格式 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:MM`（UTC，留空表示未指定），机箱类型填数字（默认 `0x17` 机架式）。生成后用 `ipmitool fru write 0 fru.bin` 写入主板 FRU（EEPROM 1 KiB，生成镜像须不超过 EEPROM 容量），再用 `ipmitool fru print 0` 核对。
 
 ## 七、验证清单
 

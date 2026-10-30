@@ -1,48 +1,30 @@
 From: CEB-GNRD maintainers
-Subject: [PATCH] fru: default manufacturing time to the BMC UTC generation time
+Subject: [PATCH] fru: prefill manufacturing time from the BMC UTC clock
 
 Use one runtime UTC snapshot for serial defaults and the editable board
-manufacturing timestamp. Drop the fixed October 2026 date. Leave the default
-unspecified when the BMC date cannot fit the FRU 24-bit minute field, rather
-than truncating it or looping on EOF with an invalid default.
+manufacturing timestamp. Always show the actual clock value, including when
+it is outside the FRU field range, instead of silently defaulting to empty.
+Keep the 24-bit minute validation, and abort generation on invalid EOF rather
+than truncating the value or retrying forever.
 
 Upstream-Status: Inappropriate [CEB-GNRD FRU generation helper]
 
 --- a/lib/ipmi_fru.c
 +++ b/lib/ipmi_fru.c
-@@ -4786,17 +4786,37 @@
+@@ -4786,18 +4786,16 @@
  	return era * 146097 + doe - 719468;
  }
  
 -/* default board manufacturing date */
 -#define FRU_GEN_DEF_DATE    "2026-10-01"
-+/* Default from the same UTC snapshot used for this image's serial numbers.
-+ * FRU stores only 24 bits of minutes since 1996. An unrepresentable BMC clock
-+ * must not create an invalid default and loop forever on non-terminal input.
-+ */
-+static void
-+fru_gen_default_date(const struct tm *utc, char *out, size_t size)
-+{
-+	long minutes;
-+
-+	out[0] = '\0';
-+	if (utc->tm_year < 96 || utc->tm_year > 300) {
-+		return;
-+	}
-+	minutes = (fru_gen_days(utc->tm_year + 1900, utc->tm_mon + 1,
-+						  utc->tm_mday) - fru_gen_days(1996, 1, 1))
-+			  * 1440L + utc->tm_hour * 60 + utc->tm_min;
-+	if (minutes >= 0 && minutes < 0x1000000L) {
-+		if (strftime(out, size, "%Y-%m-%d %H:%M", utc) == 0) {
-+			out[0] = '\0';
-+		}
-+	}
-+}
- 
- /* returns the board manufacturing time in minutes since 1996-01-01 00:00 UTC,
-  * 0 means unspecified (an empty input) */
- static uint32_t
+-
+-/* returns the board manufacturing time in minutes since 1996-01-01 00:00 UTC,
+- * 0 means unspecified (an empty input) */
+-static uint32_t
 -fru_gen_ask_date(void)
++/* Returns minutes since 1996-01-01 00:00 UTC, zero for unspecified,
++ * or -1 when EOF prevents correcting an invalid/unrepresentable date. */
++static int32_t
 +fru_gen_ask_date(const char *default_date)
  {
  	char line[64];
@@ -50,9 +32,33 @@ Upstream-Status: Inappropriate [CEB-GNRD FRU generation helper]
 -	const char *cur = FRU_GEN_DEF_DATE;
 +	const char *cur = default_date;
  	int y, mo, d, h, mi, n;
++	int eof;
  	long minutes;
  
-@@ -4901,7 +4921,7 @@
+ 	for (;;) {
+@@ -4807,7 +4805,7 @@
+ 			   "    format : YYYY-MM-DD or YYYY-MM-DD HH:MM, year 1996 or later,\n"
+ 			   "             or empty for unspecified\n");
+ 		fru_gen_show_default(cur);
+-		fru_gen_input(cur, line, sizeof(line));
++		eof = fru_gen_input(cur, line, sizeof(line)) < 0;
+ 		if (line[0] == '\0') {
+ 			return 0;
+ 		}
+@@ -4821,7 +4819,11 @@
+ 				return (uint32_t)minutes;
+ 			}
+ 		}
+-		printf("    invalid: use YYYY-MM-DD or YYYY-MM-DD HH:MM (year 1996 or later)\n");
++		printf("    invalid: use YYYY-MM-DD or YYYY-MM-DD HH:MM within the FRU date range\n");
++		if (eof) {
++			lprintf(LOG_ERR, "Cannot encode the manufacturing date; correct the BMC UTC clock or enter a representable date");
++			return -1;
++		}
+ 		memcpy(prev, line, sizeof(prev));
+ 		cur = prev;
+ 	}
+@@ -4901,17 +4903,20 @@
  }
  
  static size_t
@@ -60,31 +66,38 @@ Upstream-Status: Inappropriate [CEB-GNRD FRU generation helper]
 +fru_gen_board_area(uint8_t *area, const char *serial, const char *default_date)
  {
  	char text[FRU_GEN_FIELD_MAX + 1];
- 	uint32_t date;
-@@ -4911,7 +4931,7 @@
+-	uint32_t date;
++	int32_t date;
+ 	size_t used = 0;
+ 
+ 	printf("\n=== Board info area (2 of 3) ===\n\n");
  	area[used++] = 0x01;    /* format version */
  	area[used++] = 0;       /* length, set in fru_gen_end_area() */
  	area[used++] = 0;       /* language code: English */
 -	date = fru_gen_ask_date();
 +	date = fru_gen_ask_date(default_date);
++	if (date < 0) {
++		return 0;
++	}
  	area[used++] = (uint8_t)(date & 0xFF);          /* little endian */
  	area[used++] = (uint8_t)((date >> 8) & 0xFF);
  	area[used++] = (uint8_t)((date >> 16) & 0xFF);
-@@ -5015,6 +5035,7 @@
+@@ -5015,6 +5020,7 @@
  	size_t i;
  	FILE *fp;
  	char serial[11];
-+	char mfg_date[17];
++	char mfg_date[32];
  	time_t now;
  	struct tm *utc;
  
-@@ -5026,12 +5047,17 @@
+@@ -5026,12 +5032,21 @@
  		return -1;
  	}
  
-+	fru_gen_default_date(utc, mfg_date, sizeof(mfg_date));
-+	if (mfg_date[0] == '\0') {
-+		lprintf(LOG_WARN, "BMC UTC time is outside the FRU manufacturing-date range; default is unspecified");
++	/* Read the BMC system UTC clock once for both date and serial defaults. */
++	if (strftime(mfg_date, sizeof(mfg_date), "%Y-%m-%d %H:%M", utc) == 0) {
++		lprintf(LOG_ERR, "Cannot format BMC UTC time for the manufacturing date");
++		return -1;
 +	}
 +
  	printf("Creating FRU image %s.\n"
@@ -94,6 +107,9 @@ Upstream-Status: Inappropriate [CEB-GNRD FRU generation helper]
  	clen = fru_gen_chassis_area(chassis, serial);
 -	blen = fru_gen_board_area(board, serial);
 +	blen = fru_gen_board_area(board, serial, mfg_date);
++	if (blen == 0) {
++		return -1;
++	}
  	plen = fru_gen_product_area(product, serial);
  
  	memset(hdr, 0, sizeof(hdr));
