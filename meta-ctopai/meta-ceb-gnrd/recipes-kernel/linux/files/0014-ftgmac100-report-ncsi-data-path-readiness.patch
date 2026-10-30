@@ -1,0 +1,44 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ftgmac100: publish NC-SI data readiness through dormant
+
+NC-SI requires the MAC carrier to stay on for its control packets, but this
+also starts DHCP before sideband configuration finishes. The completion
+callback currently only logs the actual NC-SI link result.
+
+Keep the transport carrier and mark the interface dormant until NC-SI
+reports a functional channel with link. Re-enter dormant on link loss,
+stop or configuration failure, so networkd pauses/restarts dynamic address
+acquisition on the real readiness transition without a MAC down/up.
+The PHY-backed dedicated port is unchanged.
+
+Upstream-Status: Pending
+---
+--- a/drivers/net/ethernet/faraday/ftgmac100.c
++++ b/drivers/net/ethernet/faraday/ftgmac100.c
+@@ -1593,7 +1593,10 @@
+ 		phy_start(netdev->phydev);
+ 	}
+ 	if (priv->use_ncsi) {
+-		/* If using NC-SI, set our carrier on and start the stack */
++		/* Keep the MAC carrier for NC-SI control packets, but withhold
++		 * operational readiness until the sideband channel is configured.
++		 */
++		netif_dormant_on(netdev);
+ 		netif_carrier_on(netdev);
+ 
+ 		/* Start the NCSI device */
+@@ -1798,6 +1801,14 @@
+ {
+ 	if (unlikely(nd->state != ncsi_dev_state_functional))
+ 		return;
++
++	/* Carrier must remain on so control requests can recover a lost link.
++	 * Dormant tells networkd/DHCP whether the data path is actually ready.
++	 */
++	if (nd->link_up)
++		netif_dormant_off(nd->dev);
++	else
++		netif_dormant_on(nd->dev);
+ 
+ 	netdev_dbg(nd->dev, "NCSI interface %s\n",
+ 		   nd->link_up ? "up" : "down");

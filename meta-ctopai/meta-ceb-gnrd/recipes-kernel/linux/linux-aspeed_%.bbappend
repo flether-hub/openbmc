@@ -19,6 +19,8 @@ SRC_URI:append = " \
         file://0010-spi-aspeed-select-data-width-for-user-writes.patch \
         file://0011-ncsi-handle-idle-work-and-report-invalid-responses.patch \
         file://0012-spi-nor-detect-board-bios-on-explicit-bind.patch \
+        file://0013-ncsi-retry-mandatory-channel-configuration.patch \
+        file://0014-ftgmac100-report-ncsi-data-path-readiness.patch \
         "
 
 do_patch:append() {

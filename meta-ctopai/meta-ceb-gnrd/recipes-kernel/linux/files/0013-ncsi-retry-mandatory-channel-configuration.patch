@@ -1,0 +1,446 @@
+From: CEB-GNRD maintainers <bmc@example.com>
+Subject: [PATCH] ncsi: retry failed mandatory channel configuration commands
+
+Carrier on the NC-SI MAC is not evidence that the sideband data path is
+configured. A timeout or rejected mandatory response currently releases the
+request and advances configuration as though it succeeded, allowing a
+channel without its MAC/broadcast/Tx configuration to become ACTIVE.
+
+Preserve the mandatory command arguments and retry from the workqueue up
+to three times, with a fresh request ID each time. On exhaustion run normal
+channel disable cleanup instead of marking the channel ACTIVE; exclude it
+from reselection until the next administrative start. Keep discovery,
+optional OEM/VLAN/AEN behaviour and existing user selection policy intact.
+
+Upstream-Status: Pending
+---
+--- a/net/ncsi/internal.h
++++ b/net/ncsi/internal.h
+@@ -218,9 +218,11 @@
+ #define NCSI_CHANNEL_INACTIVE		1
+ #define NCSI_CHANNEL_ACTIVE		2
+ #define NCSI_CHANNEL_INVISIBLE		3
++#define NCSI_CHANNEL_FAILED		4 /* Partial config needs disable cleanup */
+ 	bool                        reconfigure_needed;
+ 	bool                        version_valid; /* GVI completed */
+ 	bool                        caps_valid;    /* GC and filters ready */
++	bool                        config_failed; /* Retry budget exhausted this start */
+ 	spinlock_t                  lock;	/* Protect filters etc */
+ 	struct ncsi_package         *package;
+ 	struct ncsi_channel_version version;
+@@ -263,6 +265,8 @@
+ 	unsigned int         flags;   /* NCSI request property           */
+ #define NCSI_REQ_FLAG_EVENT_DRIVEN	1
+ #define NCSI_REQ_FLAG_NETLINK_DRIVEN	2
++#define NCSI_REQ_FLAG_CONFIG		4 /* Mandatory configuration command */
++	int                  status;  /* Response result, timeout until completed */
+ 	struct ncsi_dev_priv *ndp;    /* Associated NCSI device          */
+ 	struct sk_buff       *cmd;    /* Associated NCSI command packet  */
+ 	struct sk_buff       *rsp;    /* Associated NCSI response packet */
+@@ -316,6 +320,23 @@
+ 	u16 vid;
+ };
+ 
++struct ncsi_cmd_arg {
++	struct ncsi_dev_priv *ndp;        /* Associated NCSI device        */
++	unsigned char        type;        /* Command in the NCSI packet    */
++	unsigned char        id;          /* Request ID (sequence number)  */
++	unsigned char        package;     /* Destination package ID        */
++	unsigned char        channel;     /* Destination channel ID or 0x1f */
++	unsigned short       payload;     /* Command packet payload length */
++	unsigned int         req_flags;   /* NCSI request properties       */
++	union {
++		unsigned char  bytes[16]; /* Command packet specific data  */
++		unsigned short words[8];
++		unsigned int   dwords[4];
++	};
++	unsigned char        *data;       /* NCSI OEM data                 */
++	struct genl_info     *info;       /* Netlink information           */
++};
++
+ struct ncsi_dev_priv {
+ 	struct ncsi_dev     ndev;            /* Associated NCSI device     */
+ 	unsigned int        flags;           /* NCSI device flags          */
+@@ -335,6 +356,11 @@
+ 	unsigned int        request_id;      /* Last used request ID       */
+ #define NCSI_REQ_START_IDX	1
+ 	unsigned int        pending_req_num; /* Number of pending requests */
++	struct ncsi_cmd_arg config_cmd;      /* Last mandatory config command */
++	unsigned int        config_retries;  /* Retransmissions of that command */
++	int                 config_error;    /* Published before scheduling work */
++	bool                config_pending;  /* Check command result before advancing */
++	bool                config_cleanup;  /* Disable a failed partial configuration */
+ 	struct ncsi_package *active_package; /* Currently handled package  */
+ 	struct ncsi_channel *active_channel; /* Currently handled channel  */
+ 	struct list_head    channel_queue;   /* Config queue of channels   */
+@@ -350,22 +376,6 @@
+ 	unsigned char       channel_count;     /* Num of channels to probe   */
+ };
+ 
+-struct ncsi_cmd_arg {
+-	struct ncsi_dev_priv *ndp;        /* Associated NCSI device        */
+-	unsigned char        type;        /* Command in the NCSI packet    */
+-	unsigned char        id;          /* Request ID (sequence number)  */
+-	unsigned char        package;     /* Destination package ID        */
+-	unsigned char        channel;     /* Destination channel ID or 0x1f */
+-	unsigned short       payload;     /* Command packet payload length */
+-	unsigned int         req_flags;   /* NCSI request properties       */
+-	union {
+-		unsigned char  bytes[16]; /* Command packet specific data  */
+-		unsigned short words[8];
+-		unsigned int   dwords[4];
+-	};
+-	unsigned char        *data;       /* NCSI OEM data                 */
+-	struct genl_info     *info;       /* Netlink information           */
+-};
+ 
+ extern struct list_head ncsi_dev_list;
+ extern spinlock_t ncsi_dev_lock;
+--- a/net/ncsi/ncsi-manage.c
++++ b/net/ncsi/ncsi-manage.c
+@@ -383,6 +383,8 @@
+ 	}
+ 
+ found:
++	if (nr)
++		nr->status = -ETIMEDOUT;
+ 	spin_unlock_irqrestore(&ndp->lock, flags);
+ 	return nr;
+ }
+@@ -404,6 +406,8 @@
+ 	rsp = nr->rsp;
+ 	nr->cmd = NULL;
+ 	nr->rsp = NULL;
++	if ((nr->flags & NCSI_REQ_FLAG_CONFIG) && cmd)
++		WRITE_ONCE(ndp->config_error, nr->status);
+ 	nr->used = false;
+ 	driven = !!(nr->flags & NCSI_REQ_FLAG_EVENT_DRIVEN);
+ 	spin_unlock_irqrestore(&ndp->lock, flags);
+@@ -464,14 +468,20 @@
+ 	ncsi_free_request(nr);
+ }
+ 
++static int ncsi_config_xmit_cmd(struct ncsi_cmd_arg *nca);
++static bool ncsi_retry_config(struct ncsi_dev_priv *ndp);
++
+ static void ncsi_suspend_channel(struct ncsi_dev_priv *ndp)
+ {
+ 	struct ncsi_dev *nd = &ndp->ndev;
+ 	struct ncsi_package *np;
+ 	struct ncsi_channel *nc, *tmp;
+-	struct ncsi_cmd_arg nca;
++	struct ncsi_cmd_arg nca = {};
+ 	unsigned long flags;
+ 	int ret;
++
++	if (ndp->config_cleanup && ncsi_retry_config(ndp))
++		return;
+ 
+ 	np = ndp->active_package;
+ 	nc = ndp->active_channel;
+@@ -504,7 +514,8 @@
+ 			nd->state = ncsi_dev_state_suspend_gls;
+ 		else
+ 			nd->state = ncsi_dev_state_suspend_dcnt;
+-		ret = ncsi_xmit_cmd(&nca);
++		ret = ndp->config_cleanup ? ncsi_config_xmit_cmd(&nca) :
++			ncsi_xmit_cmd(&nca);
+ 		if (ret)
+ 			goto error;
+ 
+@@ -515,15 +526,15 @@
+ 		nca.type = NCSI_PKT_CMD_GLS;
+ 		nca.package = np->id;
+ 		nca.channel = ndp->channel_probe_id;
+-		ret = ncsi_xmit_cmd(&nca);
+-		if (ret)
+-			goto error;
+ 		ndp->channel_probe_id++;
+-
+ 		if (ndp->channel_probe_id == ndp->channel_count) {
+ 			ndp->channel_probe_id = 0;
+ 			nd->state = ncsi_dev_state_suspend_dcnt;
+ 		}
++		ret = ndp->config_cleanup ? ncsi_config_xmit_cmd(&nca) :
++			ncsi_xmit_cmd(&nca);
++		if (ret)
++			goto error;
+ 
+ 		break;
+ 	case ncsi_dev_state_suspend_dcnt:
+@@ -534,7 +545,8 @@
+ 		nca.channel = nc->id;
+ 
+ 		nd->state = ncsi_dev_state_suspend_dc;
+-		ret = ncsi_xmit_cmd(&nca);
++		ret = ndp->config_cleanup ? ncsi_config_xmit_cmd(&nca) :
++			ncsi_xmit_cmd(&nca);
+ 		if (ret)
+ 			goto error;
+ 
+@@ -548,7 +560,8 @@
+ 		nca.bytes[0] = 1;
+ 
+ 		nd->state = ncsi_dev_state_suspend_deselect;
+-		ret = ncsi_xmit_cmd(&nca);
++		ret = ndp->config_cleanup ? ncsi_config_xmit_cmd(&nca) :
++			ncsi_xmit_cmd(&nca);
+ 		if (ret)
+ 			goto error;
+ 
+@@ -570,12 +583,14 @@
+ 		nca.channel = NCSI_RESERVED_CHANNEL;
+ 
+ 		nd->state = ncsi_dev_state_suspend_done;
+-		ret = ncsi_xmit_cmd(&nca);
++		ret = ndp->config_cleanup ? ncsi_config_xmit_cmd(&nca) :
++			ncsi_xmit_cmd(&nca);
+ 		if (ret)
+ 			goto error;
+ 
+ 		break;
+ 	case ncsi_dev_state_suspend_done:
++		ndp->config_cleanup = false;
+ 		spin_lock_irqsave(&nc->lock, flags);
+ 		nc->state = NCSI_CHANNEL_INACTIVE;
+ 		spin_unlock_irqrestore(&nc->lock, flags);
+@@ -591,6 +606,12 @@
+ 
+ 	return;
+ error:
++	if (ndp->config_cleanup && ndp->config_pending) {
++		WRITE_ONCE(ndp->config_error, ret);
++		ndp->pending_req_num = 0;
++		schedule_work(&ndp->work);
++		return;
++	}
+ 	nd->state = ncsi_dev_state_functional;
+ }
+ 
+@@ -983,6 +1004,103 @@
+ 	return ret;
+ }
+ 
++/* Retry only commands needed for the basic unicast/broadcast data path.
++ * Optional OEM, VLAN and AEN compatibility behaviour is unchanged.
++ */
++static bool ncsi_config_cmd_required(const struct ncsi_cmd_arg *nca)
++{
++	switch (nca->type) {
++	case NCSI_PKT_CMD_SP:
++	case NCSI_PKT_CMD_CIS:
++	case NCSI_PKT_CMD_SMA:
++	case NCSI_PKT_CMD_ECNT:
++	case NCSI_PKT_CMD_EC:
++	case NCSI_PKT_CMD_GLS:
++	case NCSI_PKT_CMD_DCNT:
++	case NCSI_PKT_CMD_DC:
++	case NCSI_PKT_CMD_DP:
++		return true;
++	case NCSI_PKT_CMD_EBF:
++		return nca->ndp->active_channel->caps[NCSI_CAP_BC].cap != 0;
++	default:
++		return false;
++	}
++}
++
++static int ncsi_config_xmit_cmd(struct ncsi_cmd_arg *nca)
++{
++	struct ncsi_dev_priv *ndp = nca->ndp;
++
++	ndp->config_pending = ncsi_config_cmd_required(nca);
++	if (ndp->config_pending) {
++		nca->req_flags |= NCSI_REQ_FLAG_CONFIG;
++		ndp->config_cmd = *nca;
++		ndp->config_retries = 0;
++		WRITE_ONCE(ndp->config_error, 0);
++	}
++
++	return ncsi_xmit_cmd(nca);
++}
++
++/* Called only by the serialized config worker, after the request was freed.
++ * A fresh request ID is allocated for each retry; late replies cannot complete
++ * the new command. Keep the saved payload (including MAC/filter indices).
++ */
++static bool ncsi_retry_config(struct ncsi_dev_priv *ndp)
++{
++	struct ncsi_channel *nc = ndp->active_channel;
++	struct ncsi_dev *nd = &ndp->ndev;
++	unsigned long flags;
++	int ret;
++
++	if (!ndp->config_pending)
++		return false;
++	ret = READ_ONCE(ndp->config_error);
++	if (!ret) {
++		ndp->config_pending = false;
++		return false;
++	}
++
++	if (ndp->config_retries < 3) {
++		ndp->config_retries++;
++		netdev_warn(nd->dev,
++			    "NCSI: config command 0x%02x on %u:%u failed (%d), retry %u/3\n",
++			    ndp->config_cmd.type, nc->package->id, nc->id,
++			    ret, ndp->config_retries);
++		WRITE_ONCE(ndp->config_error, 0);
++		ndp->pending_req_num = 1;
++		ret = ncsi_xmit_cmd(&ndp->config_cmd);
++		if (ret < 0) {
++			WRITE_ONCE(ndp->config_error, ret);
++			ndp->pending_req_num = 0;
++			schedule_work(&ndp->work);
++		}
++		return true;
++	}
++
++	netdev_warn(nd->dev,
++		    "NCSI: config command 0x%02x on %u:%u exhausted retries (%d); disabling channel\n",
++		    ndp->config_cmd.type, nc->package->id, nc->id, ret);
++	ndp->config_pending = false;
++	spin_lock_irqsave(&nc->lock, flags);
++	nc->config_failed = true;
++	if (ndp->config_cleanup)
++		nc->state = NCSI_CHANNEL_FAILED;
++	spin_unlock_irqrestore(&nc->lock, flags);
++	if (ndp->config_cleanup) {
++		ndp->config_cleanup = false;
++		ncsi_report_link(ndp, true);
++		return true;
++	}
++	/* Clean up a partially enabled Tx/channel through the normal suspend
++	 * sequence. Never enter config_done or publish this channel as ACTIVE.
++	 */
++	ndp->config_cleanup = true;
++	nd->state = ncsi_dev_state_suspend;
++	ncsi_suspend_channel(ndp);
++	return true;
++}
++
+ static void ncsi_configure_channel(struct ncsi_dev_priv *ndp)
+ {
+ 	struct ncsi_package *np = ndp->active_package;
+@@ -990,10 +1108,13 @@
+ 	struct ncsi_channel *hot_nc = NULL;
+ 	struct ncsi_dev *nd = &ndp->ndev;
+ 	struct net_device *dev = nd->dev;
+-	struct ncsi_cmd_arg nca;
++	struct ncsi_cmd_arg nca = {};
+ 	unsigned char index;
+ 	unsigned long flags;
+ 	int ret;
++
++	if (ncsi_retry_config(ndp))
++		return;
+ 
+ 	nca.ndp = ndp;
+ 	nca.req_flags = NCSI_REQ_FLAG_EVENT_DRIVEN;
+@@ -1010,14 +1131,13 @@
+ 			nca.bytes[0] = 1;
+ 		nca.package = np->id;
+ 		nca.channel = NCSI_RESERVED_CHANNEL;
+-		ret = ncsi_xmit_cmd(&nca);
++		nd->state = ncsi_dev_state_config_cis;
++		ret = ncsi_config_xmit_cmd(&nca);
+ 		if (ret) {
+ 			netdev_err(ndp->ndev.dev,
+ 				   "NCSI: Failed to transmit CMD_SP\n");
+ 			goto error;
+ 		}
+-
+-		nd->state = ncsi_dev_state_config_cis;
+ 		break;
+ 	case ncsi_dev_state_config_cis:
+ 		ndp->pending_req_num = 1;
+@@ -1026,16 +1146,16 @@
+ 		nca.type = NCSI_PKT_CMD_CIS;
+ 		nca.package = np->id;
+ 		nca.channel = nc->id;
+-		ret = ncsi_xmit_cmd(&nca);
++		nd->state = IS_ENABLED(CONFIG_NCSI_OEM_CMD_GET_MAC)
++			  ? ncsi_dev_state_config_oem_gma
++			  : ncsi_dev_state_config_clear_vids;
++		ret = ncsi_config_xmit_cmd(&nca);
+ 		if (ret) {
+ 			netdev_err(ndp->ndev.dev,
+ 				   "NCSI: Failed to transmit CMD_CIS\n");
+ 			goto error;
+ 		}
+ 
+-		nd->state = IS_ENABLED(CONFIG_NCSI_OEM_CMD_GET_MAC)
+-			  ? ncsi_dev_state_config_oem_gma
+-			  : ncsi_dev_state_config_clear_vids;
+ 		break;
+ 	case ncsi_dev_state_config_oem_gma:
+ 		nd->state = ncsi_dev_state_config_apply_mac;
+@@ -1165,7 +1285,7 @@
+ 			nd->state = ncsi_dev_state_config_done;
+ 		}
+ 
+-		ret = ncsi_xmit_cmd(&nca);
++		ret = ncsi_config_xmit_cmd(&nca);
+ 		if (ret) {
+ 			netdev_err(ndp->ndev.dev,
+ 				   "NCSI: Failed to transmit CMD %x\n",
+@@ -1231,6 +1351,12 @@
+ 	return;
+ 
+ error:
++	if (ndp->config_pending) {
++		WRITE_ONCE(ndp->config_error, ret);
++		ndp->pending_req_num = 0;
++		schedule_work(&ndp->work);
++		return;
++	}
+ 	ncsi_report_link(ndp, true);
+ }
+ 
+@@ -1265,7 +1391,7 @@
+ 			/* CIS alone creates a channel. Do not configure it until
+ 			 * its mandatory discovery responses and filters are ready.
+ 			 */
+-			if (!nc->version_valid || !nc->caps_valid ||
++			if (nc->config_failed || !nc->version_valid || !nc->caps_valid ||
+ 			    !list_empty(&nc->link) ||
+ 			    nc->state != NCSI_CHANNEL_INACTIVE) {
+ 				spin_unlock_irqrestore(&nc->lock, cflags);
+@@ -1838,6 +1964,17 @@
+ 	    nd->state != ncsi_dev_state_functional)
+ 		return -ENOTTY;
+ 
++	/* A new administrative start may retry channels exhausted last time. */
++	NCSI_FOR_EACH_PACKAGE(ndp, np) {
++		NCSI_FOR_EACH_CHANNEL(np, nc) {
++			spin_lock_irqsave(&nc->lock, flags);
++			nc->config_failed = false;
++			spin_unlock_irqrestore(&nc->lock, flags);
++		}
++	}
++	ndp->config_pending = false;
++	ndp->config_cleanup = false;
++
+ 	/* A host-powered NIC may disappear after CIS created a channel
+ 	 * but before GVI/GC completed. Retry discovery on the next start
+ 	 * for both empty and incomplete topology. Keep channel objects,
+@@ -1962,7 +2099,9 @@
+ 		NCSI_FOR_EACH_CHANNEL(np, nc) {
+ 			spin_lock_irqsave(&nc->lock, flags);
+ 
+-			if (nc->state == NCSI_CHANNEL_ACTIVE) {
++			if (nc->state == NCSI_CHANNEL_ACTIVE ||
++			    nc->state == NCSI_CHANNEL_FAILED) {
++				ndp->config_cleanup = nc->state == NCSI_CHANNEL_FAILED;
+ 				active = nc;
+ 				nc->state = NCSI_CHANNEL_INVISIBLE;
+ 				spin_unlock_irqrestore(&nc->lock, flags);
+--- a/net/ncsi/ncsi-rsp.c
++++ b/net/ncsi/ncsi-rsp.c
+@@ -1311,6 +1311,7 @@
+ 	}
+ 
+ out:
++	nr->status = ret;
+ 	ncsi_free_request(nr);
+ 	return ret;
+ 
