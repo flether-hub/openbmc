@@ -36,7 +36,10 @@ for config in /etc/systemd/network/00-bmc-eth0.network \
             if (match_section) print "Path=" hardware_path
         }
         function finish_link() {
-            if (ncsi && link && !policy) print "ActivationPolicy=manual"
+            if (ncsi && link) {
+                if (!policy) print "ActivationPolicy=manual"
+                print "RequiredForOnline=" (disabled ? "no" : "routable")
+            }
         }
         /^[ \t]*\[/ {
             finish_match()
@@ -45,14 +48,16 @@ for config in /etc/systemd/network/00-bmc-eth0.network \
             if (match_section) seen_match = 1
             link = ($0 ~ /^[ \t]*\[Link\][ \t]*$/)
             policy = 0
+            disabled = 0
             if (link) seen_link = 1
         }
         match_section && /^[ \t]*(Name|Path)[ \t]*=/ { next }
         link && /^[ \t]*MACAddress[ \t]*=/ { next }
+        ncsi && link && /^[ \t]*RequiredForOnline[ \t]*=/ { next }
         ncsi && link && /^[ \t]*ActivationPolicy[ \t]*=/ {
             policy = 1
             # Preserve an explicit administrative disable.
-            if ($0 ~ /=[ \t]*(down|always-down)[ \t]*$/) print
+            if ($0 ~ /=[ \t]*(down|always-down)[ \t]*$/) { disabled = 1; print }
             else print "ActivationPolicy=manual"
             next
         }
@@ -61,7 +66,7 @@ for config in /etc/systemd/network/00-bmc-eth0.network \
             finish_match()
             finish_link()
             if (!seen_match) print "\n[Match]\nPath=" hardware_path
-            if (ncsi && !seen_link) print "\n[Link]\nActivationPolicy=manual"
+            if (ncsi && !seen_link) print "\n[Link]\nActivationPolicy=manual\nRequiredForOnline=routable"
         }
     ' "$config" > "$candidate"
     if cmp -s "$candidate" "$config"; then

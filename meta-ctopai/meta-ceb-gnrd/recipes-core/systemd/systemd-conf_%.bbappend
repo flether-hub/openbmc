@@ -1,5 +1,13 @@
 FILESEXTRAPATHS:prepend:ceb-gnrd := "${THISDIR}/files:"
 
+SRC_URI:append:ceb-gnrd = " file://30-ceb-gnrd-wait-any-uplink.conf"
+FILES:${PN}:append:ceb-gnrd = " ${sysconfdir}/systemd/system/systemd-networkd-wait-online.service.d/30-ceb-gnrd-wait-any-uplink.conf"
+
+do_install:append:ceb-gnrd() {
+    install -Dm0644 ${UNPACKDIR}/30-ceb-gnrd-wait-any-uplink.conf \
+        ${D}${sysconfdir}/systemd/system/systemd-networkd-wait-online.service.d/30-ceb-gnrd-wait-any-uplink.conf
+}
+
 SRC_URI:append:ceb-gnrd = " file://ceb-gnrd-clear-network-mac.sh file://20-ceb-gnrd-boot-mac.conf"
 FILES:${PN}:append:ceb-gnrd = " ${libexecdir}/ceb-gnrd-clear-network-mac.sh ${sysconfdir}/systemd/system/systemd-networkd.service.d/20-ceb-gnrd-boot-mac.conf"
 

@@ -14,6 +14,9 @@ readonly RETRY_INTERVAL=30
 readonly MAX_RETRIES=3
 readonly RECOVERY_INTERVAL=300
 readonly POST_SETTLE_SECONDS=5
+readonly DHCP_WAIT_SECONDS=60
+readonly DHCP_MAX_RECOVERIES=3
+readonly DHCP_CHECK_INTERVAL=5
 readonly NETWORK_SERVICE=xyz.openbmc_project.Network
 readonly NETWORK_PATH=/xyz/openbmc_project/network/eth1
 readonly NETWORK_INTERFACE=xyz.openbmc_project.Network.EthernetInterface
@@ -63,6 +66,81 @@ monotonic_seconds() {
     echo "${uptime_seconds%%.*}"
 }
 
+# A carrier alone does not prove that the NC-SI data path recovered after
+# host power loss. Preserve working IPv6-only and static configurations too.
+# Return 2 for an inspection failure: never bounce a link we cannot inspect.
+has_network_address() {
+    addresses=$(ip -o address show dev "$IFACE" scope global 2>/dev/null) || return 2
+    printf '%s\n' "$addresses" | awk '
+        / tentative| dadfailed/ { next }
+        $3 == "inet" && $4 !~ /^(169\.254\.|127\.|0\.)/ { found = 1 }
+        $3 == "inet6" { found = 1 }
+        END { exit !found }
+    '
+}
+
+dhcp4_is_enabled() {
+    dhcp4=$(busctl --timeout=2s get-property "$NETWORK_SERVICE" "$NETWORK_PATH" \
+        "$NETWORK_INTERFACE" DHCP4 2>/dev/null || true)
+    [ "$dhcp4" = 'b true' ]
+}
+
+check_startup_dhcp() {
+    [ "$startup_address_seen" -eq 0 ] || return 0
+    [ "$now" -ge "$next_dhcp_check" ] || return 0
+    next_dhcp_check=$((now + DHCP_CHECK_INTERVAL))
+
+    if has_network_address; then
+        startup_address_seen=1
+        dhcp_wait_since=0
+        logger -p user.info -t ceb-gnrd-ncsi "$IFACE usable address acquired; startup DHCP recovery disarmed"
+        return 0
+    else
+        address_status=$?
+    fi
+    if [ "$address_status" -ne 1 ] || ! dhcp4_is_enabled; then
+        dhcp_wait_since=0
+        return 0
+    fi
+    [ "$dhcp_recoveries" -lt "$DHCP_MAX_RECOVERIES" ] || return 0
+    if [ "$dhcp_wait_since" -eq 0 ]; then
+        dhcp_wait_since=$now
+        return 0
+    fi
+    [ "$((now - dhcp_wait_since))" -ge "$DHCP_WAIT_SECONDS" ] || return 0
+
+    # Settings or power state may have changed during the DHCP grace period.
+    # Recheck before touching the interface; unknown queries cannot authorize it.
+    read_gate
+    [ "$gate" = ready ] || return 0
+    dhcp4_is_enabled || return 0
+    if has_network_address; then
+        startup_address_seen=1
+        return 0
+    else
+        [ "$?" -eq 1 ] || return 0
+    fi
+    link_is_up && has_carrier || return 0
+
+    dhcp_recoveries=$((dhcp_recoveries + 1))
+    dhcp_wait_since=0
+    logger -p user.warning -t ceb-gnrd-ncsi "$IFACE carrier present but no usable address after ${DHCP_WAIT_SECONDS}s; NC-SI down/up recovery ${dhcp_recoveries}/${DHCP_MAX_RECOVERIES}"
+    if ! link_error=$(ip link set dev "$IFACE" down 2>&1); then
+        logger -p user.warning -t ceb-gnrd-ncsi "DHCP recovery could not lower $IFACE: $link_error"
+        return 0
+    fi
+    sleep 1
+    read_gate
+    if [ "$gate" = ready ]; then
+        if ! link_error=$(ip link set dev "$IFACE" up 2>&1); then
+            logger -p user.warning -t ceb-gnrd-ncsi "DHCP recovery could not raise $IFACE: $link_error"
+        fi
+    fi
+    if [ "$dhcp_recoveries" -ge "$DHCP_MAX_RECOVERIES" ]; then
+        logger -p user.warning -t ceb-gnrd-ncsi "$IFACE startup DHCP recovery limit reached; no further DHCP-triggered resets this host/POST cycle"
+    fi
+}
+
 last_gate=initial
 last_carrier=unknown
 next_attempt=0
@@ -70,12 +148,17 @@ retries=0
 interface_missing=0
 had_carrier=0
 query_paused=0
+startup_address_seen=0
+dhcp_wait_since=0
+dhcp_recoveries=0
+next_dhcp_check=0
 while :; do
     read_gate
     now=$(monotonic_seconds)
     # Unknown is a query outage, not a confirmed host or management transition.
     # Keep carrier and retry history so recovery cannot reprobe a known channel.
     if [ "$gate" = unknown ]; then
+        dhcp_wait_since=0
         if [ "$query_paused" -eq 0 ]; then
             logger -p user.info -t ceb-gnrd-ncsi "host/POST state unavailable; NC-SI initialization paused"
             query_paused=1
@@ -93,6 +176,10 @@ while :; do
         next_attempt=$now
         last_carrier=unknown
         had_carrier=0
+        startup_address_seen=0
+        dhcp_wait_since=0
+        dhcp_recoveries=0
+        next_dhcp_check=0
         case "$gate" in
             ready)
                 next_attempt=$((now + POST_SETTLE_SECONDS))
@@ -137,7 +224,9 @@ while :; do
             logger -p user.info -t ceb-gnrd-ncsi "$IFACE NC-SI carrier acquired"
             last_carrier=1
         fi
+        check_startup_dhcp
     elif link_is_up && [ "$had_carrier" -eq 1 ]; then
+        dhcp_wait_since=0
         # Cable/carrier loss after a successful connection is monitored by
         # the kernel. Do not repeatedly restart a discovered NC-SI channel.
         if [ "$last_carrier" != 0 ]; then
@@ -145,6 +234,7 @@ while :; do
             last_carrier=0
         fi
     elif [ "$now" -ge "$next_attempt" ]; then
+        dhcp_wait_since=0
         # Timestamp failures too. Three quick attempts then slow recovery.
         retries=$((retries + 1))
         interval=$RETRY_INTERVAL

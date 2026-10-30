@@ -1,0 +1,24 @@
+From: CEB-GNRD maintainers
+Subject: [PATCH] network: count a routable NC-SI link toward online state
+
+ActivationPolicy=manual otherwise defaults to RequiredForOnline=no. With
+eth0 unplugged this leaves the machine offline even when eth1 is routable,
+so timesyncd refuses to connect. Preserve the POST gate while explicitly
+including enabled eth1 in online detection. Disabled eth1 remains optional.
+
+Upstream-Status: Inappropriate [CEB-GNRD board policy]
+
+--- a/src/ethernet_interface.cpp
++++ b/src/ethernet_interface.cpp
+@@ -970,6 +970,11 @@
+             // precedence over the board fallback 10-bmc-eth1-ncsi.network.
+             link["ActivationPolicy"].emplace_back("manual");
+         }
++        if (interfaceName() == "eth1")
++        {
++            link["RequiredForOnline"].emplace_back(
++                EthernetInterfaceIntf::nicEnabled() ? "routable" : "no");
++        }
+     }
+     {
+         auto& network = config.map["Network"].emplace_back();

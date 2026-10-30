@@ -4,6 +4,8 @@ Path=platform-1e670000.ethernet
 [Link]
 # NC-SI is host-powered. Only the power/POST monitor may raise it after POST.
 ActivationPolicy=manual
+# A working NC-SI uplink must count toward the global online state used by NTP.
+RequiredForOnline=routable
 
 [Network]
 DHCP=ipv4
